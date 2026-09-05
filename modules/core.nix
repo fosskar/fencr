@@ -14,6 +14,50 @@ rec {
   secretsDirOf = name: "/var/lib/fencr/${name}/secrets";
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
 
+  # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
+  # runtime resolution and stay unsupported until name-based egress exists.
+  parseDestination =
+    value:
+    if builtins.isAttrs value then
+      value
+    else
+      let
+        matched = builtins.match "([0-9./]+):([0-9]+)" value;
+      in
+      if matched == null then
+        throw "fencr: destination \"${value}\" is not <ipv4[/prefix]>:<port>; hostnames are not supported yet"
+      else
+        {
+          address = builtins.elemAt matched 0;
+          port = lib.toInt (builtins.elemAt matched 1);
+        };
+
+  # expose sugar: "33627" listens on host loopback 33627 and relays to guest
+  # loopback 33627; "<listenAddress>:<listenPort>:<guestPort>" spells it out
+  parseExpose =
+    value:
+    if builtins.isAttrs value then
+      value
+    else
+      let
+        short = builtins.match "([0-9]+)" value;
+        long = builtins.match "([0-9.]+):([0-9]+):([0-9]+)" value;
+      in
+      if short != null then
+        rec {
+          listenAddress = "127.0.0.1";
+          listenPort = lib.toInt (builtins.elemAt short 0);
+          guestPort = listenPort;
+        }
+      else if long != null then
+        {
+          listenAddress = builtins.elemAt long 0;
+          listenPort = lib.toInt (builtins.elemAt long 1);
+          guestPort = lib.toInt (builtins.elemAt long 2);
+        }
+      else
+        throw "fencr: expose entry \"${value}\" is neither <port> nor <listenAddress>:<listenPort>:<guestPort>";
+
   vsockForwardBin =
     pkgs:
     pkgs.writers.writeRustBin "fencr-vsock-forward" {
@@ -235,7 +279,7 @@ rec {
               ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString forward.guestPort},fork TCP:127.0.0.1:${toString forward.guestPort}";
             };
           };
-        }) agentSandbox.forwards
+        }) agentSandbox.expose
         ++ map (forward: {
           name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
           value = {

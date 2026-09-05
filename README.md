@@ -1,7 +1,6 @@
 # fencr
 
-Sealed microVM sandboxes for AI agents, as NixOS options. herdr herds your
-agents; fencr fences them in.
+Sealed microVM sandboxes for AI agents, as NixOS options.
 
 You say what the agent may reach. fencr does the firewall.
 
@@ -11,9 +10,11 @@ fencr.vms.myagent = {
   services = [ my-agent-module ];
 
   # internet: yes. LAN, mesh, sibling VMs: no. that is the default.
-  allowedTCPDestinations = [ { address = "192.168.1.50"; port = 8123; } ];
+  allowedTCPDestinations = [ "192.168.1.50:8123" ];
 
-  forwards = [ { listenAddress = "127.0.0.1"; listenPort = 8080; guestPort = 8080; } ];
+  # "expose" opens a host endpoint into the vm; 33627 is "fencr" on a
+  # phone keypad and as good a default example as any
+  expose = [ "33627" ];
   secrets."agent.env" = "/run/secrets/agent.env";
 };
 ```

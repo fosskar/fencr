@@ -16,17 +16,13 @@ let
       dns = "9.9.9.9";
       adminPublicKey = null;
       secrets = { };
-      allowedTCPDestinations = [
-        {
-          address = "192.168.1.50";
-          port = 8123;
-        }
-      ];
-      forwards = [
+      allowedTCPDestinations = [ "192.168.1.50:8123" ];
+      expose = [
+        "33627"
         {
           listenAddress = "127.0.0.1";
-          listenPort = 8080;
-          guestPort = 8080;
+          listenPort = 33628;
+          guestPort = 22100;
         }
       ];
       hostForwards = [
@@ -57,12 +53,14 @@ let
   };
   expectedUnits = [
     "sbx"
-    "fwd-8080@"
+    "fwd-33627@"
+    "fwd-33628@"
     "hfwd-18764@"
     "broker-18764"
   ];
   expectedSockets = [
-    "fwd-8080"
+    "fwd-33627"
+    "fwd-33628"
     "hfwd-18764"
   ];
   missing =

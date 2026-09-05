@@ -9,15 +9,21 @@ let
 in
 { types, ... }:
 let
-  destinationType = types.struct "destination" {
-    address = types.string;
-    port = types.int;
-  };
-  forwardType = types.struct "forward" {
-    listenAddress = types.string;
-    listenPort = types.int;
-    guestPort = types.int;
-  };
+  destinationType = types.union [
+    types.string
+    (types.struct "destination" {
+      address = types.string;
+      port = types.int;
+    })
+  ];
+  exposeType = types.union [
+    types.string
+    (types.struct "expose" {
+      listenAddress = types.string;
+      listenPort = types.int;
+      guestPort = types.int;
+    })
+  ];
   brokerType = types.struct "broker" {
     port = types.int;
     header = types.string;
@@ -61,12 +67,12 @@ in
     allowedTCPDestinations = {
       type = types.listOf destinationType;
       default = [ ];
-      description = "private IPv4 TCP destinations reachable from the vm.";
+      description = "private IPv4 TCP destinations reachable from the vm, as address:port strings or attrsets.";
     };
-    forwards = {
-      type = types.listOf forwardType;
+    expose = {
+      type = types.listOf exposeType;
       default = [ ];
-      description = "host endpoints forwarded to guest ports over vsock.";
+      description = "guest loopback ports exposed on host endpoints over vsock.";
     };
     hostForwards = {
       type = types.listOf hostForwardType;
@@ -100,10 +106,10 @@ in
           vcpu
           mem
           dns
-          allowedTCPDestinations
-          forwards
           hostForwards
           ;
+        allowedTCPDestinations = map core.parseDestination options.allowedTCPDestinations;
+        expose = map core.parseExpose options.expose;
         bridge = core.bridgeOf name;
         ip = core.ipOf options;
         hostIp = core.hostIpOf options;
@@ -221,7 +227,7 @@ in
               ExecStart = core.forwardCommand hostPkgs cfg forward;
             };
           };
-        }) options.forwards
+        }) cfg.expose
       )
       // lib.listToAttrs (
         map (forward: {
@@ -262,7 +268,7 @@ in
                 MaxConnections = 64;
               };
             };
-          }) options.forwards
+          }) cfg.expose
         )
         // lib.listToAttrs (
           map (forward: {

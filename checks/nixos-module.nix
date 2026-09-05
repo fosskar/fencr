@@ -17,17 +17,10 @@ self: system:
     mem = 1024;
     dns = "9.9.9.9";
     hostPorts = [ 443 ];
-    allowedTCPDestinations = [
-      {
-        address = "192.168.1.50";
-        port = 8123;
-      }
-    ];
-    forwards = [
-      {
-        listenPort = 8080;
-        guestPort = 8080;
-      }
+    allowedTCPDestinations = [ "192.168.1.50:8123" ];
+    expose = [
+      "33627"
+      "127.0.0.1:33628:22100"
     ];
     hostForwards = [
       {

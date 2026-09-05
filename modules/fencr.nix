@@ -22,7 +22,26 @@ let
   instances = config.fencr.vms;
   adminCfg = config.fencr.admin;
   core = import ./core.nix { inherit lib; };
-  forwardLib = import ./forwards.nix { inherit lib; };
+  exposeType = lib.types.coercedTo lib.types.str core.parseExpose (
+    lib.types.submodule {
+      options = {
+        listenAddress = lib.mkOption {
+          type = lib.types.str;
+          default = "127.0.0.1";
+        };
+        listenPort = lib.mkOption { type = lib.types.port; };
+        guestPort = lib.mkOption { type = lib.types.port; };
+      };
+    }
+  );
+  destinationType = lib.types.coercedTo lib.types.str core.parseDestination (
+    lib.types.submodule {
+      options = {
+        address = lib.mkOption { type = lib.types.str; };
+        port = lib.mkOption { type = lib.types.port; };
+      };
+    }
+  );
   forwardUnit = name: forward: "${name}-forward-${toString forward.listenPort}";
   hostForwardUnit = name: forward: "${name}-host-forward-${toString forward.vsockPort}";
   brokerUnit = name: forward: "${name}-broker-${toString forward.vsockPort}";
@@ -109,26 +128,20 @@ in
             };
 
             allowedTCPDestinations = lib.mkOption {
-              type = lib.types.listOf (
-                lib.types.submodule {
-                  options = {
-                    address = lib.mkOption {
-                      type = lib.types.str;
-                    };
-                    port = lib.mkOption {
-                      type = lib.types.port;
-                    };
-                  };
-                }
-              );
+              type = lib.types.listOf destinationType;
               default = [ ];
-              description = "private IPv4 TCP destinations reachable from the vm.";
+              description = ''
+                private IPv4 TCP destinations reachable from the vm, as
+                "<address>:<port>" or { address; port; }. internet egress is
+                open by default; this list only opens private ranges.
+              '';
             };
 
-            forwards = lib.mkOption {
-              inherit (forwardLib) type;
+            expose = lib.mkOption {
+              type = lib.types.listOf exposeType;
               default = [ ];
-              description = "host endpoints forwarded to guest ports over vsock.";
+              example = lib.literalExpression ''[ "33627" ]'';
+              description = "guest loopback ports exposed on host endpoints over vsock.";
             };
 
             hostForwards = lib.mkOption {
@@ -229,7 +242,11 @@ in
     ];
 
     fencr.forwardEndpoints =
-      forwardLib.endpointsOf instances
+      lib.concatLists (
+        lib.mapAttrsToList (
+          _: cfg: map (forward: "${forward.listenAddress}:${toString forward.listenPort}") cfg.expose
+        ) instances
+      )
       ++ lib.concatLists (
         lib.mapAttrsToList (
           _: cfg: map (forward: "127.0.0.1:${toString forward.broker.port}") (brokeredOf cfg)
@@ -313,7 +330,7 @@ in
                 ExecStart = core.forwardCommand pkgs cfg forward;
               };
             };
-          }) cfg.forwards
+          }) cfg.expose
         ) instances
       )
       ++ lib.concatLists (
@@ -363,7 +380,7 @@ in
                 MaxConnections = 64;
               };
             };
-          }) cfg.forwards
+          }) cfg.expose
         )
       )
       // forEachInstance (
