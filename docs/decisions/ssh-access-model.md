@@ -2,7 +2,7 @@
 
 Two tiers, both plain ssh public keys:
 
-- `fencr.adminKeys` — the machine owner's keys, authorized as root in every vm.
+- `fencr.adminKeys` — every listed public key is authorized as root in every vm.
 - `fencr.vms.<name>.authorizedKeys` — authorized as root in that vm only.
   The owner tier: a vm belongs to whoever holds these keys.
 

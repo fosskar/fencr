@@ -44,7 +44,7 @@ update independently of the host (`flakelets.default`).
 
 ## Access
 
-`fencr.adminKeys` grants the machine owner's keys root access to every vm.
+`fencr.adminKeys` grants every listed public key root access to every vm.
 `fencr.vms.<name>.authorizedKeys` hands one vm to its owner — a public key
 is the identity, no host account needed. `ssh <vm-name>` on the
 host, `ProxyCommand ssh server fencr proxy <vm-name>` from anywhere
