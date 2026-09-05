@@ -4,6 +4,13 @@ Sealed microVM sandboxes for AI agents, as NixOS options.
 
 You say what the agent may reach. fencr does the firewall.
 
+fencr is a system-wide service, not a user tool. It runs on the machine that
+hosts the vms — server, VPS or workstation — independent of any login
+session. Clients attach and prove who they are with an ssh key; a vm belongs
+to whoever holds an authorized key, not to a system account. This is the
+deliberate opposite of user-scoped sandboxes like Docker `sbx`
+([docs/decisions/system-scoped-identity.md](docs/decisions/system-scoped-identity.md)).
+
 ```nix
 fencr.vms.myagent = {
   id = 0;
@@ -60,3 +67,7 @@ vsock transport rework settles there.
 
 fencr ships no agent. Bring your own NixOS modules — hermes-agent, a shell
 with claude code, anything. fencr is only the enclosure.
+
+Getting code into a vm is payload too: fencr does not clone repositories or
+mount host working trees. A `services` module fetches whatever it needs,
+using a brokered credential if the source is private.
