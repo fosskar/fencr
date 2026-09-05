@@ -11,12 +11,15 @@ self: system:
     fsType = "ext4";
   };
 
-  fencr.admin = {
-    identityFile = "/root/.ssh/fencr_ed25519";
-    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderPlaceholderPlaceholderPlacehol check";
-  };
+  # dummy keys: never used, they only build the key-gated units
+  fencr.adminKeys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdminDummyAdminDummyAdminDummyAdminDummyAdmi check"
+  ];
 
   fencr.vms.sbx = {
+    authorizedKeys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
+    ];
     id = 0;
     vcpu = 2;
     mem = 1024;

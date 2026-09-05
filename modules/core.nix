@@ -358,7 +358,7 @@ rec {
       # loopback. host forwards get the mirror image: a loopback listener
       # relayed to the host's vsock cid.
       systemd.services = lib.mkMerge [
-        (lib.mkIf (agentSandbox.adminPublicKey != null) {
+        (lib.mkIf (agentSandbox.sshKeys != [ ]) {
           "sshd-vsock@" = {
             description = "sshd for a vsock connection";
             unitConfig.CollectMode = "inactive-or-failed";
@@ -412,9 +412,9 @@ rec {
         };
       };
 
-      # admin ssh rides vsock, not the bridge: a socket-activated sshd on
-      # vsock port 22, existing only when a key is authorized
-      systemd.sockets.sshd-vsock = lib.mkIf (agentSandbox.adminPublicKey != null) {
+      # ssh rides vsock, not the bridge: a socket-activated sshd on vsock
+      # port 22, existing only when a key is authorized
+      systemd.sockets.sshd-vsock = lib.mkIf (agentSandbox.sshKeys != [ ]) {
         description = "sshd on vsock";
         wantedBy = [ "sockets.target" ];
         listenStreams = [ "vsock::22" ];
@@ -438,9 +438,7 @@ rec {
         ];
       };
 
-      users.users.root.openssh.authorizedKeys.keys = lib.optional (
-        agentSandbox.adminPublicKey != null
-      ) agentSandbox.adminPublicKey;
+      users.users.root.openssh.authorizedKeys.keys = agentSandbox.sshKeys;
 
       # with a domain allowlist the proxy is the only road out, so every
       # process learns about it; tools that ignore the variables just hit

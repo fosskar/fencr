@@ -19,7 +19,9 @@ let
         "github.com"
         "*.github.com"
       ];
-      adminPublicKey = null;
+      authorizedKeys = [
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
+      ];
       secrets = { };
       allowedTCPDestinations = [ "192.168.1.50:8123" ];
       expose = [

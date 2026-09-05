@@ -54,10 +54,10 @@ in
       type = types.string;
       description = "resolver the vm may reach; also handed to the guest.";
     };
-    adminPublicKey = {
-      type = types.option types.string;
-      default = null;
-      description = "public key authorized as root inside the vm.";
+    authorizedKeys = {
+      type = types.listOf types.string;
+      default = [ ];
+      description = "public keys authorized as root in the vm; the flakelet host passes admin and owner keys as one list.";
     };
     secrets = {
       type = types.attrsOf types.string;
@@ -212,7 +212,7 @@ in
         system = hostPkgs.stdenv.hostPlatform.system;
         specialArgs.agentSandbox = cfg // {
           inherit name;
-          inherit (options) adminPublicKey;
+          sshKeys = options.authorizedKeys;
           kind = "microvm";
           bindAddress = "127.0.0.1";
           inherit proxy;

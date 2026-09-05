@@ -20,7 +20,7 @@
 let
   hostConfig = config;
   instances = config.fencr.vms;
-  adminCfg = config.fencr.admin;
+  sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
   core = import ./core.nix { inherit lib; };
   exposeType = lib.types.coercedTo lib.types.str core.parseExpose (
     lib.types.submodule {
@@ -60,20 +60,14 @@ in
 {
   imports = [ inputs.microvm.nixosModules.host ];
 
-  options.fencr.admin = {
-    # root's client identity into the vms and the public key the guests
-    # authorize. with the defaults left null there is no ssh path into a
-    # guest beyond the serial console.
-    identityFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "private key path for the host's `ssh <vm-name>` alias into the vms.";
-    };
-    publicKey = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "public key authorized as root inside every vm.";
-    };
+  options.fencr.adminKeys = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    default = [ ];
+    description = ''
+      public keys authorized as root in every vm — the operator tier.
+      host root can always reach a vm regardless (it owns the hypervisor,
+      the state tree and the console); this only makes that access ssh.
+    '';
   };
 
   options.fencr.forwardEndpoints = lib.mkOption {
@@ -100,6 +94,17 @@ in
               type = lib.types.listOf lib.types.raw;
               default = [ ];
               description = "nixos modules to run inside the vm.";
+            };
+
+            authorizedKeys = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              description = ''
+                public keys authorized as root in this vm — the owner tier.
+                a vm belongs to whoever holds these keys; no host account
+                needed. without adminKeys and authorizedKeys the vm has no
+                ssh door at all.
+              '';
             };
 
             specialArgs = lib.mkOption {
@@ -305,19 +310,19 @@ in
         ) instances
       );
 
-    # `ssh <vm-name>` from the host reaches the guest's vsock sshd; no
-    # bridge ip, no network listener anywhere
-    programs.ssh.extraConfig = lib.mkIf (adminCfg.identityFile != null) (
-      lib.concatStrings (
-        lib.mapAttrsToList (name: cfg: ''
+    # `ssh <vm-name>` reaches the guest's vsock sshd; vsock connect is
+    # unprivileged, so any host user holding an authorized key gets in
+    # with their own identity. no bridge ip, no network listener anywhere
+    programs.ssh.extraConfig = lib.concatStrings (
+      lib.mapAttrsToList (
+        name: cfg:
+        lib.optionalString (sshKeysOf cfg != [ ]) ''
           Host ${name}
             User root
-            IdentityFile ${adminCfg.identityFile}
-            IdentitiesOnly yes
             ProxyCommand ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString (core.cidOf cfg)}:22
             StrictHostKeyChecking accept-new
-        '') instances
-      )
+        ''
+      ) instances
     );
 
     systemd.services = lib.mkMerge (
@@ -468,7 +473,7 @@ in
       specialArgs = cfg.specialArgs // {
         agentSandbox = cfg // {
           inherit name;
-          adminPublicKey = adminCfg.publicKey;
+          sshKeys = sshKeysOf cfg;
           kind = "microvm";
           # the guest-side proxy relays vsock to loopback, so a forwarded
           # service only ever needs to listen on loopback
