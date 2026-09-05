@@ -98,8 +98,8 @@ pkgs.writers.writeRustBin "fencr"
         eprintln!("  list             declared vms");
         eprintln!("  ssh <vm> [cmd]   open a shell (or run a command) in a vm");
         eprintln!("  proxy <vm>       stdio splice to the vm's vsock sshd, for ProxyCommand");
-        eprintln!("  status <vm>      one line per unit; --full for raw systemctl status");
-        eprintln!("  dashboard        per-vm traffic, domains and denied peers [--once]");
+        eprintln!("  status [vm]      vm health and traffic [--watch]; --full for systemctl");
+        eprintln!("  dashboard        alias for status --watch [--once]");
         eprintln!("  update <vm>      delegate to flakelet update (errors on a declarative install)");
         eprintln!();
         eprintln!("  -H <host>        run the command on <host> over ssh (fencr must be installed there)");
@@ -157,54 +157,13 @@ pkgs.writers.writeRustBin "fencr"
         }
     }
 
-    // one line per unit: colored state dot, substate, socket counters,
-    // memory for the vm itself
-    fn status_line(unit: &str, label: &str, s: &Style) -> String {
-        let p = props(unit, "ActiveState,SubState,NAccepted,NConnections,MemoryCurrent");
-        let active = p.get("ActiveState").map(String::as_str).unwrap_or("?");
-        let sub = p.get("SubState").map(String::as_str).unwrap_or("?");
-        let dot = match active {
-            "active" => format!("{}\u{25cf}{}", s.green, s.reset),
-            "failed" => format!("{}\u{25cf}{}", s.red, s.reset),
-            _ => format!("{}\u{25cb}{}", s.dim, s.reset),
-        };
-        let mut extra = String::new();
-        if let Some(accepted) = p.get("NAccepted") {
-            let now = p.get("NConnections").map(String::as_str).unwrap_or("0");
-            let _ = write!(extra, "  {accepted} accepted, {now} active");
-        }
-        if let Some(Ok(bytes)) = p.get("MemoryCurrent").map(|m| m.parse::<u64>()) {
-            let _ = write!(extra, "  mem {}", human(bytes));
-        }
-        format!("  {dot} {label:<44} {sub}{extra}")
+    fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+        line.split(key).nth(1).and_then(|rest| rest.split_whitespace().next())
     }
 
-    fn print_status(vm: &Vm, s: &Style) {
-        println!("{}{}{}  {}  cid {}  egress {}", s.bold, vm.0, s.reset, vm.3, vm.2, vm.4);
-        println!("{}", status_line(&format!("microvm@{}.service", vm.0), "vm", s));
-        for (name, unit, label) in SOCKETS {
-            if *name == vm.0 {
-                println!("{}", status_line(unit, label, s));
-            }
-        }
-        for (name, unit) in PROXIED {
-            if *name == vm.0 {
-                println!("{}", status_line(unit, "egress proxy", s));
-            }
-        }
-        for (name, unit, label) in BROKERS {
-            if *name == vm.0 {
-                println!("{}", status_line(unit, label, s));
-            }
-        }
-    }
-
-    // counter rules carry `comment "fencr:<vm>:<kind>"`; parse the text
-    // ruleset rather than -j so no json machinery is needed. zero counters
-    // are noise and stay hidden.
-    fn counter_lines(ruleset: &str, name: &str, s: &Style, out: &mut Vec<String>) {
-        let mut allowed = String::new();
-        let mut blocked = String::new();
+    fn traffic(ruleset: &str, name: &str) -> (u64, u64) {
+        let mut allowed = 0;
+        let mut blocked = 0;
         for line in ruleset.lines() {
             let Some(pos) = line.find("comment \"fencr:") else { continue };
             let tag = &line[pos + 15..];
@@ -217,86 +176,18 @@ pkgs.writers.writeRustBin "fencr"
                 .find("packets ")
                 .map(|p| &line[p + 8..])
                 .and_then(|rest| rest.split_whitespace().next())
-                .unwrap_or("0");
-            if packets == "0" {
-                continue;
-            }
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
             if kind.contains("blocked") {
-                let short = kind.replace("-blocked", "").replace("blocked-", "").replace("blocked", "all");
-                let _ = write!(blocked, "  {short} {packets}");
+                blocked += packets;
             } else {
-                let _ = write!(allowed, "  {kind} {packets}");
+                allowed += packets;
             }
         }
-        if allowed.is_empty() && blocked.is_empty() {
-            out.push(format!("  {}no traffic counted yet{}", s.dim, s.reset));
-        }
-        if !allowed.is_empty() {
-            out.push(format!("  {}allowed{} {allowed}", s.green, s.reset));
-        }
-        if !blocked.is_empty() {
-            out.push(format!("  {}blocked{} {blocked}", s.red, s.reset));
-        }
+        (allowed, blocked)
     }
 
-    fn forward_lines(name: &str, s: &Style, out: &mut Vec<String>) {
-        for (vm, unit, label) in SOCKETS {
-            if *vm != name {
-                continue;
-            }
-            let p = props(unit, "NAccepted,NConnections");
-            let accepted = p.get("NAccepted").map(String::as_str).unwrap_or("?");
-            let active = p.get("NConnections").map(String::as_str).unwrap_or("?");
-            out.push(format!("  {}forward{}  {label:<36} {accepted:>5}/{active}", s.dim, s.reset));
-        }
-    }
-
-    // the egress proxy logs every CONNECT and every filter refusal; fold
-    // its journal into a per-domain allowed/refused tally
-    fn domain_lines(name: &str, s: &Style, out: &mut Vec<String>) {
-        let Some((_, unit)) = PROXIED.iter().find(|p| p.0 == name) else { return };
-        let Some(log) = output(JOURNALCTL, &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"]) else {
-            out.push(format!("  {}domains: no journal access{}", s.dim, s.reset));
-            return;
-        };
-        // domain -> (requests, refused)
-        let mut seen: BTreeMap<String, (u64, u64)> = BTreeMap::new();
-        for line in log.lines() {
-            if let Some(rest) = line.split("): CONNECT ").nth(1) {
-                if let Some(hostport) = rest.split_whitespace().next() {
-                    let host = hostport.rsplit_once(':').map(|(h, _)| h).unwrap_or(hostport);
-                    seen.entry(host.to_string()).or_default().0 += 1;
-                }
-            }
-            if let Some(rest) = line.split("filtered domain \"").nth(1) {
-                if let Some(host) = rest.split('"').next() {
-                    seen.entry(host.to_string()).or_default().1 += 1;
-                }
-            }
-        }
-        if seen.is_empty() {
-            return;
-        }
-        let mut line = "  domains".to_string();
-        for (host, (requests, refused)) in &seen {
-            let allowed = requests.saturating_sub(*refused);
-            if allowed > 0 {
-                let _ = write!(line, "  {}\u{2713} {host} {allowed}{}", s.green, s.reset);
-            }
-            if *refused > 0 {
-                let _ = write!(line, "  {}\u{2717} {host} {refused}{}", s.red, s.reset);
-            }
-        }
-        out.push(line);
-    }
-
-    fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-        line.split(key).nth(1).and_then(|rest| rest.split_whitespace().next())
-    }
-
-    // the firewall logs each drop with prefix fencr-<vm>[-host]-blocked:;
-    // aggregate by destination instead of echoing raw kernel lines
-    fn denied_lines(kernel: &str, name: &str, s: &Style, out: &mut Vec<String>) {
+    fn recent_denied(kernel: &str, name: &str) -> Option<String> {
         let net = format!("fencr-{name}-blocked:");
         let host = format!("fencr-{name}-host-blocked:");
         let mut hits: BTreeMap<String, u64> = BTreeMap::new();
@@ -312,44 +203,156 @@ pkgs.writers.writeRustBin "fencr"
             };
             *hits.entry(key).or_default() += 1;
         }
-        if hits.is_empty() {
-            return;
-        }
         let mut sorted: Vec<_> = hits.into_iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut line = format!("  {}denied{} ", s.red, s.reset);
-        for (key, count) in sorted.iter().take(4) {
-            let _ = write!(line, "  {key} x{count}");
+        if sorted.is_empty() {
+            None
+        } else {
+            let mut result = String::new();
+            for (index, (peer, count)) in sorted.iter().take(3).enumerate() {
+                if index > 0 {
+                    result.push_str(", ");
+                }
+                let _ = write!(result, "{peer} x{count}");
+            }
+            Some(result)
         }
-        out.push(line);
     }
 
-    fn render(s: &Style) -> Vec<String> {
+    fn domains(name: &str, egress: &str, s: &Style) -> String {
+        let Some((_, unit)) = PROXIED.iter().find(|p| p.0 == name) else {
+            return format!("{}unavailable with {egress} egress{}", s.dim, s.reset);
+        };
+        let Some(log) = output(JOURNALCTL, &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"]) else {
+            return format!("{}journal access denied{}", s.dim, s.reset);
+        };
+        let mut seen: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        for line in log.lines() {
+            if let Some(rest) = line.split("): CONNECT ").nth(1) {
+                if let Some(hostport) = rest.split_whitespace().next() {
+                    let host = hostport.rsplit_once(':').map(|(h, _)| h).unwrap_or(hostport);
+                    seen.entry(host.to_string()).or_default().0 += 1;
+                }
+            }
+            if let Some(rest) = line.split("filtered domain \"").nth(1) {
+                if let Some(host) = rest.split('"').next() {
+                    seen.entry(host.to_string()).or_default().1 += 1;
+                }
+            }
+        }
+        if seen.is_empty() {
+            return format!("{}no requests observed{}", s.dim, s.reset);
+        }
+        let mut result = String::new();
+        for (host, (requests, refused)) in &seen {
+            let allowed = requests.saturating_sub(*refused);
+            if allowed > 0 {
+                let _ = write!(result, "{}\u{2713} {host} ({allowed}){}  ", s.green, s.reset);
+            }
+            if *refused > 0 {
+                let _ = write!(result, "{}\u{2717} {host} ({refused}){}  ", s.red, s.reset);
+            }
+        }
+        result.trim_end().to_string()
+    }
+
+    fn unit_health(unit: &str, s: &Style) -> String {
+        let p = props(unit, "LoadState,ActiveState,SubState");
+        match p.get("LoadState").map(String::as_str) {
+            Some("not-found") | None => format!("{}MISSING{}", s.red, s.reset),
+            _ => match p.get("ActiveState").map(String::as_str) {
+                Some("active") => format!("{}RUNNING{}", s.green, s.reset),
+                Some("failed") => format!("{}FAILED{}", s.red, s.reset),
+                _ => format!("{}STOPPED{}", s.red, s.reset),
+            },
+        }
+    }
+
+    fn connection_lines(name: &str, s: &Style, out: &mut Vec<String>) {
+        for (vm, unit, label) in SOCKETS {
+            if *vm != name {
+                continue;
+            }
+            let p = props(unit, "LoadState,ActiveState,NAccepted,NConnections");
+            let direction = if let Some(endpoint) = label.strip_prefix("in  ") {
+                format!("host -> guest: {endpoint}")
+            } else if let Some(endpoint) = label.strip_prefix("out ") {
+                format!("guest -> host: {endpoint}")
+            } else {
+                label.to_string()
+            };
+            let state = match p.get("LoadState").map(String::as_str) {
+                Some("not-found") | None => format!("{}MISSING{}", s.red, s.reset),
+                _ if p.get("ActiveState").map(String::as_str) != Some("active") => {
+                    format!("{}NOT LISTENING{}", s.red, s.reset)
+                }
+                _ => {
+                    let accepted = p.get("NAccepted").map(String::as_str).unwrap_or("?");
+                    let active = p.get("NConnections").map(String::as_str).unwrap_or("?");
+                    format!("{}{active} active{} ({accepted} total)", s.green, s.reset)
+                }
+            };
+            out.push(format!("  {direction}  {state}"));
+        }
+    }
+
+    fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
+        let mut services = Vec::new();
+        for (vm, unit) in PROXIED {
+            if *vm == name {
+                services.push(format!("egress proxy {}", unit_health(unit, s)));
+            }
+        }
+        for (vm, unit, _) in BROKERS {
+            if *vm == name {
+                services.push(format!("credential broker {}", unit_health(unit, s)));
+            }
+        }
+        if !services.is_empty() {
+            out.push(format!("Services: {}", services.join(", ")));
+        }
+    }
+
+    fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut Vec<String>) {
+        let unit = format!("microvm@{}.service", vm.0);
+        let p = props(&unit, "LoadState,ActiveState,MemoryCurrent");
+        let state = unit_health(&unit, s);
+        let memory = p
+            .get("MemoryCurrent")
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|bytes| format!("  memory {}", human(bytes)))
+            .unwrap_or_default();
+        out.push(format!("{}{}{}  {state}  {}{memory}", s.bold, vm.0, s.reset, vm.3));
+        out.push(format!("Internet: {}{}{}", s.bold, vm.4.to_uppercase(), s.reset));
+        out.push(String::new());
+        out.push("Traffic:".to_string());
+        match ruleset {
+            Some(ruleset) => {
+                let (allowed, blocked) = traffic(ruleset, vm.0);
+                out.push(format!("  {}allowed{}  {allowed} packets", s.green, s.reset));
+                let recent = recent_denied(kernel, vm.0)
+                    .map(|peers| format!("  (recent: {peers})"))
+                    .unwrap_or_default();
+                out.push(format!("  {}blocked{}  {blocked} packets{recent}", s.red, s.reset));
+            }
+            None => out.push(format!("  {}unavailable: nft requires root{}", s.dim, s.reset)),
+        }
+        out.push(String::new());
+        out.push("Connections:".to_string());
+        connection_lines(vm.0, s, out);
+        out.push(String::new());
+        out.push(format!("Domains: {}", domains(vm.0, vm.4, s)));
+        service_lines(vm.0, s, out);
+        out.push(String::new());
+    }
+
+    fn render(s: &Style, only: Option<&str>) -> Vec<String> {
         let mut out = Vec::new();
         let ruleset = output(NFT, &["list", "ruleset"]);
         let kernel = output(JOURNALCTL, &["-k", "-q", "-n", "400", "--no-pager", "-g", "fencr-", "-o", "cat"])
             .unwrap_or_default();
-        for vm in VMS {
-            let name = vm.0;
-            let running = props(&format!("microvm@{name}.service"), "ActiveState")
-                .get("ActiveState")
-                .map(String::as_str)
-                .unwrap_or("?")
-                == "active";
-            let dot = if running {
-                format!("{}\u{25cf}{}", s.green, s.reset)
-            } else {
-                format!("{}\u{25cb}{}", s.red, s.reset)
-            };
-            out.push(format!("{dot} {}{name}{}  {}  egress {}", s.bold, s.reset, vm.3, vm.4));
-            match &ruleset {
-                None => out.push(format!("  {}counters need root (nft list ruleset refused){}", s.dim, s.reset)),
-                Some(ruleset) => counter_lines(ruleset, name, s, &mut out),
-            }
-            forward_lines(name, s, &mut out);
-            domain_lines(name, s, &mut out);
-            denied_lines(&kernel, name, s, &mut out);
-            out.push(String::new());
+        for vm in VMS.iter().filter(|vm| only.map(|name| name == vm.0).unwrap_or(true)) {
+            render_vm(vm, ruleset.as_deref(), &kernel, s, &mut out);
         }
         if VMS.is_empty() {
             out.push("(no vms declared)".to_string());
@@ -357,21 +360,18 @@ pkgs.writers.writeRustBin "fencr"
         out
     }
 
-    fn dashboard(once: bool) {
+    fn show(only: Option<&str>, watch: bool) {
         let s = style();
-        if once {
-            for line in render(&s) {
+        if !watch {
+            for line in render(&s, only) {
                 println!("{line}");
             }
             return;
         }
-        // redraw in place: home the cursor, clear each line's tail, then
-        // clear whatever the previous frame left below. no full-screen
-        // wipes, so no flicker and no scrollback spam.
         print!("\x1b[2J");
         loop {
             print!("\x1b[H");
-            for line in render(&s) {
+            for line in render(&s, only) {
                 print!("{line}\x1b[K\n");
             }
             print!("{}refreshing every 2s - ctrl-c to quit{}\x1b[K\x1b[0J", s.dim, s.reset);
@@ -404,7 +404,7 @@ pkgs.writers.writeRustBin "fencr"
         }
         match args.first().map(String::as_str) {
             Some("list") => print_list(),
-            Some("dashboard") => dashboard(args.iter().any(|a| a == "--once")),
+            Some("dashboard") => show(None, !args.iter().any(|a| a == "--once")),
             Some("ssh") => {
                 let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
                 let vm = find(name);
@@ -425,9 +425,12 @@ pkgs.writers.writeRustBin "fencr"
                     .exec());
             }
             Some("status") => {
-                let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-                let vm = find(name);
+                let name = args.get(1).filter(|arg| !arg.starts_with('-')).map(String::as_str);
+                if let Some(name) = name {
+                    find(name);
+                }
                 if args.iter().any(|a| a == "--full") {
+                    let vm = name.map(find).unwrap_or_else(|| usage());
                     fail(Command::new(SYSTEMCTL)
                         .arg("status")
                         .arg(format!("microvm@{}.service", vm.0))
@@ -435,7 +438,7 @@ pkgs.writers.writeRustBin "fencr"
                         .arg("--no-pager")
                         .exec());
                 }
-                print_status(vm, &style());
+                show(name, args.iter().any(|a| a == "--watch"));
             }
             Some("update") => {
                 // flakelet owns its namespace, so the name passes through
