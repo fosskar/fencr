@@ -64,6 +64,14 @@ in
       default = { };
       description = "host files staged read-only into the vm under /run/agent-secrets.";
     };
+    egress = {
+      type = types.enum "egress" [
+        "open"
+        "closed"
+      ];
+      default = "open";
+      description = "open: internet and dns reachable, private ranges sealed. closed: only allowedTCPDestinations.";
+    };
     allowedTCPDestinations = {
       type = types.listOf destinationType;
       default = [ ];
@@ -106,6 +114,7 @@ in
           vcpu
           mem
           dns
+          egress
           hostForwards
           ;
         allowedTCPDestinations = map core.parseDestination options.allowedTCPDestinations;

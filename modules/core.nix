@@ -182,20 +182,38 @@ rec {
     }
     // proxyHardening;
 
-  # forward-chain fragment sealing a bridge: dns and declared pinholes only,
-  # every other private range dropped, internet open, replies allowed
-  forwardFilterFragment = cfg: ''
-    iifname "${cfg.bridge}" meta nfproto ipv6 drop
-    iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 accept
-    iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 accept
-    ${lib.concatMapStringsSep "\n" (
+  # forward-chain fragment sealing a bridge. egress "open": dns and declared
+  # pinholes plus the internet, every other private range dropped. egress
+  # "closed": nothing but the declared pinholes, dns included in nothing.
+  # replies to whatever was allowed flow back either way.
+  forwardFilterFragment =
+    cfg:
+    ''
+      iifname "${cfg.bridge}" meta nfproto ipv6 drop
+    ''
+    + lib.optionalString (cfg.egress == "open") ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 accept
+      iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 accept
+    ''
+    + lib.concatMapStringsSep "\n" (
       destination:
       ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} accept''
-    ) cfg.allowedTCPDestinations}
-    iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } drop
-    iifname "${cfg.bridge}" accept
-    oifname "${cfg.bridge}" ct state established,related accept
-  '';
+    ) cfg.allowedTCPDestinations
+    + "\n"
+    + (
+      if cfg.egress == "open" then
+        ''
+          iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } drop
+          iifname "${cfg.bridge}" accept
+        ''
+      else
+        ''
+          iifname "${cfg.bridge}" drop
+        ''
+    )
+    + ''
+      oifname "${cfg.bridge}" ct state established,related accept
+    '';
 
   natRuleFragment = cfg: ''
     ip saddr ${cfg.ip} oifname != "${cfg.bridge}" masquerade

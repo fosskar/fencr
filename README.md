@@ -10,6 +10,7 @@ fencr.vms.myagent = {
   services = [ my-agent-module ];
 
   # internet: yes. LAN, mesh, sibling VMs: no. that is the default.
+  # egress = "closed" blocks everything beyond the pinholes, dns included.
   allowedTCPDestinations = [ "192.168.1.50:8123" ];
 
   # "expose" opens a host endpoint into the vm; 33627 is "fencr" on a

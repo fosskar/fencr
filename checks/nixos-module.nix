@@ -34,6 +34,14 @@ self: system:
     ];
   };
 
+  fencr.vms.sealed = {
+    id = 1;
+    vcpu = 1;
+    mem = 512;
+    dns = "9.9.9.9";
+    egress = "closed";
+  };
+
   system.stateVersion = "25.11";
 
   nixpkgs.hostPlatform = system;

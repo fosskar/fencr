@@ -14,6 +14,7 @@ let
       vcpu = 2;
       mem = 1024;
       dns = "9.9.9.9";
+      egress = "open";
       adminPublicKey = null;
       secrets = { };
       allowedTCPDestinations = [ "192.168.1.50:8123" ];

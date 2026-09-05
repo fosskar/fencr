@@ -127,6 +127,19 @@ in
               '';
             };
 
+            egress = lib.mkOption {
+              type = lib.types.enum [
+                "open"
+                "closed"
+              ];
+              default = "open";
+              description = ''
+                "open": internet and dns reachable, private ranges sealed.
+                "closed": nothing reachable beyond allowedTCPDestinations,
+                dns included.
+              '';
+            };
+
             allowedTCPDestinations = lib.mkOption {
               type = lib.types.listOf destinationType;
               default = [ ];
