@@ -310,6 +310,22 @@ in
         ) instances
       );
 
+    # remote callers cannot ProxyJump to a vm that has no tcp address, so
+    # this resolves name to cid server-side: ProxyCommand ssh <server>
+    # fencr-connect <vm-name>
+    environment.systemPackages = lib.mkIf (instances != { }) [
+      (pkgs.writeShellScriptBin "fencr-connect" ''
+        case "$1" in
+        ${lib.concatStrings (
+          lib.mapAttrsToList (name: cfg: ''
+            ${name}) exec ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString (core.cidOf cfg)}:22 ;;
+          '') instances
+        )}
+        *) echo "fencr-connect: unknown vm \"$1\"" >&2; exit 1 ;;
+        esac
+      '')
+    ];
+
     # `ssh <vm-name>` reaches the guest's vsock sshd; vsock connect is
     # unprivileged, so any host user holding an authorized key gets in
     # with their own identity. no bridge ip, no network listener anywhere
