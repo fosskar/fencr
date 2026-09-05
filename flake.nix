@@ -58,6 +58,8 @@
 
         flakelet = import ./checks/flakelet.nix self pkgs;
 
+        flakelet-boot = import ./checks/flakelet-boot.nix self pkgs;
+
         ingress = import ./checks/ingress.nix self pkgs;
       });
 
