@@ -44,7 +44,7 @@ update independently of the host (`flakelets.default`).
 `fencr.adminKeys` opens every vm to the operator,
 `fencr.vms.<name>.authorizedKeys` hands one vm to its owner — a public
 key is the identity, no host account needed. `ssh <vm-name>` on the
-host, `ProxyCommand ssh server fencr-connect <vm-name>` from anywhere
+host, `ProxyCommand ssh server fencr proxy <vm-name>` from anywhere
 else. [docs/access.md](docs/access.md) has the detail.
 
 ## Status

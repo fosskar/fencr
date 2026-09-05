@@ -149,6 +149,17 @@ rec {
   # guest's loopback proxy port and the vsock port.
   proxyPortOf = cfg: 13128 + cfg.id;
 
+  proxyOf = cfg: if cfg.allowedDomains == [ ] then null else { port = proxyPortOf cfg; };
+
+  hostForwardsOf =
+    cfg:
+    cfg.hostForwards
+    ++ lib.optional (proxyOf cfg != null) {
+      vsockPort = (proxyOf cfg).port;
+      targetPort = (proxyOf cfg).port;
+      broker = null;
+    };
+
   # a pattern is a hostname, optionally with a leading "*." label. anything
   # else is rejected: "*github.com" also matches evilgithub.com, and stray
   # fnmatch metacharacters widen the allowlist silently.
@@ -175,7 +186,7 @@ rec {
       Allow 127.0.0.1
       Timeout 600
       MaxClients 32
-      LogLevel Warning
+      LogLevel Connect
       DisableViaHeader Yes
       FilterType fnmatch
       FilterDefaultDeny Yes
@@ -256,29 +267,36 @@ rec {
   # pinholes plus the internet, every other private range dropped. egress
   # "closed": nothing but the declared pinholes, dns included in nothing.
   # replies to whatever was allowed flow back either way.
+  # counters and comments feed `fencr dashboard`; drops also log with a
+  # rate limit so the journal shows who knocked without flooding
   forwardFilterFragment =
     cfg:
+    let
+      tag = kind: ''comment "fencr:${cfg.name}:${kind}"'';
+    in
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
     ''
     + lib.optionalString (cfg.egress == "open") ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 accept
-      iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 accept
+      iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 counter accept ${tag "dns"}
+      iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 counter accept ${tag "dns-tcp"}
     ''
     + lib.concatMapStringsSep "\n" (
       destination:
-      ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} accept''
+      ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} counter accept ${tag "pin-${destination.address}-${toString destination.port}"}''
     ) cfg.allowedTCPDestinations
     + "\n"
     + (
       if cfg.egress == "open" then
         ''
-          iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } drop
-          iifname "${cfg.bridge}" accept
+          iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } limit rate 5/second log prefix "fencr-${cfg.name}-blocked: "
+          iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } counter drop ${tag "blocked-private"}
+          iifname "${cfg.bridge}" counter accept ${tag "internet"}
         ''
       else
         ''
-          iifname "${cfg.bridge}" drop
+          iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-blocked: "
+          iifname "${cfg.bridge}" counter drop ${tag "blocked"}
         ''
     )
     + ''
@@ -296,10 +314,13 @@ rec {
       iifname "${cfg.bridge}" ct state established,related accept
     ''
     + lib.optionalString (ports != [ ]) ''
-      iifname "${cfg.bridge}" tcp dport { ${lib.concatMapStringsSep ", " toString ports} } accept
+      iifname "${cfg.bridge}" tcp dport { ${
+        lib.concatMapStringsSep ", " toString ports
+      } } counter accept comment "fencr:${cfg.name}:host"
     ''
     + ''
-      iifname "${cfg.bridge}" counter drop
+      iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-host-blocked: "
+      iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
     '';
 
   # the environment itself: hardware shape, network posture, and a /var/lib

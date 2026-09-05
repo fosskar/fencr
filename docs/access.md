@@ -36,13 +36,26 @@ Clean, end-to-end — put this in your own `~/.ssh/config`:
 ```
 Host myvm
   User root
-  ProxyCommand ssh server fencr-connect <vm-name>
+  ProxyCommand ssh server fencr proxy <vm-name>
 ```
 
-`fencr-connect` ships with the module on every fencr host and resolves
-the vm name to its vsock address server-side. Your ssh authenticates
-directly against the vm; the server only shuttles bytes and never sees
-your agent.
+The `fencr` command ships with the module on every fencr host; `proxy`
+resolves the vm name to its vsock address server-side. Your ssh
+authenticates directly against the vm; the server only shuttles bytes
+and never sees your agent.
+
+On the host itself the same tool covers the day-to-day reads:
+
+```console
+fencr list        # declared vms: id, cid, ip, egress, domain count
+fencr ssh sbx     # shell in the vm
+fencr status sbx  # the vm unit plus its forward/proxy/broker units
+```
+
+`fencr update` exists only to tell you where updates actually happen:
+the system configuration on a nixos host, `flakelet update` on a
+flakelet host. fencr deliberately has no mutating commands —
+`nixos-rebuild` is the control plane.
 
 ## host root, stated plainly
 

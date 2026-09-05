@@ -45,15 +45,7 @@ let
   forwardUnit = name: forward: "${name}-forward-${toString forward.listenPort}";
   hostForwardUnit = name: forward: "${name}-host-forward-${toString forward.vsockPort}";
   brokerUnit = name: forward: "${name}-broker-${toString forward.vsockPort}";
-  proxyOf = cfg: if cfg.allowedDomains == [ ] then null else { port = core.proxyPortOf cfg; };
-  hostForwardsOf =
-    cfg:
-    cfg.hostForwards
-    ++ lib.optional (proxyOf cfg != null) {
-      vsockPort = (proxyOf cfg).port;
-      targetPort = (proxyOf cfg).port;
-      broker = null;
-    };
+  inherit (core) proxyOf hostForwardsOf;
   brokeredOf = cfg: lib.filter (forward: forward.broker != null) cfg.hostForwards;
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f instances);
 in
@@ -310,20 +302,15 @@ in
         ) instances
       );
 
-    # remote callers cannot ProxyJump to a vm that has no tcp address, so
-    # this resolves name to cid server-side: ProxyCommand ssh <server>
-    # fencr-connect <vm-name>
     environment.systemPackages = lib.mkIf (instances != { }) [
-      (pkgs.writeShellScriptBin "fencr-connect" ''
-        case "$1" in
-        ${lib.concatStrings (
-          lib.mapAttrsToList (name: cfg: ''
-            ${name}) exec ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString (core.cidOf cfg)}:22 ;;
-          '') instances
-        )}
-        *) echo "fencr-connect: unknown vm \"$1\"" >&2; exit 1 ;;
-        esac
-      '')
+      (import ./cli.nix {
+        inherit
+          lib
+          pkgs
+          core
+          instances
+          ;
+      })
     ];
 
     # `ssh <vm-name>` reaches the guest's vsock sshd; vsock connect is
@@ -555,7 +542,7 @@ in
       # compromised agent cannot walk the lan, a mesh, or a sibling
       # agent vm's subnet
       extraForwardRules = lib.concatStrings (
-        lib.mapAttrsToList (_: cfg: core.forwardFilterFragment cfg) instances
+        lib.mapAttrsToList (name: cfg: core.forwardFilterFragment (cfg // { inherit name; })) instances
       );
     };
 
@@ -570,8 +557,8 @@ in
           type filter hook input priority filter - 1; policy accept;
           ${lib.concatStrings (
             lib.mapAttrsToList (
-              _: cfg:
-              core.sealInputFragment cfg (
+              name: cfg:
+              core.sealInputFragment (cfg // { inherit name; }) (
                 lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts
               )
             ) instances

@@ -121,17 +121,12 @@ in
         else if options.egress != "closed" then
           throw "fencr: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration"
         else
-          { port = core.proxyPortOf options; };
+          core.proxyOf options;
 
-      hostForwards =
-        options.hostForwards
-        ++ lib.optional (proxy != null) {
-          vsockPort = proxy.port;
-          targetPort = proxy.port;
-          broker = null;
-        };
+      hostForwards = core.hostForwardsOf options;
 
       cfg = {
+        inherit name;
         inherit (options)
           id
           vcpu
