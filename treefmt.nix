@@ -6,5 +6,6 @@
     deadnix.enable = true;
     statix.enable = true;
     mdformat.enable = true;
+    rustfmt.enable = true;
   };
 }
