@@ -234,7 +234,7 @@ rec {
       }
       http://127.0.0.1:${toString broker.port} {
         reverse_proxy 127.0.0.1:${toString targetPort} {
-          header_up ${broker.header} {$FENCR_BROKER_SECRET}
+          header_up ${broker.header} "{$FENCR_BROKER_SECRET}"
         }
       }
     '';
