@@ -305,16 +305,16 @@ in
         ) instances
       );
 
-    # root on the host is the only thing that can reach the bridges, so
-    # `ssh <vm-name>` from the host logs in as root
+    # `ssh <vm-name>` from the host reaches the guest's vsock sshd; no
+    # bridge ip, no network listener anywhere
     programs.ssh.extraConfig = lib.mkIf (adminCfg.identityFile != null) (
       lib.concatStrings (
         lib.mapAttrsToList (name: cfg: ''
-          Host ${name} ${cfg.ip}
-            HostName ${cfg.ip}
+          Host ${name}
             User root
             IdentityFile ${adminCfg.identityFile}
             IdentitiesOnly yes
+            ProxyCommand ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString (core.cidOf cfg)}:22
             StrictHostKeyChecking accept-new
         '') instances
       )

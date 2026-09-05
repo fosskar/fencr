@@ -11,6 +11,11 @@ self: system:
     fsType = "ext4";
   };
 
+  fencr.admin = {
+    identityFile = "/root/.ssh/fencr_ed25519";
+    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderPlaceholderPlaceholderPlacehol check";
+  };
+
   fencr.vms.sbx = {
     id = 0;
     vcpu = 2;

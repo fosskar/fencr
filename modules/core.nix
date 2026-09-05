@@ -357,28 +357,41 @@ rec {
       # on the guest side of it. the relayed service itself only binds
       # loopback. host forwards get the mirror image: a loopback listener
       # relayed to the host's vsock cid.
-      systemd.services = lib.listToAttrs (
-        map (forward: {
-          name = "fencr-vsock-proxy-${toString forward.guestPort}";
-          value = {
-            description = "vsock proxy for port ${toString forward.guestPort}";
-            wantedBy = [ "multi-user.target" ];
-            serviceConfig = proxyHardening // {
-              ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString forward.guestPort},fork TCP:127.0.0.1:${toString forward.guestPort}";
+      systemd.services = lib.mkMerge [
+        (lib.mkIf (agentSandbox.adminPublicKey != null) {
+          "sshd-vsock@" = {
+            description = "sshd for a vsock connection";
+            unitConfig.CollectMode = "inactive-or-failed";
+            serviceConfig = {
+              ExecStart = "-${pkgs.openssh}/bin/sshd -i -f /etc/ssh/sshd_config";
+              StandardInput = "socket";
+              StandardError = "journal";
             };
           };
-        }) agentSandbox.expose
-        ++ map (forward: {
-          name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
-          value = {
-            description = "host vsock proxy for port ${toString forward.targetPort}";
-            wantedBy = [ "multi-user.target" ];
-            serviceConfig = proxyHardening // {
-              ExecStart = "${pkgs.socat}/bin/socat TCP4-LISTEN:${toString forward.targetPort},bind=127.0.0.1,fork VSOCK-CONNECT:2:${toString forward.vsockPort}";
+        })
+        (lib.listToAttrs (
+          map (forward: {
+            name = "fencr-vsock-proxy-${toString forward.guestPort}";
+            value = {
+              description = "vsock proxy for port ${toString forward.guestPort}";
+              wantedBy = [ "multi-user.target" ];
+              serviceConfig = proxyHardening // {
+                ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString forward.guestPort},fork TCP:127.0.0.1:${toString forward.guestPort}";
+              };
             };
-          };
-        }) agentSandbox.hostForwards
-      );
+          }) agentSandbox.expose
+          ++ map (forward: {
+            name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
+            value = {
+              description = "host vsock proxy for port ${toString forward.targetPort}";
+              wantedBy = [ "multi-user.target" ];
+              serviceConfig = proxyHardening // {
+                ExecStart = "${pkgs.socat}/bin/socat TCP4-LISTEN:${toString forward.targetPort},bind=127.0.0.1,fork VSOCK-CONNECT:2:${toString forward.vsockPort}";
+              };
+            };
+          }) agentSandbox.hostForwards
+        ))
+      ];
 
       networking = {
         useDHCP = false;
@@ -399,6 +412,17 @@ rec {
         };
       };
 
+      # admin ssh rides vsock, not the bridge: a socket-activated sshd on
+      # vsock port 22, existing only when a key is authorized
+      systemd.sockets.sshd-vsock = lib.mkIf (agentSandbox.adminPublicKey != null) {
+        description = "sshd on vsock";
+        wantedBy = [ "sockets.target" ];
+        listenStreams = [ "vsock::22" ];
+        socketConfig = {
+          Accept = true;
+          MaxConnections = 16;
+        };
+      };
       # /etc is rebuilt on every boot, so keep the host key on the state
       # volume; otherwise the host's known_hosts breaks each time
       systemd.tmpfiles.rules = [ "d /var/lib/ssh 0700 root root - -" ];
