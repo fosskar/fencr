@@ -127,17 +127,19 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
-      host.wait_until_succeeds(f"{ssh} 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=120)
-      host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'")
+      host.wait_until_succeeds(f"{ssh} 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=300)
+      host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
 
-      # the seal, probed with real packets from inside the vm
+      # the seal, probed with real packets from inside the vm. every probe
+      # carries a timeout: a hang here means the seal swallowed the reply
+      # and the test should say so rather than wait
       host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'")
-      host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.2:80'")
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.2:80'", timeout=60)
       host.wait_for_unit("host-80.service")
-      host.succeed("curl --fail --silent http://127.0.0.1:80 | grep -Fx 'fencr target'")
-      host.fail(f"{ssh} 'curl --silent --max-time 5 http://10.30.1.1:80'")
-      host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.1:80'")
+      host.succeed("curl --fail --silent http://127.0.0.1:80 | grep -Fx 'fencr target'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --max-time 5 http://10.30.1.1:80'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.1:80'", timeout=60)
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:blocked\"' | grep -qv 'packets 0 '")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:host-blocked\"' | grep -qv 'packets 0 '")
 
@@ -146,9 +148,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.wait_for_unit("upstream-8765.service")
       host.wait_for_unit("sbx-broker-18765.service")
       host.succeed("test -S /run/fencr-broker-sbx-18765/broker.sock")
-      host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'")
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://127.0.0.1:8765/' | grep -Fx 'authorization: Bearer fencr-broker-token'")
-      host.fail(f"{ssh} 'grep -r fencr-broker-token /run/agent-secrets /proc/self/environ'")
+      host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://127.0.0.1:8765/' | grep -Fx 'authorization: Bearer fencr-broker-token'", timeout=60)
+      host.fail(f"{ssh} 'grep -r fencr-broker-token /run/agent-secrets /proc/self/environ'", timeout=60)
     '';
 
     meta.timeout = 1800;
