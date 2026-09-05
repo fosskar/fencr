@@ -57,6 +57,8 @@
           }).config.system.build.toplevel;
 
         flakelet = import ./checks/flakelet.nix self pkgs;
+
+        ingress = import ./checks/ingress.nix self pkgs;
       });
 
       devShells = forAllSystems (pkgs: {

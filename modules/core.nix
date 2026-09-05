@@ -575,8 +575,8 @@ rec {
       # relayed to the host's vsock cid.
       systemd.services = lib.mkMerge [
         (lib.mkIf (agentSandbox.sshKeys != [ ]) {
-          "sshd-vsock@" = {
-            description = "sshd for a vsock connection";
+          "fencr-sshd-vsock@" = {
+            description = "sshd for a fencr vsock connection";
             unitConfig.CollectMode = "inactive-or-failed";
             serviceConfig = {
               ExecStart = "-${pkgs.openssh}/bin/sshd -i -f /etc/ssh/sshd_config";
@@ -628,10 +628,11 @@ rec {
         };
       };
 
-      # ssh rides vsock, not the bridge: a socket-activated sshd on vsock
-      # port 22, existing only when a key is authorized
-      systemd.sockets.sshd-vsock = lib.mkIf (agentSandbox.sshKeys != [ ]) {
-        description = "sshd on vsock";
+      # fencr owns vsock port 22 rather than merging with the socket emitted
+      # by systemd-ssh-generator
+      boot.kernelParams = [ "systemd.ssh_auto=0" ];
+      systemd.sockets.fencr-sshd-vsock = lib.mkIf (agentSandbox.sshKeys != [ ]) {
+        description = "sshd on fencr vsock";
         wantedBy = [ "sockets.target" ];
         listenStreams = [ "vsock::22" ];
         socketConfig = {

@@ -2,8 +2,33 @@ self: system:
 
 # Evaluation smoke test: a machine with one instance exercising forwards,
 # host forwards and the credential broker.
+{ config, lib, ... }:
+let
+  guestConfig = config.microvm.vms.sbx.config.config;
+  expectedHostSockets = [
+    "sbx-forward-33627"
+    "sbx-forward-33628"
+    "sbx-host-forward-18764"
+  ];
+  missingHostSockets = lib.filter (name: !(config.systemd.sockets ? ${name})) expectedHostSockets;
+in
 {
   imports = [ self.nixosModules.fencr ];
+
+  assertions = [
+    {
+      assertion = missingHostSockets == [ ];
+      message = "nixos module check: missing host sockets ${toString missingHostSockets}";
+    }
+    {
+      assertion = guestConfig.systemd.sockets ? fencr-sshd-vsock;
+      message = "nixos module check: missing guest socket fencr-sshd-vsock";
+    }
+    {
+      assertion = guestConfig.systemd.services ? "fencr-sshd-vsock@";
+      message = "nixos module check: missing guest service fencr-sshd-vsock@";
+    }
+  ];
 
   boot.loader.grub.devices = [ "/dev/sda" ];
   fileSystems."/" = {
