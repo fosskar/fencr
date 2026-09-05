@@ -26,7 +26,6 @@ let
     })
   ];
   brokerType = types.struct "broker" {
-    port = types.int;
     header = types.string;
     secretFile = types.string;
   };

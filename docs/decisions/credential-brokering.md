@@ -28,14 +28,15 @@ context. Keys outlive sessions, capabilities do not.
 ## v0 shape and its edges
 
 - one broker per brokered hostForward: a caddy `reverse_proxy` with
-  `header_up`, listening on a declared host loopback port
+  `header_up`, listening on a unix socket in its own runtime directory
+  (`/run/fencr-broker-<vm>-<vsockPort>/broker.sock`, group `kvm`)
 - the secret file holds the raw header value (for example `Bearer x`);
   it is handed to the unit as a systemd credential, the unit runs as
   `DynamicUser`
-- the broker listens on host loopback tcp, so other host processes could
-  reach it and act with the injected credential. acceptable on a
-  single-user host; a unix-socket listener with peer credentials is
-  the hardening step if this assumption breaks
+- the broker has no host loopback port. only members of group `kvm`
+  reach its socket, and on a fencr host that is the cid-checked relay
+  and the hypervisor units; another host process cannot borrow the
+  credential through it
 - http only. tls-originating forward proxies for external apis are out of
   scope for v0 and belong to the same roadmap line as name-based egress
   rules

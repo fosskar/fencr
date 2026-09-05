@@ -38,7 +38,6 @@ let
           vsockPort = 18764;
           targetPort = 8764;
           broker = {
-            port = 28764;
             header = "Authorization";
             secretFile = "/run/secrets/broker-token";
           };
@@ -186,4 +185,11 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   result.sockets."hfwd-18764".socketConfig.TriggerLimitIntervalSec == 0
 ) "unit check: vsock trigger limit is enabled";
+assert lib.assertMsg (
+  result.services."broker-18764".serviceConfig.RuntimeDirectory == "fencr-broker-sbx-18764"
+  && result.services."broker-18764".serviceConfig.Group == "kvm"
+  &&
+    lib.hasSuffix "unix:/run/fencr-broker-sbx-18764/broker.sock"
+      result.services."hfwd-18764@".serviceConfig.ExecStart
+) "unit check: broker is not on its unix socket";
 pkgs.writeText "fencr-flakelet-check" (builtins.toJSON result)

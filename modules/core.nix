@@ -211,9 +211,13 @@ rec {
   hostForwardCommand =
     pkgs: cfg: forward:
     let
-      target = if forward.broker != null then forward.broker.port else forward.targetPort;
+      target =
+        if forward.broker != null then
+          "unix:${brokerSocketOf cfg forward}"
+        else
+          toString forward.targetPort;
     in
-    "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString (cidOf cfg)} ${toString target}";
+    "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString (cidOf cfg)} ${target}";
 
   # domain-allowlist egress: the guest's only way out is a host-side
   # tinyproxy reached over vsock; it enforces the allowlist on the CONNECT
@@ -289,15 +293,23 @@ rec {
 
   # the credential broker: the guest talks plain http through the vsock
   # forward; this proxy holds the secret and injects the header on the host
-  # side, so the value never exists inside the vm.
+  # side, so the value never exists inside the vm. it listens on a unix
+  # socket in its own runtime directory, group kvm, so only the cid-checked
+  # relay reaches it: no host loopback port, nothing for another host
+  # process to borrow the credential through.
+  brokerRuntimeDirOf = cfg: forward: "fencr-broker-${cfg.name}-${toString forward.vsockPort}";
+
+  brokerSocketOf = cfg: forward: "/run/${brokerRuntimeDirOf cfg forward}/broker.sock";
+
   brokerCaddyfile =
-    pkgs: broker: targetPort:
+    pkgs: socket: broker: targetPort:
     pkgs.writeText "fencr-broker.caddyfile" ''
       {
         admin off
         auto_https off
       }
-      http://127.0.0.1:${toString broker.port} {
+      http:// {
+        bind unix/${socket}|0660
         reverse_proxy 127.0.0.1:${toString targetPort} {
           header_up ${broker.header} "{$FENCR_BROKER_SECRET}"
         }
@@ -305,26 +317,33 @@ rec {
     '';
 
   brokerExec =
-    pkgs: broker: targetPort:
+    pkgs: socket: broker: targetPort:
     pkgs.writeShellScript "fencr-broker" ''
       FENCR_BROKER_SECRET="$(cat "$CREDENTIALS_DIRECTORY/secret")"
       export FENCR_BROKER_SECRET
       exec ${pkgs.caddy}/bin/caddy run --config ${
-        brokerCaddyfile pkgs broker targetPort
+        brokerCaddyfile pkgs socket broker targetPort
       } --adapter caddyfile
     '';
 
   brokerServiceConfig =
-    pkgs: broker: targetPort:
-    {
-      ExecStart = "${brokerExec pkgs broker targetPort}";
-      LoadCredential = "secret:${broker.secretFile}";
+    pkgs: cfg: forward:
+    proxyHardening
+    // {
+      ExecStart = "${brokerExec pkgs (brokerSocketOf cfg forward) forward.broker forward.targetPort}";
+      LoadCredential = "secret:${forward.broker.secretFile}";
       Environment = [
         "XDG_DATA_HOME=/tmp"
         "XDG_CONFIG_HOME=/tmp"
       ];
-    }
-    // proxyHardening;
+      Group = "kvm";
+      RuntimeDirectory = brokerRuntimeDirOf cfg forward;
+      RuntimeDirectoryMode = "0750";
+      RestrictAddressFamilies = [
+        "AF_INET"
+        "AF_UNIX"
+      ];
+    };
 
   resolveInstance =
     {
@@ -417,10 +436,7 @@ rec {
       brokeredForwards = lib.filter (forward: forward.broker != null) declaredHostForwards;
       forwardEndpoints =
         map (forward: "tcp:${forward.listenAddress}:${toString forward.listenPort}") expose
-        ++ map (forward: "vsock:${toString forward.vsockPort}") hostForwards
-        ++ map (forward: "tcp:127.0.0.1:${toString forward.broker.port}") (
-          lib.filter (forward: forward.broker != null) declaredHostForwards
-        );
+        ++ map (forward: "vsock:${toString forward.vsockPort}") hostForwards;
     };
 
   fleetErrors =
@@ -460,9 +476,19 @@ rec {
           after = [ frontend.vmUnit ];
           requires = [ frontend.vmUnit ];
           unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig = forwardHardening // {
-            ExecStart = hostForwardCommand pkgs instance forward;
-          };
+          serviceConfig =
+            forwardHardening
+            // {
+              ExecStart = hostForwardCommand pkgs instance forward;
+            }
+            // lib.optionalAttrs (forward.broker != null) {
+              SupplementaryGroups = [ "kvm" ];
+              RestrictAddressFamilies = [
+                "AF_INET"
+                "AF_VSOCK"
+                "AF_UNIX"
+              ];
+            };
         };
       }) instance.hostForwards;
       brokerServices = map (forward: {
@@ -470,7 +496,7 @@ rec {
         value = {
           description = "credential broker for ${instance.name} vsock port ${toString forward.vsockPort}";
           wantedBy = [ "multi-user.target" ];
-          serviceConfig = brokerServiceConfig pkgs forward.broker forward.targetPort;
+          serviceConfig = brokerServiceConfig pkgs instance forward;
         };
       }) instance.brokeredForwards;
       forwardSockets = map (forward: {
@@ -529,7 +555,7 @@ rec {
         proxy = lib.optional (instance.proxy != null) "${proxyName}.service";
         brokers = map (forward: {
           unit = "${brokerName forward}.service";
-          label = "broker 127.0.0.1:${toString forward.broker.port} -> ${toString forward.targetPort}";
+          label = "broker ${brokerSocketOf instance forward} -> ${toString forward.targetPort}";
         }) instance.brokeredForwards;
       };
     };

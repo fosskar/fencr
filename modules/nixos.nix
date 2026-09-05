@@ -192,10 +192,6 @@ in
                       type = lib.types.nullOr (
                         lib.types.submodule {
                           options = {
-                            port = lib.mkOption {
-                              type = lib.types.port;
-                              description = "host loopback port the broker listens on.";
-                            };
                             header = lib.mkOption {
                               type = lib.types.str;
                               default = "Authorization";

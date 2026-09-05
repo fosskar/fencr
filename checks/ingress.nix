@@ -7,6 +7,21 @@ let
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
   rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
+  brokerSecret = pkgs.writeText "fencr-test-broker-secret" "Bearer fencr-broker-token\n";
+  # the brokered api: echoes the Authorization header it received
+  upstream = pkgs.writeText "fencr-test-upstream.py" ''
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = ("authorization: %s\n" % self.headers.get("Authorization")).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
+  '';
 in
 import (pkgs.path + "/nixos/tests/make-test-python.nix")
   ({ pkgs, ... }: {
@@ -39,6 +54,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         wantedBy = [ "multi-user.target" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 80 --bind 0.0.0.0 --directory ${targetRoot}";
       };
+      systemd.services.upstream-8765 = {
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${upstream}";
+      };
 
       fencr.vms.sbx = {
         id = 0;
@@ -53,6 +72,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
             listenAddress = "127.0.0.1";
             listenPort = 22100;
             guestPort = 9119;
+          }
+        ];
+        # the credential broker: the guest calls 127.0.0.1:8765, the host
+        # injects the bearer token, the value never enters the vm
+        hostForwards = [
+          {
+            vsockPort = 18765;
+            targetPort = 8765;
+            broker.secretFile = brokerSecret;
           }
         ];
         services = [
@@ -112,6 +140,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.1:80'")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:blocked\"' | grep -qv 'packets 0 '")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:host-blocked\"' | grep -qv 'packets 0 '")
+
+      # the credential broker, end to end: the guest sees the header injected,
+      # the upstream called directly sees none, and the broker has no tcp port
+      host.wait_for_unit("upstream-8765.service")
+      host.wait_for_unit("sbx-broker-18765.service")
+      host.succeed("test -S /run/fencr-broker-sbx-18765/broker.sock")
+      host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'")
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://127.0.0.1:8765/' | grep -Fx 'authorization: Bearer fencr-broker-token'")
+      host.fail(f"{ssh} 'grep -r fencr-broker-token /run/agent-secrets /proc/self/environ'")
     '';
 
     meta.timeout = 1800;

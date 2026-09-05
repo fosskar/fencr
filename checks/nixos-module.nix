@@ -85,10 +85,7 @@ in
       {
         vsockPort = 18764;
         targetPort = 8764;
-        broker = {
-          port = 28764;
-          secretFile = "/run/secrets/broker-token";
-        };
+        broker.secretFile = "/run/secrets/broker-token";
       }
     ];
   };
