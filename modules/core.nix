@@ -110,31 +110,39 @@ rec {
     ];
   };
 
-  deniedDestinationNetworks = [
-    "0.0.0.0/8"
-    "10.0.0.0/8"
-    "100.64.0.0/10"
-    "127.0.0.0/8"
-    "169.254.0.0/16"
-    "172.16.0.0/12"
-    "192.0.0.0/24"
-    "192.0.2.0/24"
-    "192.168.0.0/16"
-    "198.18.0.0/15"
-    "198.51.100.0/24"
-    "203.0.113.0/24"
-    "224.0.0.0/4"
-    "240.0.0.0/4"
-    "::/128"
-    "::1/128"
-    "::ffff:0:0/96"
-    "64:ff9b::/96"
-    "100::/64"
-    "2001:db8::/32"
-    "fc00::/7"
-    "fe80::/10"
-    "ff00::/8"
-  ];
+  # destinations a vm never reaches, even with open egress: private, link-local,
+  # multicast and other special-use ranges. the firewall enforces the v4 list
+  # on the bridge (v6 is dropped wholesale there); the egress proxy unit
+  # enforces both on its own sockets
+  specialUseNetworks = {
+    v4 = [
+      "0.0.0.0/8"
+      "10.0.0.0/8"
+      "100.64.0.0/10"
+      "127.0.0.0/8"
+      "169.254.0.0/16"
+      "172.16.0.0/12"
+      "192.0.0.0/24"
+      "192.0.2.0/24"
+      "192.168.0.0/16"
+      "198.18.0.0/15"
+      "198.51.100.0/24"
+      "203.0.113.0/24"
+      "224.0.0.0/4"
+      "240.0.0.0/4"
+    ];
+    v6 = [
+      "::/128"
+      "::1/128"
+      "::ffff:0:0/96"
+      "64:ff9b::/96"
+      "100::/64"
+      "2001:db8::/32"
+      "fc00::/7"
+      "fe80::/10"
+      "ff00::/8"
+    ];
+  };
 
   # host to guest: accepted tcp connection spliced to the guest's vsock port
   forwardCommand =
@@ -214,7 +222,7 @@ rec {
         "::/0"
         "127.0.0.1/32"
       ];
-      IPAddressDeny = deniedDestinationNetworks;
+      IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
       RestrictAddressFamilies = [
         "AF_INET"
         "AF_INET6"
@@ -478,6 +486,7 @@ rec {
     cfg:
     let
       tag = kind: ''comment "fencr:${cfg.name}:${kind}"'';
+      sealed = "{ ${lib.concatStringsSep ", " specialUseNetworks.v4} }";
     in
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
@@ -494,8 +503,8 @@ rec {
     + (
       if cfg.egress == "open" then
         ''
-          iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } limit rate 5/second log prefix "fencr-${cfg.name}-blocked: "
-          iifname "${cfg.bridge}" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } counter drop ${tag "blocked-private"}
+          iifname "${cfg.bridge}" ip daddr ${sealed} limit rate 5/second log prefix "fencr-${cfg.name}-blocked: "
+          iifname "${cfg.bridge}" ip daddr ${sealed} counter drop ${tag "blocked-private"}
           iifname "${cfg.bridge}" counter accept ${tag "internet"}
         ''
       else

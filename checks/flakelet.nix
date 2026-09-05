@@ -130,6 +130,7 @@ assert lib.assertMsg (
 ) "core check: expose was not resolved";
 assert lib.assertMsg (resolved.proxy.port == 13128) "core check: proxy was not resolved";
 assert lib.assertMsg (longName.errors != [ ]) "core check: long interface name accepted";
+assert lib.assertMsg (lib.all (net: lib.hasInfix net (core.firewallOf longName).standalone) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";
 assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
     "bindAddress"
