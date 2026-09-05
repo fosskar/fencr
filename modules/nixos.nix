@@ -355,15 +355,21 @@ in
     # the module needs no knowledge of the host's uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkDefault true;
 
-    networking.nftables.tables.fencr-nat = lib.mkIf (instances != { }) {
-      family = "ip";
-      content = ''
-        chain postrouting {
-          type nat hook postrouting priority srcnat; policy accept;
-          ${lib.concatStrings (lib.mapAttrsToList (_: cfg: (core.firewallOf cfg).nat) resolvedInstances)}
+    # the seal tables stand beside the main firewall rather than inside it, so
+    # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs
+    # before the seal, and the host keeps its own forward policy. the main
+    # firewall's interface rules only add ports, so globally open ones (sshd
+    # at least) would stay reachable from the bridges; the seal's input chain
+    # runs first and admits only the bridge's declared allowedTCPPorts
+    networking.nftables.tables = forEachInstance (
+      _: cfg:
+      (core.firewallOf (
+        cfg
+        // {
+          hostPorts = lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts;
         }
-      '';
-    };
+      )).tables
+    );
 
     systemd.network = forEachInstance (
       _name: cfg: {
@@ -385,44 +391,10 @@ in
       }
     );
 
-    networking.firewall = {
-      interfaces = forEachInstance (
-        _: cfg: {
-          ${cfg.bridge}.allowedTCPPorts = cfg.hostPorts;
-        }
-      );
-
-      filterForward = true;
-      # internet stays open; every private range is dropped, so a
-      # compromised agent cannot walk the lan, a mesh, or a sibling
-      # agent vm's subnet
-      extraForwardRules = lib.concatStrings (
-        lib.mapAttrsToList (_: cfg: (core.firewallOf cfg).forward) resolvedInstances
-      );
-    };
-
-    # the main firewall's interface rules only add ports, so globally
-    # open ones (sshd at least) stay reachable from the bridges. this
-    # chain runs before the main firewall and seals the vms' host access
-    # to each bridge's declared allowedTCPPorts
-    networking.nftables.tables.fencr-seal = lib.mkIf (instances != { }) {
-      family = "inet";
-      content = ''
-        chain input {
-          type filter hook input priority filter - 1; policy accept;
-          ${lib.concatStrings (
-            lib.mapAttrsToList (
-              _: cfg:
-              (core.firewallOf (
-                cfg
-                // {
-                  hostPorts = lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts;
-                }
-              )).input
-            ) resolvedInstances
-          )}
-        }
-      '';
-    };
+    networking.firewall.interfaces = forEachInstance (
+      _: cfg: {
+        ${cfg.bridge}.allowedTCPPorts = cfg.hostPorts;
+      }
+    );
   };
 }

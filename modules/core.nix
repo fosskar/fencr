@@ -537,34 +537,48 @@ rec {
       iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
     '';
 
+  # the seal as complete nftables tables. both frontends install exactly this
+  # text: the nixos module as networking.nftables.tables, the flakelet unit
+  # with nft -f. the tables stand on their own so no frontend chain runs
+  # ahead of them, and so the same text can be loaded and probed in a test
   firewallOf =
     cfg:
     let
-      nat = natRuleFragment cfg;
-      forward = forwardFilterFragment cfg;
-      input = sealInputFragment cfg cfg.hostPorts;
+      tables = {
+        "fencr-${cfg.name}-nat" = {
+          family = "ip";
+          content = ''
+            chain postrouting {
+              type nat hook postrouting priority srcnat; policy accept;
+              ${natRuleFragment cfg}
+            }
+          '';
+        };
+        "fencr-${cfg.name}" = {
+          family = "inet";
+          content = ''
+            chain forward {
+              type filter hook forward priority filter; policy accept;
+              ${forwardFilterFragment cfg}
+              oifname "${cfg.bridge}" drop
+            }
+            chain input {
+              type filter hook input priority -1; policy accept;
+              ${sealInputFragment cfg cfg.hostPorts}
+            }
+          '';
+        };
+      };
     in
     {
-      inherit nat forward input;
-      standalone = ''
-        table ip fencr-${cfg.name}-nat {
-          chain postrouting {
-            type nat hook postrouting priority srcnat; policy accept;
-            ${nat}
+      inherit tables;
+      standalone = lib.concatStrings (
+        lib.mapAttrsToList (name: table: ''
+          table ${table.family} ${name} {
+            ${table.content}
           }
-        }
-        table inet fencr-${cfg.name} {
-          chain forward {
-            type filter hook forward priority filter; policy accept;
-            ${forward}
-            oifname "${cfg.bridge}" drop
-          }
-          chain input {
-            type filter hook input priority -1; policy accept;
-            ${input}
-          }
-        }
-      '';
+        '') tables
+      );
     };
 
   # the environment itself: hardware shape, network posture, and a /var/lib
