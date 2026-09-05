@@ -281,6 +281,16 @@ in
         );
         message = "fencr.vms: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration.";
       }
+      {
+        assertion = lib.all (cfg: core.domainPatternErrors cfg.allowedDomains == [ ]) (
+          lib.attrValues instances
+        );
+        message = "fencr.vms: invalid allowedDomains: ${
+          lib.concatStringsSep "; " (
+            lib.concatMap (cfg: core.domainPatternErrors cfg.allowedDomains) (lib.attrValues instances)
+          )
+        }";
+      }
     ];
 
     fencr.forwardEndpoints =

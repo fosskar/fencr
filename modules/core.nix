@@ -149,6 +149,20 @@ rec {
   # guest's loopback proxy port and the vsock port.
   proxyPortOf = cfg: 13128 + cfg.id;
 
+  # a pattern is a hostname, optionally with a leading "*." label. anything
+  # else is rejected: "*github.com" also matches evilgithub.com, and stray
+  # fnmatch metacharacters widen the allowlist silently.
+  domainPatternError =
+    pattern:
+    if builtins.match "(\\*\\.)?([a-zA-Z0-9-]+\\.)+[a-zA-Z0-9-]+" pattern != null then
+      null
+    else if lib.hasPrefix "*" pattern && !lib.hasPrefix "*." pattern then
+      "\"${pattern}\": a wildcard must be its own label (\"*.example.com\"); \"*example.com\" also matches evilexample.com"
+    else
+      "\"${pattern}\": not a hostname pattern; expected \"example.com\" or \"*.example.com\"";
+
+  domainPatternErrors = domains: lib.filter (e: e != null) (map domainPatternError domains);
+
   proxyFilterFile =
     pkgs: domains:
     pkgs.writeText "fencr-egress-domains" (lib.concatMapStrings (domain: "${domain}\n") domains);

@@ -116,6 +116,8 @@ in
       proxy =
         if options.allowedDomains == [ ] then
           null
+        else if core.domainPatternErrors options.allowedDomains != [ ] then
+          throw "fencr: invalid allowedDomains: ${lib.concatStringsSep "; " (core.domainPatternErrors options.allowedDomains)}"
         else if options.egress != "closed" then
           throw "fencr: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration"
         else
