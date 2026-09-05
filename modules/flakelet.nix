@@ -94,7 +94,7 @@ in
     expose = {
       type = types.listOf exposeType;
       default = [ ];
-      description = "guest loopback ports exposed on host endpoints over vsock.";
+      description = "guest loopback ports exposed on host endpoints over vsock; every host account can also reach the guest port directly through the vm's cid.";
     };
     hostForwards = {
       type = types.listOf hostForwardType;

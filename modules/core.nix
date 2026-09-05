@@ -201,23 +201,97 @@ rec {
     ];
   };
 
-  # host to guest: accepted tcp connection spliced to the guest's vsock port
-  forwardCommand =
-    pkgs: cfg: forward:
-    "${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString (cidOf cfg)}:${toString forward.guestPort}";
+  # host to guest ("expose"), both ends in one place: the host socket unit and
+  # the per-connection relay that splice an accepted tcp connection to the
+  # guest's vsock port, and the guest listener that hands it to loopback.
+  # the guest end cannot tell host clients apart: vsock connect needs no
+  # privilege, so every host account reaches the guest port directly, and
+  # listenAddress only narrows the tcp side
+  exposeUnits = {
+    socket = instance: forward: {
+      description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = "${forward.listenAddress}:${toString forward.listenPort}";
+        Accept = true;
+        MaxConnections = 64;
+      };
+    };
+    service = pkgs: instance: vmUnit: forward: {
+      description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
+      after = [ vmUnit ];
+      requires = [ vmUnit ];
+      unitConfig.CollectMode = "inactive-or-failed";
+      serviceConfig = forwardHardening // {
+        ExecStart = "${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString instance.cid}:${toString forward.guestPort}";
+      };
+    };
+    guest = pkgs: forward: {
+      name = "fencr-vsock-proxy-${toString forward.guestPort}";
+      value = {
+        description = "vsock proxy for port ${toString forward.guestPort}";
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = proxyHardening // {
+          ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString forward.guestPort},fork TCP:127.0.0.1:${toString forward.guestPort}";
+        };
+      };
+    };
+  };
 
-  # guest to host: accepted vsock connection, cid-checked, spliced to a host
-  # loopback port. a brokered forward lands on the broker, not the target.
-  hostForwardCommand =
-    pkgs: cfg: forward:
-    let
-      target =
-        if forward.broker != null then
-          "unix:${brokerSocketOf cfg forward}"
-        else
-          toString forward.targetPort;
-    in
-    "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString (cidOf cfg)} ${target}";
+  # guest to host, the mirror image: a guest loopback listener relayed to the
+  # host's cid, the host's vsock socket unit, and a cid-checked relay that
+  # splices the connection to a host loopback port or, for a brokered
+  # forward, to the broker's unix socket
+  hostForwardUnits = {
+    socket = instance: forward: {
+      description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = "vsock::${toString forward.vsockPort}";
+        Accept = true;
+        MaxConnections = 64;
+        TriggerLimitIntervalSec = 0;
+      };
+    };
+    service =
+      pkgs: instance: vmUnit: forward:
+      let
+        target =
+          if forward.broker != null then
+            "unix:${brokerSocketOf instance forward}"
+          else
+            toString forward.targetPort;
+      in
+      {
+        description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
+        after = [ vmUnit ];
+        requires = [ vmUnit ];
+        unitConfig.CollectMode = "inactive-or-failed";
+        serviceConfig =
+          forwardHardening
+          // {
+            ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString instance.cid} ${target}";
+          }
+          // lib.optionalAttrs (forward.broker != null) {
+            SupplementaryGroups = [ "kvm" ];
+            RestrictAddressFamilies = [
+              "AF_INET"
+              "AF_VSOCK"
+              "AF_UNIX"
+            ];
+          };
+      };
+    guest = pkgs: forward: {
+      name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
+      value = {
+        description = "host vsock proxy for port ${toString forward.targetPort}";
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = proxyHardening // {
+          ExecStart = "${pkgs.socat}/bin/socat TCP4-LISTEN:${toString forward.targetPort},bind=127.0.0.1,fork VSOCK-CONNECT:2:${toString forward.vsockPort}";
+        };
+      };
+    };
+  };
 
   # domain-allowlist egress: the guest's only way out is a host-side
   # tinyproxy reached over vsock; it enforces the allowlist on the CONNECT
@@ -459,37 +533,11 @@ rec {
       inherit (frontend) brokerName;
       forwardServices = map (forward: {
         name = "${forwardName forward}@";
-        value = {
-          description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
-          after = [ frontend.vmUnit ];
-          requires = [ frontend.vmUnit ];
-          unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig = forwardHardening // {
-            ExecStart = forwardCommand pkgs instance forward;
-          };
-        };
+        value = exposeUnits.service pkgs instance frontend.vmUnit forward;
       }) instance.expose;
       hostForwardServices = map (forward: {
         name = "${hostForwardName forward}@";
-        value = {
-          description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
-          after = [ frontend.vmUnit ];
-          requires = [ frontend.vmUnit ];
-          unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig =
-            forwardHardening
-            // {
-              ExecStart = hostForwardCommand pkgs instance forward;
-            }
-            // lib.optionalAttrs (forward.broker != null) {
-              SupplementaryGroups = [ "kvm" ];
-              RestrictAddressFamilies = [
-                "AF_INET"
-                "AF_VSOCK"
-                "AF_UNIX"
-              ];
-            };
-        };
+        value = hostForwardUnits.service pkgs instance frontend.vmUnit forward;
       }) instance.hostForwards;
       brokerServices = map (forward: {
         name = brokerName forward;
@@ -501,28 +549,11 @@ rec {
       }) instance.brokeredForwards;
       forwardSockets = map (forward: {
         name = forwardName forward;
-        value = {
-          description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
-          wantedBy = [ "sockets.target" ];
-          socketConfig = {
-            ListenStream = "${forward.listenAddress}:${toString forward.listenPort}";
-            Accept = true;
-            MaxConnections = 64;
-          };
-        };
+        value = exposeUnits.socket instance forward;
       }) instance.expose;
       hostForwardSockets = map (forward: {
         name = hostForwardName forward;
-        value = {
-          description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
-          wantedBy = [ "sockets.target" ];
-          socketConfig = {
-            ListenStream = "vsock::${toString forward.vsockPort}";
-            Accept = true;
-            MaxConnections = 64;
-            TriggerLimitIntervalSec = 0;
-          };
-        };
+        value = hostForwardUnits.socket instance forward;
       }) instance.hostForwards;
     in
     {
@@ -715,10 +746,8 @@ rec {
 
       system.switch.enable = false;
 
-      # the host connects over vsock, so every forwarded port needs a listener
-      # on the guest side of it. the relayed service itself only binds
-      # loopback. host forwards get the mirror image: a loopback listener
-      # relayed to the host's vsock cid.
+      # the guest ends of the forwards; the host ends live beside them in
+      # exposeUnits and hostForwardUnits
       systemd.services = lib.mkMerge [
         (lib.mkIf (agentSandbox.secretNames != [ ]) {
           fencr-secrets = {
@@ -755,26 +784,8 @@ rec {
           };
         })
         (lib.listToAttrs (
-          map (forward: {
-            name = "fencr-vsock-proxy-${toString forward.guestPort}";
-            value = {
-              description = "vsock proxy for port ${toString forward.guestPort}";
-              wantedBy = [ "multi-user.target" ];
-              serviceConfig = proxyHardening // {
-                ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString forward.guestPort},fork TCP:127.0.0.1:${toString forward.guestPort}";
-              };
-            };
-          }) agentSandbox.expose
-          ++ map (forward: {
-            name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
-            value = {
-              description = "host vsock proxy for port ${toString forward.targetPort}";
-              wantedBy = [ "multi-user.target" ];
-              serviceConfig = proxyHardening // {
-                ExecStart = "${pkgs.socat}/bin/socat TCP4-LISTEN:${toString forward.targetPort},bind=127.0.0.1,fork VSOCK-CONNECT:2:${toString forward.vsockPort}";
-              };
-            };
-          }) agentSandbox.hostForwards
+          map (exposeUnits.guest pkgs) agentSandbox.expose
+          ++ map (hostForwardUnits.guest pkgs) agentSandbox.hostForwards
         ))
       ];
 

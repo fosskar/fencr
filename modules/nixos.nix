@@ -179,7 +179,12 @@ in
               type = lib.types.listOf exposeType;
               default = [ ];
               example = lib.literalExpression ''[ "33627" ]'';
-              description = "guest loopback ports exposed on host endpoints over vsock.";
+              description = ''
+                guest loopback ports exposed on host endpoints over vsock.
+                listenAddress narrows tcp clients only: vsock connect needs no
+                privilege, so every host account can also reach the guest
+                port directly through the vm's cid.
+              '';
             };
 
             hostForwards = lib.mkOption {
