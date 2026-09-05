@@ -39,7 +39,10 @@ self: system:
     vcpu = 1;
     mem = 512;
     dns = "9.9.9.9";
-    egress = "closed";
+    allowedDomains = [
+      "github.com"
+      "*.github.com"
+    ];
   };
 
   system.stateVersion = "25.11";

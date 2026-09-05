@@ -69,8 +69,13 @@ in
         "open"
         "closed"
       ];
-      default = "open";
-      description = "open: internet and dns reachable, private ranges sealed. closed: only allowedTCPDestinations.";
+      defaultFunc = { options, ... }: if options.allowedDomains == [ ] then "open" else "closed";
+      description = "open: internet and dns reachable, private ranges sealed. closed: only allowedTCPDestinations. defaults to closed when allowedDomains is set.";
+    };
+    allowedDomains = {
+      type = types.listOf types.string;
+      default = [ ];
+      description = "domains reachable through the egress proxy (fnmatch patterns); requires egress = closed.";
     };
     allowedTCPDestinations = {
       type = types.listOf destinationType;
@@ -108,6 +113,22 @@ in
       storePath = inputs.flakelet.storePath;
       core = import ./core.nix { inherit lib; };
 
+      proxy =
+        if options.allowedDomains == [ ] then
+          null
+        else if options.egress != "closed" then
+          throw "fencr: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration"
+        else
+          { port = core.proxyPortOf options; };
+
+      hostForwards =
+        options.hostForwards
+        ++ lib.optional (proxy != null) {
+          vsockPort = proxy.port;
+          targetPort = proxy.port;
+          broker = null;
+        };
+
       cfg = {
         inherit (options)
           id
@@ -115,8 +136,8 @@ in
           mem
           dns
           egress
-          hostForwards
           ;
+        inherit hostForwards;
         allowedTCPDestinations = map core.parseDestination options.allowedTCPDestinations;
         expose = map core.parseExpose options.expose;
         bridge = core.bridgeOf name;
@@ -192,6 +213,7 @@ in
           inherit (options) adminPublicKey;
           kind = "microvm";
           bindAddress = "127.0.0.1";
+          inherit proxy;
           hasSecrets = options.secrets != { };
           tap = core.tapOf name;
           mac = core.macOf options;
@@ -251,8 +273,15 @@ in
               ExecStart = core.hostForwardCommand hostPkgs cfg forward;
             };
           };
-        }) options.hostForwards
+        }) hostForwards
       )
+      // lib.optionalAttrs (proxy != null) {
+        egress-proxy = {
+          description = "domain-allowlist egress proxy for ${name}";
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig = core.egressProxyServiceConfig hostPkgs proxy.port options.allowedDomains;
+        };
+      }
       // lib.listToAttrs (
         map (forward: {
           name = "broker-${toString forward.vsockPort}";
@@ -291,7 +320,7 @@ in
                 MaxConnections = 64;
               };
             };
-          }) options.hostForwards
+          }) hostForwards
         );
     };
 }

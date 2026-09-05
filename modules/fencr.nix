@@ -45,6 +45,15 @@ let
   forwardUnit = name: forward: "${name}-forward-${toString forward.listenPort}";
   hostForwardUnit = name: forward: "${name}-host-forward-${toString forward.vsockPort}";
   brokerUnit = name: forward: "${name}-broker-${toString forward.vsockPort}";
+  proxyOf = cfg: if cfg.allowedDomains == [ ] then null else { port = core.proxyPortOf cfg; };
+  hostForwardsOf =
+    cfg:
+    cfg.hostForwards
+    ++ lib.optional (proxyOf cfg != null) {
+      vsockPort = (proxyOf cfg).port;
+      targetPort = (proxyOf cfg).port;
+      broker = null;
+    };
   brokeredOf = cfg: lib.filter (forward: forward.broker != null) cfg.hostForwards;
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f instances);
 in
@@ -132,11 +141,25 @@ in
                 "open"
                 "closed"
               ];
-              default = "open";
+              default = if config.allowedDomains == [ ] then "open" else "closed";
+              defaultText = "closed when allowedDomains is set, otherwise open";
               description = ''
                 "open": internet and dns reachable, private ranges sealed.
                 "closed": nothing reachable beyond allowedTCPDestinations,
                 dns included.
+              '';
+            };
+
+            allowedDomains = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = lib.literalExpression ''[ "github.com" "*.github.com" ]'';
+              description = ''
+                domains reachable through the egress proxy; fnmatch patterns,
+                so "*.github.com" does not match the bare "github.com" — list
+                both. implies egress = "closed": the proxy becomes the only
+                road out, enforced on the CONNECT hostname without
+                interception.
               '';
             };
 
@@ -252,6 +275,12 @@ in
         assertion = lib.allUnique config.fencr.forwardEndpoints;
         message = "fencr.vms: host listen endpoints must be unique across instances.";
       }
+      {
+        assertion = lib.all (cfg: cfg.allowedDomains == [ ] || cfg.egress == "closed") (
+          lib.attrValues instances
+        );
+        message = "fencr.vms: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration.";
+      }
     ];
 
     fencr.forwardEndpoints =
@@ -361,9 +390,19 @@ in
                 ExecStart = core.hostForwardCommand pkgs cfg forward;
               };
             };
-          }) cfg.hostForwards
+          }) (hostForwardsOf cfg)
         ) instances
       )
+      ++ lib.mapAttrsToList (
+        name: cfg:
+        lib.mkIf (proxyOf cfg != null) {
+          "${name}-egress-proxy" = {
+            description = "domain-allowlist egress proxy for ${name}";
+            wantedBy = [ "multi-user.target" ];
+            serviceConfig = core.egressProxyServiceConfig pkgs (proxyOf cfg).port cfg.allowedDomains;
+          };
+        }
+      ) instances
       ++ lib.concatLists (
         lib.mapAttrsToList (
           name: cfg:
@@ -410,7 +449,7 @@ in
                 MaxConnections = 64;
               };
             };
-          }) cfg.hostForwards
+          }) (hostForwardsOf cfg)
         )
       );
 
@@ -424,6 +463,8 @@ in
           # the guest-side proxy relays vsock to loopback, so a forwarded
           # service only ever needs to listen on loopback
           bindAddress = "127.0.0.1";
+          hostForwards = hostForwardsOf cfg;
+          proxy = proxyOf cfg;
           hasSecrets = cfg.secrets != { };
           tap = core.tapOf name;
           mac = core.macOf cfg;

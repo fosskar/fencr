@@ -143,6 +143,62 @@ rec {
     in
     "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString (cidOf cfg)} ${toString target}";
 
+  # domain-allowlist egress: the guest's only way out is a host-side
+  # tinyproxy reached over vsock; it enforces the allowlist on the CONNECT
+  # hostname, so https needs no interception. the port doubles as the
+  # guest's loopback proxy port and the vsock port.
+  proxyPortOf = cfg: 13128 + cfg.id;
+
+  proxyFilterFile =
+    pkgs: domains:
+    pkgs.writeText "fencr-egress-domains" (lib.concatMapStrings (domain: "${domain}\n") domains);
+
+  tinyproxyConfig =
+    pkgs: port: domains:
+    pkgs.writeText "fencr-tinyproxy.conf" ''
+      Port ${toString port}
+      Listen 127.0.0.1
+      Allow 127.0.0.1
+      Timeout 600
+      MaxClients 32
+      LogLevel Warning
+      DisableViaHeader Yes
+      FilterType fnmatch
+      FilterDefaultDeny Yes
+      Filter "${proxyFilterFile pkgs domains}"
+    '';
+
+  egressProxyServiceConfig = pkgs: port: domains: {
+    ExecStart = "${pkgs.tinyproxy}/bin/tinyproxy -d -c ${tinyproxyConfig pkgs port domains}";
+    Restart = "always";
+    RestartSec = 5;
+    DynamicUser = true;
+    CapabilityBoundingSet = "";
+    LockPersonality = true;
+    MemoryDenyWriteExecute = true;
+    NoNewPrivileges = true;
+    PrivateDevices = true;
+    PrivateTmp = true;
+    ProtectClock = true;
+    ProtectControlGroups = true;
+    ProtectHome = true;
+    ProtectHostname = true;
+    ProtectKernelLogs = true;
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    ProtectSystem = "strict";
+    RestrictAddressFamilies = [
+      "AF_INET"
+      "AF_INET6"
+      "AF_UNIX"
+    ];
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    SystemCallArchitectures = "native";
+    UMask = "0077";
+  };
+
   # the credential broker: the guest talks plain http through the vsock
   # forward; this proxy holds the secret and injects the header on the host
   # side, so the value never exists inside the vm.
@@ -347,6 +403,33 @@ rec {
       users.users.root.openssh.authorizedKeys.keys = lib.optional (
         agentSandbox.adminPublicKey != null
       ) agentSandbox.adminPublicKey;
+
+      # with a domain allowlist the proxy is the only road out, so every
+      # process learns about it; tools that ignore the variables just hit
+      # the closed firewall
+      environment.variables = lib.mkIf (agentSandbox.proxy != null) (
+        let
+          url = "http://127.0.0.1:${toString agentSandbox.proxy.port}";
+        in
+        {
+          http_proxy = url;
+          https_proxy = url;
+          HTTP_PROXY = url;
+          HTTPS_PROXY = url;
+          no_proxy = "127.0.0.1,localhost";
+          NO_PROXY = "127.0.0.1,localhost";
+        }
+      );
+      systemd.globalEnvironment = lib.mkIf (agentSandbox.proxy != null) (
+        let
+          url = "http://127.0.0.1:${toString agentSandbox.proxy.port}";
+        in
+        {
+          HTTP_PROXY = url;
+          HTTPS_PROXY = url;
+          NO_PROXY = "127.0.0.1,localhost";
+        }
+      );
 
       # fetch tools for whatever runs inside; language runtimes ship with the
       # agent that needs them

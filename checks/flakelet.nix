@@ -14,7 +14,11 @@ let
       vcpu = 2;
       mem = 1024;
       dns = "9.9.9.9";
-      egress = "open";
+      egress = "closed";
+      allowedDomains = [
+        "github.com"
+        "*.github.com"
+      ];
       adminPublicKey = null;
       secrets = { };
       allowedTCPDestinations = [ "192.168.1.50:8123" ];
@@ -57,7 +61,9 @@ let
     "fwd-33627@"
     "fwd-33628@"
     "hfwd-18764@"
+    "hfwd-13128@"
     "broker-18764"
+    "egress-proxy"
   ];
   expectedSockets = [
     "fwd-33627"
