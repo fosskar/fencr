@@ -146,7 +146,6 @@ in
         set -eu
         ${hostPkgs.kmod}/bin/modprobe vhost_vsock
         ${hostPkgs.procps}/bin/sysctl -q net.ipv4.conf.all.forwarding=1
-        install -d -m 0700 ${core.stateDirOf name}
         ip=${hostPkgs.iproute2}/bin/ip
         $ip link show ${instance.bridge} >/dev/null 2>&1 || $ip link add ${instance.bridge} type bridge
         $ip addr replace ${instance.hostIp}/${toString instance.prefixLength} dev ${instance.bridge}
@@ -197,6 +196,11 @@ in
             RuntimeDirectory = "fencr-${name}";
             RuntimeDirectoryMode = "0770";
             WorkingDirectory = runDir;
+            # virtiofsd exports this tree and starts before the vm unit, so it
+            # owns creating it; the vm's ExecStartPre would be too late and
+            # the state share would fail to connect on a first boot
+            StateDirectory = "fencr-vms/${name}";
+            StateDirectoryMode = "0700";
             LimitNOFILE = 1048576;
             PrivateTmp = true;
             Restart = "always";
