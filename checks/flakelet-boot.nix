@@ -9,10 +9,11 @@ let
     snakeOilEd25519PublicKey
     ;
   rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
-  # the payload is a store path handed to the flakelet as a string, and
-  # importing it at eval time drops the string's context. anything it names
-  # by interpolation would not be a dependency of the guest system, so the
-  # document it serves is built inside the guest instead of referenced.
+  # a guestModule is read at eval time, so store paths written into its text
+  # arrive without context and never become dependencies of the guest system.
+  # the page this serves is therefore built inside the guest rather than
+  # referenced. (flakelet's own storePath re-attaches context for the module
+  # file itself; the stub below does not, which is what a real host differs in.)
   ingressModule = pkgs.writeText "fencr-test-ingress.nix" ''
     { pkgs, ... }:
     {

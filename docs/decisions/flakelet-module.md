@@ -38,3 +38,20 @@ cid, firewall ruleset) so the seal semantics cannot drift between them.
   NixOS option merging, so both frontends can consume it
 - the flakelet variant needs the host to have kvm and vsock available;
   it asserts at activation rather than configuring the host
+
+## guestModules are store paths, and what that costs
+
+`guestModules` names NixOS modules by store path, because a flakelet
+option holds data and not a Nix expression. fencr imports each through
+flakelet's `storePath`, which re-attaches string context so the module
+file is a real dependency of the built guest.
+
+That covers the file, not what the file names. A module read at
+evaluation time yields plain strings, so a store path written into its
+text is not a dependency of the guest system: it is not deployed with
+the sandbox and nothing roots it against garbage collection. A module
+that reaches for `pkgs` is unaffected, since those paths carry their own
+context. Generated modules are where this bites — the flakelet boot
+check builds the page it serves inside the guest for exactly this
+reason. The NixOS surface has no equivalent edge: `services` takes
+modules as expressions.
