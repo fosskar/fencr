@@ -77,7 +77,7 @@ in
     type = lib.types.listOf lib.types.str;
     default = [ ];
     description = ''
-      public keys authorized as root in every vm — the operator tier.
+      machine owner public keys authorized as root in every vm.
       host root can always reach a vm regardless (it owns the hypervisor,
       the state tree and the console); this only makes that access ssh.
     '';

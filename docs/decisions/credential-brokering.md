@@ -34,7 +34,7 @@ context. Keys outlive sessions, capabilities do not.
   `DynamicUser`
 - the broker listens on host loopback tcp, so other host processes could
   reach it and act with the injected credential. acceptable on a
-  single-operator host; a unix-socket listener with peer credentials is
+  single-user host; a unix-socket listener with peer credentials is
   the hardening step if this assumption breaks
 - http only. tls-originating forward proxies for external apis are out of
   scope for v0 and belong to the same roadmap line as name-based egress
