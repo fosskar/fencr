@@ -6,6 +6,7 @@
 { inputs }:
 let
   flakeInputs = inputs;
+  core = import ./core.nix { lib = flakeInputs.nixpkgs.lib; };
 in
 { types, ... }:
 let
@@ -43,12 +44,21 @@ in
     };
     vcpu = {
       type = types.int;
-      default = 4;
+      default = core.defaults.vcpu;
     };
     mem = {
       type = types.int;
-      default = 4096;
-      description = "guest memory ceiling.";
+      default = core.defaults.mem;
+      description = "guest memory ceiling; free page reporting returns unused memory to the host.";
+    };
+    memoryMax = {
+      type = types.string;
+      default = core.defaults.memoryMax;
+      description = "hard cap on the whole vm unit, enforced by the host; guest ceiling plus hypervisor overhead.";
+    };
+    cpuQuota = {
+      type = types.string;
+      default = core.defaults.cpuQuota;
     };
     dns = {
       type = types.string;
@@ -69,7 +79,7 @@ in
         "open"
         "closed"
       ];
-      default = "closed";
+      default = core.defaults.egress;
       description = "open: internet and dns reachable, private ranges sealed. closed: only allowedTCPDestinations; this is the default.";
     };
     allowedDomains = {
@@ -111,7 +121,6 @@ in
       lib = inputs.nixpkgs.lib;
       name = inputs.flakelet.name;
       storePath = inputs.flakelet.storePath;
-      core = import ./core.nix { inherit lib; };
 
       resolved = core.resolveInstance {
         inherit name options;
@@ -122,23 +131,23 @@ in
           resolved
         else
           throw "fencr: ${lib.concatStringsSep "; " resolved.errors}";
-      credentialFiles = lib.genAttrs (lib.attrNames options.secrets) (
-        secretName: "/run/credentials/${name}.service/${secretName}"
-      );
       units = core.hostUnits hostPkgs instance {
         vmUnit = "${name}.service";
-        identity.DynamicUser = true;
         forwardName = forward: "fwd-${toString forward.listenPort}";
         hostForwardName = forward: "hfwd-${toString forward.vsockPort}";
         proxyName = "egress-proxy";
         brokerName = forward: "broker-${toString forward.vsockPort}";
       };
       ruleset = hostPkgs.writeText "fencr-${name}.nft" (core.firewallOf instance).standalone;
+      # the runner's working directory: qmp and virtiofs sockets, shared by
+      # the virtiofsd unit (root) and the vm unit (dynamic user in kvm)
+      runDir = "/run/fencr-${name}";
 
       setupScript = hostPkgs.writeShellScript "fencr-${name}-setup" ''
         set -eu
         ${hostPkgs.kmod}/bin/modprobe vhost_vsock
         ${hostPkgs.procps}/bin/sysctl -q net.ipv4.conf.all.forwarding=1
+        install -d -m 0700 ${core.stateDirOf name}
         ip=${hostPkgs.iproute2}/bin/ip
         $ip link show ${instance.bridge} >/dev/null 2>&1 || $ip link add ${instance.bridge} type bridge
         $ip addr replace ${instance.hostIp}/${toString instance.prefixLength} dev ${instance.bridge}
@@ -163,9 +172,7 @@ in
 
       guestSystem = flakeInputs.nixpkgs.lib.nixosSystem {
         system = hostPkgs.stdenv.hostPlatform.system;
-        specialArgs.agentSandbox = instance.guest // {
-          inherit credentialFiles;
-        };
+        specialArgs.agentSandbox = units.guest;
         modules = [
           flakeInputs.microvm.nixosModules.microvm
           core.guestBase
@@ -176,48 +183,51 @@ in
     in
     {
       services = {
+        # the virtiofs daemons the runner dials for its store and state
+        # shares; microvm.nix's host module runs the same script as root
+        "${name}-virtiofsd" = {
+          description = "virtiofs daemons for fencr sandbox ${name}";
+          before = [ "${name}.service" ];
+          partOf = [ "${name}.service" ];
+          serviceConfig = {
+            ExecStart = "${runner}/bin/virtiofsd-run";
+            Type = "notify";
+            NotifyAccess = "all";
+            KillMode = "mixed";
+            Group = "kvm";
+            RuntimeDirectory = "fencr-${name}";
+            RuntimeDirectoryMode = "0770";
+            WorkingDirectory = runDir;
+            LimitNOFILE = 1048576;
+            PrivateTmp = true;
+            Restart = "always";
+            RestartSec = 5;
+          };
+        };
         ${name} = {
           description = "fencr sandbox ${name}";
           wantedBy = [ "multi-user.target" ];
-          after = [ "network.target" ];
-          serviceConfig = {
-            ExecStartPre = "+${setupScript}";
-            ExecStart = "${runner}/bin/microvm-run";
-            ExecStop = "${runner}/bin/microvm-shutdown";
-            ExecStopPost = "+${teardownScript}";
-            DynamicUser = true;
-            SupplementaryGroups = [ "kvm" ];
-            StateDirectory = [
-              "fencr-run-${name}"
-              "fencr-vms/${name}"
-            ];
-            WorkingDirectory = "/var/lib/fencr-run-${name}";
-            LoadCredential = lib.mapAttrsToList (secretName: source: "${secretName}:${source}") options.secrets;
-            CapabilityBoundingSet = "";
-            DevicePolicy = "closed";
-            DeviceAllow = [
-              "/dev/kvm rw"
-              "/dev/net/tun rw"
-              "/dev/vhost-vsock rw"
-            ];
-            LockPersonality = true;
-            NoNewPrivileges = true;
-            PrivateTmp = true;
-            ProtectClock = true;
-            ProtectControlGroups = true;
-            ProtectHome = true;
-            ProtectHostname = true;
-            ProtectKernelLogs = true;
-            ProtectKernelModules = true;
-            ProtectKernelTunables = true;
-            ProtectSystem = "strict";
-            RestrictRealtime = true;
-            RestrictSUIDSGID = true;
-            SystemCallArchitectures = "native";
-            UMask = "0077";
-            Restart = "on-failure";
-            RestartSec = 5;
-          };
+          after = [
+            "network.target"
+            "${name}-virtiofsd.service"
+          ];
+          requires = [ "${name}-virtiofsd.service" ];
+          serviceConfig =
+            core.vmServiceConfig {
+              inherit instance;
+              writablePaths = [ runDir ];
+            }
+            // {
+              ExecStartPre = "+${setupScript}";
+              ExecStart = "${runner}/bin/microvm-run";
+              ExecStop = "${runner}/bin/microvm-shutdown";
+              ExecStopPost = "+${teardownScript}";
+              DynamicUser = true;
+              SupplementaryGroups = [ "kvm" ];
+              WorkingDirectory = runDir;
+              Restart = "on-failure";
+              RestartSec = 5;
+            };
         };
       }
       // units.services;

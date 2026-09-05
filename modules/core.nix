@@ -4,6 +4,17 @@
 # seal semantics cannot drift between them.
 { lib }:
 rec {
+  # option defaults shared by both frontends' schemas and applied again in
+  # resolveInstance, so a frontend that omits an option still gets the same vm
+  defaults = {
+    vcpu = 4;
+    mem = 4096;
+    memoryMax = "4608M";
+    cpuQuota = "400%";
+    egress = "closed";
+    prefixLength = 24;
+  };
+
   tapOf = name: "tap-${name}";
   bridgeOf = name: "br-${name}";
   macOf = cfg: "02:00:00:00:20:0${toString (cfg.id + 1)}";
@@ -81,6 +92,8 @@ rec {
     ProtectKernelLogs = true;
     ProtectKernelModules = true;
     ProtectKernelTunables = true;
+    ProtectProc = "invisible";
+    ProcSubset = "pid";
     ProtectSystem = "strict";
     RestrictNamespaces = true;
     RestrictRealtime = true;
@@ -89,7 +102,10 @@ rec {
     UMask = "0077";
   };
 
+  # a relay handles whatever its peer sends; it gets a throwaway uid so a
+  # bug in it shares nothing with the hypervisor process
   forwardHardening = hardened // {
+    DynamicUser = true;
     StandardInput = "socket";
     StandardError = "journal";
     RestrictAddressFamilies = [
@@ -97,6 +113,47 @@ rec {
       "AF_VSOCK"
     ];
   };
+
+  # the hypervisor process: resource caps, the secrets it carries into the
+  # vm, and confinement to the three devices it needs. writablePaths is the
+  # frontend's working directory for the runner (qmp and virtiofs sockets)
+  vmServiceConfig =
+    { instance, writablePaths }:
+    {
+      MemoryMax = instance.memoryMax;
+      CPUQuota = instance.cpuQuota;
+      CPUWeight = 20;
+      LoadCredential = lib.mapAttrsToList (
+        secretName: source: "${secretName}:${source}"
+      ) instance.secrets;
+      ReadWritePaths = writablePaths;
+      CapabilityBoundingSet = "";
+      DevicePolicy = "closed";
+      DeviceAllow = [
+        "/dev/kvm rw"
+        "/dev/net/tun rw"
+        "/dev/vhost-vsock rw"
+      ];
+      LockPersonality = true;
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+      ProtectClock = true;
+      ProtectControlGroups = true;
+      ProtectHome = true;
+      ProtectHostname = true;
+      ProtectKernelLogs = true;
+      ProtectKernelModules = true;
+      ProtectKernelTunables = true;
+      ProtectSystem = "strict";
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      SystemCallArchitectures = "native";
+      UMask = "0077";
+    };
+
+  credentialFilesOf =
+    vmUnit: secretNames:
+    lib.genAttrs secretNames (secretName: "/run/credentials/${vmUnit}/${secretName}");
 
   proxyHardening = hardened // {
     Restart = "always";
@@ -272,10 +329,11 @@ rec {
   resolveInstance =
     {
       name,
-      options,
       sshKeys,
-    }:
+      ...
+    }@args:
     let
+      options = defaults // args.options;
       proxy = proxyOf options;
       expose = map parseExpose options.expose;
       declaredHostForwards = options.hostForwards;
@@ -323,8 +381,6 @@ rec {
           ;
         inherit (options) vcpu mem dns;
         inherit expose;
-        kind = "microvm";
-        bindAddress = "127.0.0.1";
         secretNames = lib.attrNames options.secrets;
       };
     in
@@ -349,10 +405,13 @@ rec {
         id
         vcpu
         mem
+        memoryMax
+        cpuQuota
         dns
         egress
         allowedDomains
         hostPorts
+        secrets
         ;
       cid = vsockCid;
       brokeredForwards = lib.filter (forward: forward.broker != null) declaredHostForwards;
@@ -389,12 +448,9 @@ rec {
           after = [ frontend.vmUnit ];
           requires = [ frontend.vmUnit ];
           unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig =
-            forwardHardening
-            // frontend.identity
-            // {
-              ExecStart = forwardCommand pkgs instance forward;
-            };
+          serviceConfig = forwardHardening // {
+            ExecStart = forwardCommand pkgs instance forward;
+          };
         };
       }) instance.expose;
       hostForwardServices = map (forward: {
@@ -404,12 +460,9 @@ rec {
           after = [ frontend.vmUnit ];
           requires = [ frontend.vmUnit ];
           unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig =
-            forwardHardening
-            // frontend.identity
-            // {
-              ExecStart = hostForwardCommand pkgs instance forward;
-            };
+          serviceConfig = forwardHardening // {
+            ExecStart = hostForwardCommand pkgs instance forward;
+          };
         };
       }) instance.hostForwards;
       brokerServices = map (forward: {
@@ -457,6 +510,11 @@ rec {
           };
         };
       sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets);
+      # what the guest system is built against: the resolved contract plus
+      # where the frontend's vm unit stages each secret for fw_cfg
+      guest = instance.guest // {
+        credentialFiles = credentialFilesOf frontend.vmUnit instance.guest.secretNames;
+      };
       unitNames = {
         vm = frontend.vmUnit;
         sockets =

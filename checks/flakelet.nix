@@ -95,6 +95,7 @@ let
   };
   expectedUnits = [
     "sbx"
+    "sbx-virtiofsd"
     "fwd-33627@"
     "fwd-33628@"
     "hfwd-18764@"
@@ -135,14 +136,12 @@ assert lib.assertMsg (lib.all (
 ) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";
 assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
-    "bindAddress"
     "bridge"
     "dns"
     "expose"
     "hostForwards"
     "hostIp"
     "ip"
-    "kind"
     "mac"
     "mem"
     "name"
@@ -173,6 +172,14 @@ assert lib.assertMsg result.services.sbx.serviceConfig.DynamicUser
 assert lib.assertMsg (
   result.services.sbx.serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
 ) "unit check: flakelet credential transport drifted";
+assert lib.assertMsg (
+  result.services.sbx.serviceConfig.MemoryMax == core.defaults.memoryMax
+  && result.services.sbx.serviceConfig.CPUQuota == core.defaults.cpuQuota
+) "unit check: flakelet vm has no resource cap";
+assert lib.assertMsg (
+  result.services.sbx.serviceConfig.CapabilityBoundingSet == ""
+  && result.services.sbx.serviceConfig.DevicePolicy == "closed"
+) "unit check: flakelet vm confinement drifted";
 assert lib.assertMsg (
   result.sockets."fwd-33627".socketConfig.ListenStream == "127.0.0.1:33627"
 ) "unit check: listen endpoint drifted";

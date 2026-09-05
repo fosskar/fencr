@@ -21,11 +21,6 @@ let
   hostConfig = config;
   instances = config.fencr.vms;
   sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
-  credentialFilesOf =
-    name: cfg:
-    lib.genAttrs (lib.attrNames cfg.secrets) (
-      secretName: "/run/credentials/microvm@${name}.service/${secretName}"
-    );
   core = import ./core.nix { inherit lib; };
   resolvedInstances = lib.mapAttrs (
     name: options:
@@ -38,10 +33,6 @@ let
     name: instance:
     core.hostUnits pkgs instance {
       vmUnit = "microvm@${name}.service";
-      identity = {
-        User = "microvm";
-        Group = "kvm";
-      };
       forwardName = forward: "${name}-forward-${toString forward.listenPort}";
       hostForwardName = forward: "${name}-host-forward-${toString forward.vsockPort}";
       proxyName = "${name}-egress-proxy";
@@ -121,21 +112,21 @@ in
 
             vcpu = lib.mkOption {
               type = lib.types.int;
-              default = 4;
+              default = core.defaults.vcpu;
             };
             mem = lib.mkOption {
               type = lib.types.int;
-              default = 4096;
+              default = core.defaults.mem;
               description = "guest memory ceiling; free page reporting returns unused memory to the host.";
             };
             memoryMax = lib.mkOption {
               type = lib.types.str;
-              default = "4608M";
+              default = core.defaults.memoryMax;
               description = "hard cap on the whole vm unit, enforced by the host; guest ceiling plus hypervisor overhead.";
             };
             cpuQuota = lib.mkOption {
               type = lib.types.str;
-              default = "400%";
+              default = core.defaults.cpuQuota;
             };
             secrets = lib.mkOption {
               type = lib.types.attrsOf lib.types.path;
@@ -153,7 +144,7 @@ in
                 "open"
                 "closed"
               ];
-              default = "closed";
+              default = core.defaults.egress;
               description = ''
                 "open": internet and dns reachable, private ranges sealed.
                 "closed": nothing reachable beyond allowedTCPDestinations,
@@ -251,7 +242,7 @@ in
             };
             prefixLength = lib.mkOption {
               type = lib.types.int;
-              default = 24;
+              default = core.defaults.prefixLength;
             };
             dns = lib.mkOption {
               type = lib.types.str;
@@ -315,7 +306,7 @@ in
         # microvm.nix upstream script trips SC2046
         { "microvm-set-booted@".enableStrictShellChecks = false; }
       ]
-      ++ lib.mapAttrsToList (name: cfg: {
+      ++ lib.mapAttrsToList (name: instance: {
         "${name}-vm-state" = {
           description = "state dir for the ${name} vm";
           wantedBy = [ "microvm@${name}.service" ];
@@ -325,19 +316,17 @@ in
             RemainAfterExit = false;
           };
           script = ''
-            install -d -m 0755 ${core.stateDirOf name}
+            install -d -m 0700 ${core.stateDirOf name}
           '';
         };
 
-        # the vm cannot outgrow this even if an agent misbehaves; the in-vm
-        # balloon hands unused memory back below the cap
-        "microvm@${name}".serviceConfig = {
-          MemoryMax = cfg.memoryMax;
-          CPUQuota = cfg.cpuQuota;
-          CPUWeight = 20;
-          LoadCredential = lib.mapAttrsToList (secretName: source: "${secretName}:${source}") cfg.secrets;
+        # microvm.nix owns the unit's user and working directory; the caps,
+        # secrets and confinement come from core like on the flakelet surface
+        "microvm@${name}".serviceConfig = core.vmServiceConfig {
+          inherit instance;
+          writablePaths = [ "${config.microvm.stateDir}/${name}" ];
         };
-      }) instances
+      }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
     );
 
@@ -346,9 +335,7 @@ in
     microvm.vms = lib.mapAttrs (name: cfg: {
       autostart = true;
       specialArgs = cfg.specialArgs // {
-        agentSandbox = resolvedInstances.${name}.guest // {
-          credentialFiles = credentialFilesOf name cfg;
-        };
+        agentSandbox = unitSets.${name}.guest;
       };
       config =
         { ... }:
