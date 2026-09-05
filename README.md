@@ -39,6 +39,10 @@ update independently of the host (`flakelets.default`).
 - persistent `/var/lib` per instance; read-only nix store share
 - memory ceiling with balloon, hard cap on the unit, CPU quota
 
+## Quickstart
+
+[docs/quickstart.md](docs/quickstart.md) — the four-line config and what it gives you.
+
 ## Access
 
 `fencr.adminKeys` opens every vm to the operator,
