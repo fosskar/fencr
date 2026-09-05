@@ -21,6 +21,11 @@ let
   hostConfig = config;
   instances = config.fencr.vms;
   sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
+  credentialFilesOf =
+    name: cfg:
+    lib.genAttrs (lib.attrNames cfg.secrets) (
+      secretName: "/run/credentials/microvm@${name}.service/${secretName}"
+    );
   core = import ./core.nix { inherit lib; };
   resolvedInstances = lib.mapAttrs (
     name: options:
@@ -136,9 +141,10 @@ in
               type = lib.types.attrsOf lib.types.path;
               default = { };
               description = ''
-                host files to stage and share read-only into the vm, keyed by
-                the name they get under /run/agent-secrets. staged as copies so
-                the vm never sees the host's secret tree wholesale.
+                host files passed through qemu fw_cfg and materialized in the
+                vm's volatile /run/agent-secrets. guest root can read these raw
+                values; use a brokered hostForward when the value must remain
+                outside the vm.
               '';
             };
 
@@ -147,12 +153,11 @@ in
                 "open"
                 "closed"
               ];
-              default = if config.allowedDomains == [ ] then "open" else "closed";
-              defaultText = "closed when allowedDomains is set, otherwise open";
+              default = "closed";
               description = ''
                 "open": internet and dns reachable, private ranges sealed.
                 "closed": nothing reachable beyond allowedTCPDestinations,
-                dns included.
+                dns included. this is the default.
               '';
             };
 
@@ -173,9 +178,9 @@ in
               type = lib.types.listOf destinationType;
               default = [ ];
               description = ''
-                private IPv4 TCP destinations reachable from the vm, as
-                "<address>:<port>" or { address; port; }. internet egress is
-                open by default; this list only opens private ranges.
+                IPv4 TCP destinations reachable from the vm, as
+                "<address>:<port>" or { address; port; }. each entry is an
+                explicit exception to the default closed egress policy.
               '';
             };
 
@@ -305,25 +310,6 @@ in
         { "microvm-set-booted@".enableStrictShellChecks = false; }
       ]
       ++ lib.mapAttrsToList (name: cfg: {
-        "${name}-vm-secrets" = lib.mkIf (cfg.secrets != { }) {
-          description = "stage secrets for the ${name} vm";
-          wantedBy = [ "microvm@${name}.service" ];
-          before = [ "microvm@${name}.service" ];
-          serviceConfig = {
-            Type = "oneshot";
-            RemainAfterExit = false;
-          };
-          script = ''
-            install -d -m 0700 /var/lib/fencr/${name}
-            install -d -m 0755 ${core.secretsDirOf name}
-            ${lib.concatStringsSep "\n" (
-              lib.mapAttrsToList (
-                secretName: src: "install -m 0400 ${src} ${core.secretsDirOf name}/${secretName}"
-              ) cfg.secrets
-            )}
-          '';
-        };
-
         "${name}-vm-state" = {
           description = "state dir for the ${name} vm";
           wantedBy = [ "microvm@${name}.service" ];
@@ -343,6 +329,7 @@ in
           MemoryMax = cfg.memoryMax;
           CPUQuota = cfg.cpuQuota;
           CPUWeight = 20;
+          LoadCredential = lib.mapAttrsToList (secretName: source: "${secretName}:${source}") cfg.secrets;
         };
       }) instances
       ++ map (units: units.services) (lib.attrValues unitSets)
@@ -353,7 +340,9 @@ in
     microvm.vms = lib.mapAttrs (name: cfg: {
       autostart = true;
       specialArgs = cfg.specialArgs // {
-        agentSandbox = resolvedInstances.${name}.guest;
+        agentSandbox = resolvedInstances.${name}.guest // {
+          credentialFiles = credentialFilesOf name cfg;
+        };
       };
       config =
         { ... }:

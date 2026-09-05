@@ -62,15 +62,15 @@ in
     secrets = {
       type = types.attrsOf types.string;
       default = { };
-      description = "host files staged read-only into the vm under /run/agent-secrets.";
+      description = "host files passed through qemu fw_cfg and materialized in volatile guest /run/agent-secrets; guest root can read them.";
     };
     egress = {
       type = types.enum "egress" [
         "open"
         "closed"
       ];
-      defaultFunc = { options, ... }: if options.allowedDomains == [ ] then "open" else "closed";
-      description = "open: internet and dns reachable, private ranges sealed. closed: only allowedTCPDestinations. defaults to closed when allowedDomains is set.";
+      default = "closed";
+      description = "open: internet and dns reachable, private ranges sealed. closed: only allowedTCPDestinations; this is the default.";
     };
     allowedDomains = {
       type = types.listOf types.string;
@@ -122,6 +122,9 @@ in
           resolved
         else
           throw "fencr: ${lib.concatStringsSep "; " resolved.errors}";
+      credentialFiles = lib.genAttrs (lib.attrNames options.secrets) (
+        secretName: "/run/credentials/${name}.service/${secretName}"
+      );
       units = core.hostUnits hostPkgs instance {
         vmUnit = "${name}.service";
         identity.DynamicUser = true;
@@ -140,22 +143,14 @@ in
         $ip link show ${instance.bridge} >/dev/null 2>&1 || $ip link add ${instance.bridge} type bridge
         $ip addr replace ${instance.hostIp}/${toString instance.prefixLength} dev ${instance.bridge}
         $ip link set ${instance.bridge} up
-        $ip link show ${instance.tap} >/dev/null 2>&1 || $ip tuntap add ${instance.tap} mode tap
+        $ip link show ${instance.tap} >/dev/null 2>&1 || $ip tuntap add ${instance.tap} mode tap group kvm ${
+          lib.optionalString (options.vcpu > 1) "multi_queue"
+        }
         $ip link set ${instance.tap} master ${instance.bridge}
         $ip link set ${instance.tap} up
         ${hostPkgs.nftables}/bin/nft delete table inet fencr-${name} 2>/dev/null || true
         ${hostPkgs.nftables}/bin/nft delete table ip fencr-${name}-nat 2>/dev/null || true
         ${hostPkgs.nftables}/bin/nft -f ${ruleset}
-        install -d -m 0755 ${core.stateDirOf name}
-        ${lib.optionalString (options.secrets != { }) ''
-          install -d -m 0700 /var/lib/fencr/${name}
-          install -d -m 0755 ${core.secretsDirOf name}
-          ${lib.concatStringsSep "\n" (
-            lib.mapAttrsToList (
-              secretName: src: "install -m 0400 ${src} ${core.secretsDirOf name}/${secretName}"
-            ) options.secrets
-          )}
-        ''}
       '';
 
       teardownScript = hostPkgs.writeShellScript "fencr-${name}-teardown" ''
@@ -168,7 +163,9 @@ in
 
       guestSystem = flakeInputs.nixpkgs.lib.nixosSystem {
         system = hostPkgs.stdenv.hostPlatform.system;
-        specialArgs.agentSandbox = instance.guest;
+        specialArgs.agentSandbox = instance.guest // {
+          inherit credentialFiles;
+        };
         modules = [
           flakeInputs.microvm.nixosModules.microvm
           core.guestBase
@@ -188,8 +185,36 @@ in
             ExecStart = "${runner}/bin/microvm-run";
             ExecStop = "${runner}/bin/microvm-shutdown";
             ExecStopPost = "+${teardownScript}";
-            StateDirectory = "fencr-run-${name}";
+            DynamicUser = true;
+            SupplementaryGroups = [ "kvm" ];
+            StateDirectory = [
+              "fencr-run-${name}"
+              "fencr-vms/${name}"
+            ];
             WorkingDirectory = "/var/lib/fencr-run-${name}";
+            LoadCredential = lib.mapAttrsToList (secretName: source: "${secretName}:${source}") options.secrets;
+            CapabilityBoundingSet = "";
+            DevicePolicy = "closed";
+            DeviceAllow = [
+              "/dev/kvm rw"
+              "/dev/net/tun rw"
+              "/dev/vhost-vsock rw"
+            ];
+            LockPersonality = true;
+            NoNewPrivileges = true;
+            PrivateTmp = true;
+            ProtectClock = true;
+            ProtectControlGroups = true;
+            ProtectHome = true;
+            ProtectHostname = true;
+            ProtectKernelLogs = true;
+            ProtectKernelModules = true;
+            ProtectKernelTunables = true;
+            ProtectSystem = "strict";
+            RestrictRealtime = true;
+            RestrictSUIDSGID = true;
+            SystemCallArchitectures = "native";
+            UMask = "0077";
             Restart = "on-failure";
             RestartSec = 5;
           };

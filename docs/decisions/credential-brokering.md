@@ -3,17 +3,19 @@
 Secrets reach a vm in one of two ways, and only one of them exposes the
 value:
 
-1. `secrets` stages plaintext copies into `/run/agent-secrets` (virtiofs,
-   mode 0400). The agent reads the real value. A prompt-injected agent can
-   print it.
+1. `secrets` passes host files through QEMU `fw_cfg` as systemd
+   credentials. An early guest service materializes mode-0400 copies in the
+   volatile `/run/agent-secrets`. The agent reads the real value. A
+   prompt-injected agent can print it. The values never occupy a host share or
+   persistent guest storage.
 1. `hostForwards.*.broker` never lets the value into the vm: the guest
    speaks plain http to its loopback proxy, the connection crosses vsock,
    and a host-side proxy (caddy) injects the configured header from a file
    loaded via systemd `LoadCredential`. The agent can use the capability
    but cannot read, log or exfiltrate the credential.
 
-Prefer the broker for anything http. Use staged secrets only where the
-payload needs the raw value (non-http protocols, client libraries that
+Prefer the broker for anything http. Use raw `secrets` only where the
+payload needs the value itself (non-http protocols, client libraries that
 insist on a key file).
 
 ## what the broker protects, stated plainly

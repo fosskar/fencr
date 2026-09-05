@@ -9,8 +9,7 @@ fencr.vms.myagent = {
   id = 0;
   services = [ my-agent-module ];
 
-  # internet: yes. LAN, mesh, sibling VMs: no. that is the default.
-  # egress = "closed" blocks everything beyond the pinholes, dns included.
+  # egress is closed by default, including dns. grant only what is needed.
   allowedTCPDestinations = [ "192.168.1.50:8123" ];
 
   # or grant egress by name: implies a closed seal, everything routes
@@ -32,9 +31,9 @@ update independently of the host (`flakelets.default`).
 ## What you get
 
 - one qemu microVM per instance ([microvm.nix](https://github.com/microvm-nix/microvm.nix)), vhost-vsock transport
-- egress: internet allowed, every private range dropped — a compromised
-  agent cannot walk your LAN, your mesh, or a sibling sandbox
-- explicit pinholes for the private destinations you name
+- default-deny egress, including dns
+- explicit pinholes for the destinations you name; optional open internet
+  still blocks every private range
 - host↔guest port forwards over vsock, socket-activated, no TCP exposure
 - persistent `/var/lib` per instance; read-only nix store share
 - memory ceiling with balloon, hard cap on the unit, CPU quota

@@ -5,6 +5,7 @@ let
     snakeOilEd25519PublicKey
     ;
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
+  rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
 in
 import (pkgs.path + "/nixos/tests/make-test-python.nix")
   ({ pkgs, ... }: {
@@ -26,6 +27,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       networking.nameservers = [ "9.9.9.9" ];
       environment.systemPackages = [
         pkgs.curl
+        pkgs.netcat
         pkgs.openssh
       ];
 
@@ -34,6 +36,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         vcpu = 1;
         mem = 768;
         authorizedKeys = [ snakeOilEd25519PublicKey ];
+        secrets.raw = rawSecret;
         expose = [
           {
             listenAddress = "127.0.0.1";
@@ -58,10 +61,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.wait_for_unit("microvm@sbx.service", timeout=1200)
       host.wait_for_unit("sbx-forward-22100.socket")
       host.wait_until_succeeds("curl --fail --silent http://127.0.0.1:22100 | grep -Fx 'fencr ingress'", timeout=120)
+      host.fail("nc -z -w 2 10.30.1.2 22")
 
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
       host.wait_until_succeeds("ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - VSOCK-CONNECT:3:22' root@sbx 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=120)
+      host.succeed("ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - VSOCK-CONNECT:3:22' root@sbx 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'")
     '';
 
     meta.timeout = 1800;

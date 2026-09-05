@@ -11,7 +11,6 @@ rec {
   hostIpOf = cfg: "10.30.${toString (cfg.id + 1)}.1";
   ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
 
-  secretsDirOf = name: "/var/lib/fencr/${name}/secrets";
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
 
   # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
@@ -111,6 +110,32 @@ rec {
     ];
   };
 
+  deniedDestinationNetworks = [
+    "0.0.0.0/8"
+    "10.0.0.0/8"
+    "100.64.0.0/10"
+    "127.0.0.0/8"
+    "169.254.0.0/16"
+    "172.16.0.0/12"
+    "192.0.0.0/24"
+    "192.0.2.0/24"
+    "192.168.0.0/16"
+    "198.18.0.0/15"
+    "198.51.100.0/24"
+    "203.0.113.0/24"
+    "224.0.0.0/4"
+    "240.0.0.0/4"
+    "::/128"
+    "::1/128"
+    "::ffff:0:0/96"
+    "64:ff9b::/96"
+    "100::/64"
+    "2001:db8::/32"
+    "fc00::/7"
+    "fe80::/10"
+    "ff00::/8"
+  ];
+
   # host to guest: accepted tcp connection spliced to the guest's vsock port
   forwardCommand =
     pkgs: cfg: forward:
@@ -173,6 +198,7 @@ rec {
       FilterType fnmatch
       FilterDefaultDeny Yes
       Filter "${proxyFilterFile pkgs domains}"
+      ConnectPort 443
     '';
 
   egressProxyServiceConfig =
@@ -183,6 +209,12 @@ rec {
       Restart = "always";
       RestartSec = 5;
       DynamicUser = true;
+      IPAddressAllow = [
+        "0.0.0.0/0"
+        "::/0"
+        "127.0.0.1/32"
+      ];
+      IPAddressDeny = deniedDestinationNetworks;
       RestrictAddressFamilies = [
         "AF_INET"
         "AF_INET6"
@@ -248,8 +280,15 @@ rec {
       mac = macOf options;
       vsockCid = cidOf options;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
+      invalidSecretNames = lib.filter (secretName: builtins.match "[A-Za-z0-9_.-]+" secretName == null) (
+        lib.attrNames options.secrets
+      );
       errors =
         lib.optional (options.id < 0 || options.id > 8) "${name}: id must be between 0 and 8"
+        ++ map (
+          secretName:
+          "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
+        ) invalidSecretNames
         ++ lib.optional (
           lib.stringLength tap > 15
         ) "vm name \"${name}\" is too long: \"${tap}\" exceeds IFNAMSIZ"
@@ -278,7 +317,7 @@ rec {
         inherit expose;
         kind = "microvm";
         bindAddress = "127.0.0.1";
-        hasSecrets = options.secrets != { };
+        secretNames = lib.attrNames options.secrets;
       };
     in
     {
@@ -394,6 +433,7 @@ rec {
             ListenStream = "vsock::${toString forward.vsockPort}";
             Accept = true;
             MaxConnections = 64;
+            TriggerLimitIntervalSec = 0;
           };
         };
       }) instance.hostForwards;
@@ -524,10 +564,13 @@ rec {
     {
       agentSandbox,
       lib,
+      modulesPath,
       pkgs,
       ...
     }:
     {
+      imports = [ "${modulesPath}/profiles/minimal.nix" ];
+
       microvm = {
         hypervisor = "qemu";
         inherit (agentSandbox) vcpu mem;
@@ -543,6 +586,8 @@ rec {
           }
         ];
 
+        inherit (agentSandbox) credentialFiles;
+
         shares = [
           {
             source = "/nix/store";
@@ -550,14 +595,6 @@ rec {
             tag = "ro-store";
             proto = "virtiofs";
           }
-        ]
-        ++ lib.optional agentSandbox.hasSecrets {
-          source = secretsDirOf agentSandbox.name;
-          mountPoint = "/run/agent-secrets";
-          tag = "secrets";
-          proto = "virtiofs";
-        }
-        ++ [
           {
             # every agent keeps its state under /var/lib, so share the whole
             # tree rather than making each one declare a directory
@@ -569,12 +606,37 @@ rec {
         ];
       };
 
+      system.switch.enable = false;
+
       # the host connects over vsock, so every forwarded port needs a listener
       # on the guest side of it. the relayed service itself only binds
       # loopback. host forwards get the mirror image: a loopback listener
       # relayed to the host's vsock cid.
       systemd.services = lib.mkMerge [
+        (lib.mkIf (agentSandbox.secretNames != [ ]) {
+          fencr-secrets = {
+            description = "Materialize fencr credentials in volatile guest storage";
+            wantedBy = [ "sysinit.target" ];
+            before = [ "sysinit.target" ];
+            after = [ "local-fs.target" ];
+            requires = [ "local-fs.target" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              ImportCredential = agentSandbox.secretNames;
+            };
+            script = ''
+              install -d -m 0700 /run/agent-secrets
+              ${lib.concatMapStringsSep "\n" (
+                secretName:
+                "install -m 0400 \"$CREDENTIALS_DIRECTORY/${secretName}\" /run/agent-secrets/${secretName}"
+              ) agentSandbox.secretNames}
+            '';
+          };
+        })
         (lib.mkIf (agentSandbox.sshKeys != [ ]) {
+          sshd.wantedBy = lib.mkForce [ ];
           "fencr-sshd-vsock@" = {
             description = "sshd for a fencr vsock connection";
             unitConfig.CollectMode = "inactive-or-failed";
@@ -645,7 +707,8 @@ rec {
       systemd.tmpfiles.rules = [ "d /var/lib/ssh 0700 root root - -" ];
 
       services.openssh = {
-        enable = true;
+        enable = agentSandbox.sshKeys != [ ];
+        openFirewall = false;
         settings.PasswordAuthentication = false;
         hostKeys = [
           {
@@ -684,12 +747,11 @@ rec {
         }
       );
 
-      # fetch tools for whatever runs inside; language runtimes ship with the
-      # agent that needs them
-      environment.systemPackages = [
-        pkgs.curl
-        pkgs.git
-      ];
+      documentation.enable = false;
+      environment.defaultPackages = lib.mkForce [ ];
+      environment.systemPackages = [ ];
+      nix.enable = lib.mkDefault false;
+      programs.nano.enable = false;
 
       system.stateVersion = lib.versions.majorMinor lib.version;
     };

@@ -23,7 +23,7 @@ let
       authorizedKeys = [
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
       ];
-      secrets = { };
+      secrets.raw = "/run/secrets/raw";
       allowedTCPDestinations = [ "192.168.1.50:8123" ];
       expose = [
         "33627"
@@ -136,7 +136,6 @@ assert lib.assertMsg (
     "bridge"
     "dns"
     "expose"
-    "hasSecrets"
     "hostForwards"
     "hostIp"
     "ip"
@@ -146,6 +145,7 @@ assert lib.assertMsg (
     "name"
     "prefixLength"
     "proxy"
+    "secretNames"
     "sshKeys"
     "tap"
     "vcpu"
@@ -164,8 +164,16 @@ assert lib.assertMsg (
   result.services."fwd-33627@".after == [ "sbx.service" ]
 ) "unit check: vm dependency drifted";
 assert lib.assertMsg result.services."fwd-33627@".serviceConfig.DynamicUser
-  "unit check: flakelet identity drifted";
+  "unit check: flakelet forward identity drifted";
+assert lib.assertMsg result.services.sbx.serviceConfig.DynamicUser
+  "unit check: flakelet vm runs as root";
+assert lib.assertMsg (
+  result.services.sbx.serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
+) "unit check: flakelet credential transport drifted";
 assert lib.assertMsg (
   result.sockets."fwd-33627".socketConfig.ListenStream == "127.0.0.1:33627"
 ) "unit check: listen endpoint drifted";
+assert lib.assertMsg (
+  result.sockets."hfwd-18764".socketConfig.TriggerLimitIntervalSec == 0
+) "unit check: vsock trigger limit is enabled";
 pkgs.writeText "fencr-flakelet-check" (builtins.toJSON result)

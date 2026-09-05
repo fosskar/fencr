@@ -19,8 +19,7 @@ fencr.vms.myagent = {
 
 What this gives you, with no further options:
 
-- the vm reaches the internet; it cannot reach your LAN, your mesh, or
-  other vms
+- the vm has no network egress, including dns
 - nothing reaches the vm except `ssh myagent` (your key, over vsock) and
   host port 22100 (its web ui)
 - `/var/lib` inside the vm survives reboots and rebuilds
@@ -30,8 +29,8 @@ Each further line is one permission or one limit:
 
 ```nix
   allowedDomains = [ "github.com" "*.github.com" ];  # out: only these sites
-  allowedTCPDestinations = [ "192.168.1.50:8123" ];  # out: one private address
-  egress = "closed";                                  # out: nothing at all
+  allowedTCPDestinations = [ "192.168.1.50:8123" ];  # out: one address
+  egress = "open";                                    # out: public internet
   secrets."agent.env" = "/run/secrets/agent.env";     # file at /run/agent-secrets/
   vcpu = 8; mem = 8192;                               # bigger box
 ```

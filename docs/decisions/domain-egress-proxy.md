@@ -11,7 +11,11 @@ fencr routes egress through a host-side proxy:
 - a per-instance tinyproxy on host loopback is reachable only through a
   vsock hostForward — the road out has no IP path at all
 - tinyproxy enforces the allowlist on the CONNECT hostname
-  (`FilterType fnmatch`, `FilterDefaultDeny`); https needs no interception
+  (`FilterType fnmatch`, `FilterDefaultDeny`) and permits CONNECT only on
+  port 443; https needs no interception
+- the proxy unit denies private, link-local, multicast and other special-use
+  destination ranges, so an allowed hostname cannot grant LAN access by
+  resolving to a private address
 - the guest base exports `HTTP_PROXY`/`HTTPS_PROXY` system-wide and into
   `systemd.globalEnvironment`
 
@@ -25,8 +29,7 @@ assumption.
   raw sockets to arbitrary hosts stay dead by design
 - fnmatch patterns: `*.github.com` does not match bare `github.com`; list
   both
-- CONNECT is restricted to port 443 (tinyproxy default); plain http rides
-  ordinary proxying
+- CONNECT is restricted to port 443; plain http rides ordinary proxying
 - the allowlist names hosts, not paths or methods
 
 ## alternative considered

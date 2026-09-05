@@ -28,6 +28,30 @@ in
       assertion = guestConfig.systemd.services ? "fencr-sshd-vsock@";
       message = "nixos module check: missing guest service fencr-sshd-vsock@";
     }
+    {
+      assertion = guestConfig.systemd.services.sshd.wantedBy == [ ];
+      message = "nixos module check: tcp sshd is still enabled";
+    }
+    {
+      assertion = !(builtins.elem 22 guestConfig.networking.firewall.allowedTCPPorts);
+      message = "nixos module check: guest firewall still opens tcp ssh";
+    }
+    {
+      assertion = !guestConfig.system.switch.enable;
+      message = "nixos module check: guest system switching is enabled";
+    }
+    {
+      assertion = !guestConfig.nix.enable && guestConfig.environment.defaultPackages == [ ];
+      message = "nixos module check: guest minimal profile drifted";
+    }
+    {
+      assertion = config.fencr.vms.sealed.egress == "closed";
+      message = "nixos module check: egress is not closed by default";
+    }
+    {
+      assertion = guestConfig.microvm.credentialFiles.raw == "/run/credentials/microvm@sbx.service/raw";
+      message = "nixos module check: raw secret is not transported as a systemd credential";
+    }
   ];
 
   boot.loader.grub.devices = [ "/dev/sda" ];
@@ -49,6 +73,7 @@ in
     vcpu = 2;
     mem = 1024;
     dns = "9.9.9.9";
+    secrets.raw = "/run/secrets/raw";
     hostPorts = [ 443 ];
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [
