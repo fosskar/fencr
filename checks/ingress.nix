@@ -25,6 +25,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       ];
       virtualisation.diskSize = 4096;
 
+      networking.useNetworkd = true;
       networking.nameservers = [ "9.9.9.9" ];
       environment.systemPackages = [
         pkgs.curl

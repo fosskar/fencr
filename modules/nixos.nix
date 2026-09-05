@@ -279,7 +279,13 @@ in
         (
           lib.concatMap (instance: instance.errors) (lib.attrValues resolvedInstances)
           ++ core.fleetErrors resolvedInstances
-        );
+        )
+      ++ [
+        {
+          assertion = instances == { } || config.systemd.network.enable;
+          message = "fencr.vms: the bridge and tap are configured through systemd-networkd; set networking.useNetworkd = true (or systemd.network.enable = true) on this host.";
+        }
+      ];
 
     environment.systemPackages = lib.mkIf (instances != { }) [
       (import ./cli.nix {

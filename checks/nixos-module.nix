@@ -54,6 +54,7 @@ in
     }
   ];
 
+  networking.useNetworkd = true;
   boot.loader.grub.devices = [ "/dev/sda" ];
   fileSystems."/" = {
     device = "/dev/sda1";
