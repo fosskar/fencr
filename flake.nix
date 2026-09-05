@@ -36,7 +36,7 @@
     in
     {
       nixosModules = {
-        fencr = import ./modules/fencr.nix { inherit inputs; };
+        fencr = import ./modules/nixos.nix { inherit inputs; };
         default = self.nixosModules.fencr;
       };
 
