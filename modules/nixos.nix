@@ -22,6 +22,27 @@ let
   instances = config.fencr.vms;
   sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
   core = import ./core.nix { inherit lib; };
+  resolvedInstances = lib.mapAttrs (
+    name: options:
+    core.resolveInstance {
+      inherit name options;
+      sshKeys = sshKeysOf options;
+    }
+  ) instances;
+  unitSets = lib.mapAttrs (
+    name: instance:
+    core.hostUnits pkgs instance {
+      vmUnit = "microvm@${name}.service";
+      identity = {
+        User = "microvm";
+        Group = "kvm";
+      };
+      forwardName = forward: "${name}-forward-${toString forward.listenPort}";
+      hostForwardName = forward: "${name}-host-forward-${toString forward.vsockPort}";
+      proxyName = "${name}-egress-proxy";
+      brokerName = forward: "${name}-broker-${toString forward.vsockPort}";
+    }
+  ) resolvedInstances;
   exposeType = lib.types.coercedTo lib.types.str core.parseExpose (
     lib.types.submodule {
       options = {
@@ -42,12 +63,7 @@ let
       };
     }
   );
-  forwardUnit = name: forward: "${name}-forward-${toString forward.listenPort}";
-  hostForwardUnit = name: forward: "${name}-host-forward-${toString forward.vsockPort}";
-  brokerUnit = name: forward: "${name}-broker-${toString forward.vsockPort}";
-  inherit (core) proxyOf hostForwardsOf;
-  brokeredOf = cfg: lib.filter (forward: forward.broker != null) cfg.hostForwards;
-  forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f instances);
+  forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
 in
 {
   imports = [ inputs.microvm.nixosModules.host ];
@@ -60,13 +76,6 @@ in
       host root can always reach a vm regardless (it owns the hypervisor,
       the state tree and the console); this only makes that access ssh.
     '';
-  };
-
-  options.fencr.forwardEndpoints = lib.mkOption {
-    type = lib.types.listOf lib.types.str;
-    default = [ ];
-    internal = true;
-    description = "host endpoints claimed by sandbox forwards, as address:port.";
   };
 
   options.fencr.vms = lib.mkOption {
@@ -256,60 +265,22 @@ in
     # the seal is written in nftables; the iptables firewall cannot host it
     networking.nftables.enable = lib.mkIf (instances != { }) true;
 
-    assertions = [
-      {
-        assertion = lib.allUnique (lib.mapAttrsToList (_: cfg: cfg.id) instances);
-        message = "fencr.vms: instance ids must be unique.";
-      }
-      {
-        # IFNAMSIZ caps interface names at 15 chars
-        assertion = lib.all (name: lib.stringLength (core.tapOf name) <= 15) (lib.attrNames instances);
-        message = "fencr.vms: vm names must be at most ${
-          toString (15 - lib.stringLength (core.tapOf ""))
-        } chars, so tap and bridge names fit IFNAMSIZ.";
-      }
-      {
-        assertion = lib.allUnique config.fencr.forwardEndpoints;
-        message = "fencr.vms: host listen endpoints must be unique across instances.";
-      }
-      {
-        assertion = lib.all (cfg: cfg.allowedDomains == [ ] || cfg.egress == "closed") (
-          lib.attrValues instances
+    assertions =
+      map
+        (message: {
+          assertion = false;
+          message = "fencr.vms: ${message}.";
+        })
+        (
+          lib.concatMap (instance: instance.errors) (lib.attrValues resolvedInstances)
+          ++ core.fleetErrors resolvedInstances
         );
-        message = "fencr.vms: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration.";
-      }
-      {
-        assertion = lib.all (cfg: core.domainPatternErrors cfg.allowedDomains == [ ]) (
-          lib.attrValues instances
-        );
-        message = "fencr.vms: invalid allowedDomains: ${
-          lib.concatStringsSep "; " (
-            lib.concatMap (cfg: core.domainPatternErrors cfg.allowedDomains) (lib.attrValues instances)
-          )
-        }";
-      }
-    ];
-
-    fencr.forwardEndpoints =
-      lib.concatLists (
-        lib.mapAttrsToList (
-          _: cfg: map (forward: "${forward.listenAddress}:${toString forward.listenPort}") cfg.expose
-        ) instances
-      )
-      ++ lib.concatLists (
-        lib.mapAttrsToList (
-          _: cfg: map (forward: "127.0.0.1:${toString forward.broker.port}") (brokeredOf cfg)
-        ) instances
-      );
 
     environment.systemPackages = lib.mkIf (instances != { }) [
       (import ./cli.nix {
-        inherit
-          lib
-          pkgs
-          core
-          instances
-          ;
+        inherit lib pkgs;
+        instances = resolvedInstances;
+        units = unitSets;
       })
     ];
 
@@ -319,13 +290,13 @@ in
     programs.ssh.extraConfig = lib.concatStrings (
       lib.mapAttrsToList (
         name: cfg:
-        lib.optionalString (sshKeysOf cfg != [ ]) ''
+        lib.optionalString (cfg.guest.sshKeys != [ ]) ''
           Host ${name}
             User root
-            ProxyCommand ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString (core.cidOf cfg)}:22
+            ProxyCommand ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString cfg.cid}:22
             StrictHostKeyChecking accept-new
         ''
-      ) instances
+      ) resolvedInstances
     );
 
     systemd.services = lib.mkMerge (
@@ -374,120 +345,15 @@ in
           CPUWeight = 20;
         };
       }) instances
-      ++ lib.concatLists (
-        lib.mapAttrsToList (
-          name: cfg:
-          map (forward: {
-            "${forwardUnit name forward}@" = {
-              description = "forward to ${name} guest port ${toString forward.guestPort}";
-              after = [ "microvm@${name}.service" ];
-              requires = [ "microvm@${name}.service" ];
-              # per-connection instances must not pile up in failed state
-              unitConfig.CollectMode = "inactive-or-failed";
-              serviceConfig = core.forwardHardening // {
-                User = "microvm";
-                Group = "kvm";
-                ExecStart = core.forwardCommand pkgs cfg forward;
-              };
-            };
-          }) cfg.expose
-        ) instances
-      )
-      ++ lib.concatLists (
-        lib.mapAttrsToList (
-          name: cfg:
-          map (forward: {
-            "${hostForwardUnit name forward}@" = {
-              description = "host forward for ${name} vsock port ${toString forward.vsockPort}";
-              after = [ "microvm@${name}.service" ];
-              requires = [ "microvm@${name}.service" ];
-              unitConfig.CollectMode = "inactive-or-failed";
-              serviceConfig = core.forwardHardening // {
-                User = "microvm";
-                Group = "kvm";
-                ExecStart = core.hostForwardCommand pkgs cfg forward;
-              };
-            };
-          }) (hostForwardsOf cfg)
-        ) instances
-      )
-      ++ lib.mapAttrsToList (
-        name: cfg:
-        lib.mkIf (proxyOf cfg != null) {
-          "${name}-egress-proxy" = {
-            description = "domain-allowlist egress proxy for ${name}";
-            wantedBy = [ "multi-user.target" ];
-            serviceConfig = core.egressProxyServiceConfig pkgs (proxyOf cfg).port cfg.allowedDomains;
-          };
-        }
-      ) instances
-      ++ lib.concatLists (
-        lib.mapAttrsToList (
-          name: cfg:
-          map (forward: {
-            ${brokerUnit name forward} = {
-              description = "credential broker for ${name} vsock port ${toString forward.vsockPort}";
-              wantedBy = [ "multi-user.target" ];
-              serviceConfig = core.brokerServiceConfig pkgs forward.broker forward.targetPort;
-            };
-          }) (brokeredOf cfg)
-        ) instances
-      )
+      ++ map (units: units.services) (lib.attrValues unitSets)
     );
 
-    systemd.sockets =
-      forEachInstance (
-        name: cfg:
-        lib.listToAttrs (
-          map (forward: {
-            name = forwardUnit name forward;
-            value = {
-              description = "forward to ${name} guest port ${toString forward.guestPort}";
-              wantedBy = [ "sockets.target" ];
-              listenStreams = [ "${forward.listenAddress}:${toString forward.listenPort}" ];
-              socketConfig = {
-                Accept = true;
-                MaxConnections = 64;
-              };
-            };
-          }) cfg.expose
-        )
-      )
-      // forEachInstance (
-        name: cfg:
-        lib.listToAttrs (
-          map (forward: {
-            name = hostForwardUnit name forward;
-            value = {
-              description = "host forward for ${name} vsock port ${toString forward.vsockPort}";
-              wantedBy = [ "sockets.target" ];
-              listenStreams = [ "vsock::${toString forward.vsockPort}" ];
-              socketConfig = {
-                Accept = true;
-                MaxConnections = 64;
-              };
-            };
-          }) (hostForwardsOf cfg)
-        )
-      );
+    systemd.sockets = lib.mkMerge (map (units: units.sockets) (lib.attrValues unitSets));
 
     microvm.vms = lib.mapAttrs (name: cfg: {
       autostart = true;
       specialArgs = cfg.specialArgs // {
-        agentSandbox = cfg // {
-          inherit name;
-          sshKeys = sshKeysOf cfg;
-          kind = "microvm";
-          # the guest-side proxy relays vsock to loopback, so a forwarded
-          # service only ever needs to listen on loopback
-          bindAddress = "127.0.0.1";
-          hostForwards = hostForwardsOf cfg;
-          proxy = proxyOf cfg;
-          hasSecrets = cfg.secrets != { };
-          tap = core.tapOf name;
-          mac = core.macOf cfg;
-          vsockCid = core.cidOf cfg;
-        };
+        agentSandbox = resolvedInstances.${name}.guest;
       };
       config =
         { ... }:
@@ -505,13 +371,13 @@ in
       content = ''
         chain postrouting {
           type nat hook postrouting priority srcnat; policy accept;
-          ${lib.concatStrings (lib.mapAttrsToList (_: cfg: core.natRuleFragment cfg) instances)}
+          ${lib.concatStrings (lib.mapAttrsToList (_: cfg: (core.firewallOf cfg).nat) resolvedInstances)}
         }
       '';
     };
 
     systemd.network = forEachInstance (
-      name: cfg: {
+      _name: cfg: {
         netdevs."10-${cfg.bridge}".netdevConfig = {
           Name = cfg.bridge;
           Kind = "bridge";
@@ -523,8 +389,8 @@ in
             ConfigureWithoutCarrier = true;
           };
         };
-        networks."11-${core.tapOf name}" = {
-          matchConfig.Name = core.tapOf name;
+        networks."11-${cfg.tap}" = {
+          matchConfig.Name = cfg.tap;
           networkConfig.Bridge = cfg.bridge;
         };
       }
@@ -542,7 +408,7 @@ in
       # compromised agent cannot walk the lan, a mesh, or a sibling
       # agent vm's subnet
       extraForwardRules = lib.concatStrings (
-        lib.mapAttrsToList (name: cfg: core.forwardFilterFragment (cfg // { inherit name; })) instances
+        lib.mapAttrsToList (_: cfg: (core.firewallOf cfg).forward) resolvedInstances
       );
     };
 
@@ -557,11 +423,14 @@ in
           type filter hook input priority filter - 1; policy accept;
           ${lib.concatStrings (
             lib.mapAttrsToList (
-              name: cfg:
-              core.sealInputFragment (cfg // { inherit name; }) (
-                lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts
-              )
-            ) instances
+              _: cfg:
+              (core.firewallOf (
+                cfg
+                // {
+                  hostPorts = lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts;
+                }
+              )).input
+            ) resolvedInstances
           )}
         }
       '';

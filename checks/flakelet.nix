@@ -4,6 +4,7 @@ self: pkgs:
 # expected units exist. Building this check builds the guest system.
 let
   inherit (pkgs) lib;
+  core = import ../modules/core.nix { inherit lib; };
   module = self.flakelets.default {
     # only impl is exercised; option declarations stay unevaluated
     types = null;
@@ -58,6 +59,40 @@ let
       };
     };
   };
+  resolved = core.resolveInstance {
+    name = "sbx";
+    options = {
+      id = 0;
+      vcpu = 2;
+      mem = 1024;
+      dns = "9.9.9.9";
+      egress = "closed";
+      allowedDomains = [ "github.com" ];
+      allowedTCPDestinations = [ "192.168.1.50:8123" ];
+      expose = [ "33627" ];
+      hostForwards = [ ];
+      hostPorts = [ 443 ];
+      secrets = { };
+    };
+    sshKeys = [ ];
+  };
+  longName = core.resolveInstance {
+    name = "coding-agent-1";
+    options = {
+      id = 1;
+      vcpu = 1;
+      mem = 512;
+      dns = "9.9.9.9";
+      egress = "open";
+      allowedDomains = [ ];
+      allowedTCPDestinations = [ ];
+      expose = [ ];
+      hostForwards = [ ];
+      hostPorts = [ ];
+      secrets = { };
+    };
+    sshKeys = [ ];
+  };
   expectedUnits = [
     "sbx"
     "fwd-33627@"
@@ -70,11 +105,67 @@ let
   expectedSockets = [
     "fwd-33627"
     "fwd-33628"
+    "hfwd-13128"
     "hfwd-18764"
   ];
-  missing =
-    lib.filter (unit: !(result.services ? ${unit})) expectedUnits
-    ++ lib.filter (socket: !(result.sockets ? ${socket})) expectedSockets;
+  actualUnits = builtins.attrNames result.services;
+  actualSockets = builtins.attrNames result.sockets;
 in
-assert lib.assertMsg (missing == [ ]) "flakelet check: missing units ${toString missing}";
+assert lib.assertMsg (
+  actualUnits == lib.sort builtins.lessThan expectedUnits
+) "flakelet check: units differ: ${toString actualUnits}";
+assert lib.assertMsg (
+  actualSockets == lib.sort builtins.lessThan expectedSockets
+) "flakelet check: sockets differ: ${toString actualSockets}";
+assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
+assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
+assert lib.assertMsg (
+  resolved.expose == [
+    {
+      listenAddress = "127.0.0.1";
+      listenPort = 33627;
+      guestPort = 33627;
+    }
+  ]
+) "core check: expose was not resolved";
+assert lib.assertMsg (resolved.proxy.port == 13128) "core check: proxy was not resolved";
+assert lib.assertMsg (longName.errors != [ ]) "core check: long interface name accepted";
+assert lib.assertMsg (
+  builtins.attrNames resolved.guest == [
+    "bindAddress"
+    "bridge"
+    "dns"
+    "expose"
+    "hasSecrets"
+    "hostForwards"
+    "hostIp"
+    "ip"
+    "kind"
+    "mac"
+    "mem"
+    "name"
+    "prefixLength"
+    "proxy"
+    "sshKeys"
+    "tap"
+    "vcpu"
+    "vsockCid"
+  ]
+) "core check: guest contract drifted";
+assert lib.assertMsg (
+  lib.length (
+    core.fleetErrors {
+      first = resolved;
+      second = resolved;
+    }
+  ) == 2
+) "core check: duplicate fleet resources accepted";
+assert lib.assertMsg (
+  result.services."fwd-33627@".after == [ "sbx.service" ]
+) "unit check: vm dependency drifted";
+assert lib.assertMsg result.services."fwd-33627@".serviceConfig.DynamicUser
+  "unit check: flakelet identity drifted";
+assert lib.assertMsg (
+  result.sockets."fwd-33627".socketConfig.ListenStream == "127.0.0.1:33627"
+) "unit check: listen endpoint drifted";
 pkgs.writeText "fencr-flakelet-check" (builtins.toJSON result)

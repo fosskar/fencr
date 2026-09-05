@@ -113,73 +113,36 @@ in
       storePath = inputs.flakelet.storePath;
       core = import ./core.nix { inherit lib; };
 
-      proxy =
-        if options.allowedDomains == [ ] then
-          null
-        else if core.domainPatternErrors options.allowedDomains != [ ] then
-          throw "fencr: invalid allowedDomains: ${lib.concatStringsSep "; " (core.domainPatternErrors options.allowedDomains)}"
-        else if options.egress != "closed" then
-          throw "fencr: allowedDomains requires egress = \"closed\"; with open egress the proxy filter is decoration"
-        else
-          core.proxyOf options;
-
-      hostForwards = core.hostForwardsOf options;
-
-      cfg = {
-        inherit name;
-        inherit (options)
-          id
-          vcpu
-          mem
-          dns
-          egress
-          ;
-        inherit hostForwards;
-        allowedTCPDestinations = map core.parseDestination options.allowedTCPDestinations;
-        expose = map core.parseExpose options.expose;
-        bridge = core.bridgeOf name;
-        ip = core.ipOf options;
-        hostIp = core.hostIpOf options;
-        prefixLength = 24;
+      resolved = core.resolveInstance {
+        inherit name options;
+        sshKeys = options.authorizedKeys;
       };
-
-      brokered = lib.filter (forward: forward.broker != null) options.hostForwards;
-
-      # standalone nftables tables: the nixos module hooks the host firewall,
-      # here the same fragments get their own chains. the trailing drop on
-      # oifname replaces the host firewall's default-deny for unsolicited
-      # inbound forwards.
-      ruleset = hostPkgs.writeText "fencr-${name}.nft" ''
-        table ip fencr-${name}-nat {
-          chain postrouting {
-            type nat hook postrouting priority srcnat; policy accept;
-            ${core.natRuleFragment cfg}
-          }
-        }
-        table inet fencr-${name} {
-          chain forward {
-            type filter hook forward priority filter; policy accept;
-            ${core.forwardFilterFragment cfg}
-            oifname "${cfg.bridge}" drop
-          }
-          chain input {
-            type filter hook input priority -1; policy accept;
-            ${core.sealInputFragment cfg options.hostPorts}
-          }
-        }
-      '';
+      instance =
+        if resolved.errors == [ ] then
+          resolved
+        else
+          throw "fencr: ${lib.concatStringsSep "; " resolved.errors}";
+      units = core.hostUnits hostPkgs instance {
+        vmUnit = "${name}.service";
+        identity.DynamicUser = true;
+        forwardName = forward: "fwd-${toString forward.listenPort}";
+        hostForwardName = forward: "hfwd-${toString forward.vsockPort}";
+        proxyName = "egress-proxy";
+        brokerName = forward: "broker-${toString forward.vsockPort}";
+      };
+      ruleset = hostPkgs.writeText "fencr-${name}.nft" (core.firewallOf instance).standalone;
 
       setupScript = hostPkgs.writeShellScript "fencr-${name}-setup" ''
         set -eu
         ${hostPkgs.kmod}/bin/modprobe vhost_vsock
         ${hostPkgs.procps}/bin/sysctl -q net.ipv4.conf.all.forwarding=1
         ip=${hostPkgs.iproute2}/bin/ip
-        $ip link show ${cfg.bridge} >/dev/null 2>&1 || $ip link add ${cfg.bridge} type bridge
-        $ip addr replace ${cfg.hostIp}/${toString cfg.prefixLength} dev ${cfg.bridge}
-        $ip link set ${cfg.bridge} up
-        $ip link show ${core.tapOf name} >/dev/null 2>&1 || $ip tuntap add ${core.tapOf name} mode tap
-        $ip link set ${core.tapOf name} master ${cfg.bridge}
-        $ip link set ${core.tapOf name} up
+        $ip link show ${instance.bridge} >/dev/null 2>&1 || $ip link add ${instance.bridge} type bridge
+        $ip addr replace ${instance.hostIp}/${toString instance.prefixLength} dev ${instance.bridge}
+        $ip link set ${instance.bridge} up
+        $ip link show ${instance.tap} >/dev/null 2>&1 || $ip tuntap add ${instance.tap} mode tap
+        $ip link set ${instance.tap} master ${instance.bridge}
+        $ip link set ${instance.tap} up
         ${hostPkgs.nftables}/bin/nft delete table inet fencr-${name} 2>/dev/null || true
         ${hostPkgs.nftables}/bin/nft delete table ip fencr-${name}-nat 2>/dev/null || true
         ${hostPkgs.nftables}/bin/nft -f ${ruleset}
@@ -198,24 +161,14 @@ in
       teardownScript = hostPkgs.writeShellScript "fencr-${name}-teardown" ''
         ${hostPkgs.nftables}/bin/nft delete table inet fencr-${name} 2>/dev/null || true
         ${hostPkgs.nftables}/bin/nft delete table ip fencr-${name}-nat 2>/dev/null || true
-        ${hostPkgs.iproute2}/bin/ip link del ${core.tapOf name} 2>/dev/null || true
-        ${hostPkgs.iproute2}/bin/ip link del ${cfg.bridge} 2>/dev/null || true
+        ${hostPkgs.iproute2}/bin/ip link del ${instance.tap} 2>/dev/null || true
+        ${hostPkgs.iproute2}/bin/ip link del ${instance.bridge} 2>/dev/null || true
         exit 0
       '';
 
       guestSystem = flakeInputs.nixpkgs.lib.nixosSystem {
         system = hostPkgs.stdenv.hostPlatform.system;
-        specialArgs.agentSandbox = cfg // {
-          inherit name;
-          sshKeys = options.authorizedKeys;
-          kind = "microvm";
-          bindAddress = "127.0.0.1";
-          inherit proxy;
-          hasSecrets = options.secrets != { };
-          tap = core.tapOf name;
-          mac = core.macOf options;
-          vsockCid = core.cidOf options;
-        };
+        specialArgs.agentSandbox = instance.guest;
         modules = [
           flakeInputs.microvm.nixosModules.microvm
           core.guestBase
@@ -242,82 +195,8 @@ in
           };
         };
       }
-      // lib.listToAttrs (
-        map (forward: {
-          name = "fwd-${toString forward.listenPort}@";
-          value = {
-            description = "forward to ${name} guest port ${toString forward.guestPort}";
-            after = [ "${name}.service" ];
-            requires = [ "${name}.service" ];
-            unitConfig.CollectMode = "inactive-or-failed";
-            serviceConfig = core.forwardHardening // {
-              DynamicUser = true;
-              ExecStart = core.forwardCommand hostPkgs cfg forward;
-            };
-          };
-        }) cfg.expose
-      )
-      // lib.listToAttrs (
-        map (forward: {
-          name = "hfwd-${toString forward.vsockPort}@";
-          value = {
-            description = "host forward for ${name} vsock port ${toString forward.vsockPort}";
-            after = [ "${name}.service" ];
-            requires = [ "${name}.service" ];
-            unitConfig.CollectMode = "inactive-or-failed";
-            serviceConfig = core.forwardHardening // {
-              DynamicUser = true;
-              ExecStart = core.hostForwardCommand hostPkgs cfg forward;
-            };
-          };
-        }) hostForwards
-      )
-      // lib.optionalAttrs (proxy != null) {
-        egress-proxy = {
-          description = "domain-allowlist egress proxy for ${name}";
-          wantedBy = [ "multi-user.target" ];
-          serviceConfig = core.egressProxyServiceConfig hostPkgs proxy.port options.allowedDomains;
-        };
-      }
-      // lib.listToAttrs (
-        map (forward: {
-          name = "broker-${toString forward.vsockPort}";
-          value = {
-            description = "credential broker for ${name} vsock port ${toString forward.vsockPort}";
-            wantedBy = [ "multi-user.target" ];
-            serviceConfig = core.brokerServiceConfig hostPkgs forward.broker forward.targetPort;
-          };
-        }) brokered
-      );
+      // units.services;
 
-      sockets =
-        lib.listToAttrs (
-          map (forward: {
-            name = "fwd-${toString forward.listenPort}";
-            value = {
-              description = "forward to ${name} guest port ${toString forward.guestPort}";
-              wantedBy = [ "sockets.target" ];
-              socketConfig = {
-                ListenStream = "${forward.listenAddress}:${toString forward.listenPort}";
-                Accept = true;
-                MaxConnections = 64;
-              };
-            };
-          }) cfg.expose
-        )
-        // lib.listToAttrs (
-          map (forward: {
-            name = "hfwd-${toString forward.vsockPort}";
-            value = {
-              description = "host forward for ${name} vsock port ${toString forward.vsockPort}";
-              wantedBy = [ "sockets.target" ];
-              socketConfig = {
-                ListenStream = "vsock::${toString forward.vsockPort}";
-                Accept = true;
-                MaxConnections = 64;
-              };
-            };
-          }) hostForwards
-        );
+      inherit (units) sockets;
     };
 }

@@ -68,15 +68,7 @@ rec {
       ];
     } ./vsock-forward.rs;
 
-  # per-connection forward helpers; the frontend adds the process identity
-  # (User/Group on nixos, DynamicUser under flakelet)
-  forwardHardening = {
-    StandardInput = "socket";
-    StandardError = "journal";
-    RestrictAddressFamilies = [
-      "AF_INET"
-      "AF_VSOCK"
-    ];
+  hardened = {
     CapabilityBoundingSet = "";
     LockPersonality = true;
     MemoryDenyWriteExecute = true;
@@ -98,35 +90,25 @@ rec {
     UMask = "0077";
   };
 
-  proxyHardening = {
-    Restart = "always";
-    RestartSec = 5;
-    DynamicUser = true;
-    CapabilityBoundingSet = "";
-    IPAddressAllow = "localhost";
-    IPAddressDeny = "any";
-    LockPersonality = true;
-    MemoryDenyWriteExecute = true;
-    NoNewPrivileges = true;
-    PrivateDevices = true;
-    PrivateTmp = true;
-    ProtectClock = true;
-    ProtectControlGroups = true;
-    ProtectHome = true;
-    ProtectHostname = true;
-    ProtectKernelLogs = true;
-    ProtectKernelModules = true;
-    ProtectKernelTunables = true;
-    ProtectSystem = "strict";
+  forwardHardening = hardened // {
+    StandardInput = "socket";
+    StandardError = "journal";
     RestrictAddressFamilies = [
       "AF_INET"
       "AF_VSOCK"
     ];
-    RestrictNamespaces = true;
-    RestrictRealtime = true;
-    RestrictSUIDSGID = true;
-    SystemCallArchitectures = "native";
-    UMask = "0077";
+  };
+
+  proxyHardening = hardened // {
+    Restart = "always";
+    RestartSec = 5;
+    DynamicUser = true;
+    IPAddressAllow = "localhost";
+    IPAddressDeny = "any";
+    RestrictAddressFamilies = [
+      "AF_INET"
+      "AF_VSOCK"
+    ];
   };
 
   # host to guest: accepted tcp connection spliced to the guest's vsock port
@@ -193,36 +175,20 @@ rec {
       Filter "${proxyFilterFile pkgs domains}"
     '';
 
-  egressProxyServiceConfig = pkgs: port: domains: {
-    ExecStart = "${pkgs.tinyproxy}/bin/tinyproxy -d -c ${tinyproxyConfig pkgs port domains}";
-    Restart = "always";
-    RestartSec = 5;
-    DynamicUser = true;
-    CapabilityBoundingSet = "";
-    LockPersonality = true;
-    MemoryDenyWriteExecute = true;
-    NoNewPrivileges = true;
-    PrivateDevices = true;
-    PrivateTmp = true;
-    ProtectClock = true;
-    ProtectControlGroups = true;
-    ProtectHome = true;
-    ProtectHostname = true;
-    ProtectKernelLogs = true;
-    ProtectKernelModules = true;
-    ProtectKernelTunables = true;
-    ProtectSystem = "strict";
-    RestrictAddressFamilies = [
-      "AF_INET"
-      "AF_INET6"
-      "AF_UNIX"
-    ];
-    RestrictNamespaces = true;
-    RestrictRealtime = true;
-    RestrictSUIDSGID = true;
-    SystemCallArchitectures = "native";
-    UMask = "0077";
-  };
+  egressProxyServiceConfig =
+    pkgs: port: domains:
+    hardened
+    // {
+      ExecStart = "${pkgs.tinyproxy}/bin/tinyproxy -d -c ${tinyproxyConfig pkgs port domains}";
+      Restart = "always";
+      RestartSec = 5;
+      DynamicUser = true;
+      RestrictAddressFamilies = [
+        "AF_INET"
+        "AF_INET6"
+        "AF_UNIX"
+      ];
+    };
 
   # the credential broker: the guest talks plain http through the vsock
   # forward; this proxy holds the secret and injects the header on the host
@@ -262,6 +228,205 @@ rec {
       ];
     }
     // proxyHardening;
+
+  resolveInstance =
+    {
+      name,
+      options,
+      sshKeys,
+    }:
+    let
+      proxy = proxyOf options;
+      expose = map parseExpose options.expose;
+      declaredHostForwards = options.hostForwards;
+      hostForwards = hostForwardsOf options;
+      bridge = options.bridge or (bridgeOf name);
+      hostIp = options.hostIp or (hostIpOf options);
+      ip = options.ip or (ipOf options);
+      prefixLength = options.prefixLength or 24;
+      tap = tapOf name;
+      mac = macOf options;
+      vsockCid = cidOf options;
+      allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
+      errors =
+        lib.optional (options.id < 0 || options.id > 8) "${name}: id must be between 0 and 8"
+        ++ lib.optional (
+          lib.stringLength tap > 15
+        ) "vm name \"${name}\" is too long: \"${tap}\" exceeds IFNAMSIZ"
+        ++ lib.optional (lib.stringLength bridge > 15) "${name}: bridge name \"${bridge}\" exceeds IFNAMSIZ"
+        ++ lib.optional (
+          options.allowedDomains != [ ] && options.egress != "closed"
+        ) "${name}: allowedDomains requires egress = \"closed\""
+        ++ map (error: "${name}: invalid allowedDomains ${error}") (
+          domainPatternErrors options.allowedDomains
+        );
+      guest = {
+        inherit
+          name
+          sshKeys
+          tap
+          mac
+          vsockCid
+          bridge
+          ip
+          hostIp
+          prefixLength
+          proxy
+          hostForwards
+          ;
+        inherit (options) vcpu mem dns;
+        inherit expose;
+        kind = "microvm";
+        bindAddress = "127.0.0.1";
+        hasSecrets = options.secrets != { };
+      };
+    in
+    {
+      inherit
+        name
+        bridge
+        tap
+        mac
+        ip
+        hostIp
+        prefixLength
+        proxy
+        expose
+        hostForwards
+        declaredHostForwards
+        allowedTCPDestinations
+        errors
+        guest
+        ;
+      inherit (options)
+        id
+        vcpu
+        mem
+        dns
+        egress
+        allowedDomains
+        hostPorts
+        ;
+      cid = vsockCid;
+      brokeredForwards = lib.filter (forward: forward.broker != null) declaredHostForwards;
+      forwardEndpoints =
+        map (forward: "tcp:${forward.listenAddress}:${toString forward.listenPort}") expose
+        ++ map (forward: "vsock:${toString forward.vsockPort}") hostForwards
+        ++ map (forward: "tcp:127.0.0.1:${toString forward.broker.port}") (
+          lib.filter (forward: forward.broker != null) declaredHostForwards
+        );
+    };
+
+  fleetErrors =
+    instances:
+    let
+      values = lib.attrValues instances;
+      duplicate = values: lib.length values != lib.length (lib.unique values);
+    in
+    lib.optional (duplicate (map (instance: instance.id) values)) "instance ids must be unique"
+    ++ lib.optional (duplicate (
+      lib.concatMap (instance: instance.forwardEndpoints) values
+    )) "host listen endpoints must be unique across instances";
+
+  hostUnits =
+    pkgs: instance: frontend:
+    let
+      inherit (frontend) forwardName;
+      inherit (frontend) hostForwardName;
+      inherit (frontend) proxyName;
+      inherit (frontend) brokerName;
+      forwardServices = map (forward: {
+        name = "${forwardName forward}@";
+        value = {
+          description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
+          after = [ frontend.vmUnit ];
+          requires = [ frontend.vmUnit ];
+          unitConfig.CollectMode = "inactive-or-failed";
+          serviceConfig =
+            forwardHardening
+            // frontend.identity
+            // {
+              ExecStart = forwardCommand pkgs instance forward;
+            };
+        };
+      }) instance.expose;
+      hostForwardServices = map (forward: {
+        name = "${hostForwardName forward}@";
+        value = {
+          description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
+          after = [ frontend.vmUnit ];
+          requires = [ frontend.vmUnit ];
+          unitConfig.CollectMode = "inactive-or-failed";
+          serviceConfig =
+            forwardHardening
+            // frontend.identity
+            // {
+              ExecStart = hostForwardCommand pkgs instance forward;
+            };
+        };
+      }) instance.hostForwards;
+      brokerServices = map (forward: {
+        name = brokerName forward;
+        value = {
+          description = "credential broker for ${instance.name} vsock port ${toString forward.vsockPort}";
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig = brokerServiceConfig pkgs forward.broker forward.targetPort;
+        };
+      }) instance.brokeredForwards;
+      forwardSockets = map (forward: {
+        name = forwardName forward;
+        value = {
+          description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            ListenStream = "${forward.listenAddress}:${toString forward.listenPort}";
+            Accept = true;
+            MaxConnections = 64;
+          };
+        };
+      }) instance.expose;
+      hostForwardSockets = map (forward: {
+        name = hostForwardName forward;
+        value = {
+          description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            ListenStream = "vsock::${toString forward.vsockPort}";
+            Accept = true;
+            MaxConnections = 64;
+          };
+        };
+      }) instance.hostForwards;
+    in
+    {
+      services =
+        lib.listToAttrs (forwardServices ++ hostForwardServices ++ brokerServices)
+        // lib.optionalAttrs (instance.proxy != null) {
+          ${proxyName} = {
+            description = "domain-allowlist egress proxy for ${instance.name}";
+            wantedBy = [ "multi-user.target" ];
+            serviceConfig = egressProxyServiceConfig pkgs instance.proxy.port instance.allowedDomains;
+          };
+        };
+      sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets);
+      unitNames = {
+        vm = frontend.vmUnit;
+        sockets =
+          map (forward: {
+            unit = "${forwardName forward}.socket";
+            label = "in  ${forward.listenAddress}:${toString forward.listenPort} -> guest ${toString forward.guestPort}";
+          }) instance.expose
+          ++ map (forward: {
+            unit = "${hostForwardName forward}.socket";
+            label = "out vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
+          }) instance.hostForwards;
+        proxy = lib.optional (instance.proxy != null) "${proxyName}.service";
+        brokers = map (forward: {
+          unit = "${brokerName forward}.service";
+          label = "broker 127.0.0.1:${toString forward.broker.port} -> ${toString forward.targetPort}";
+        }) instance.brokeredForwards;
+      };
+    };
 
   # forward-chain fragment sealing a bridge. egress "open": dns and declared
   # pinholes plus the internet, every other private range dropped. egress
@@ -322,6 +487,36 @@ rec {
       iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-host-blocked: "
       iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
     '';
+
+  firewallOf =
+    cfg:
+    let
+      nat = natRuleFragment cfg;
+      forward = forwardFilterFragment cfg;
+      input = sealInputFragment cfg cfg.hostPorts;
+    in
+    {
+      inherit nat forward input;
+      standalone = ''
+        table ip fencr-${cfg.name}-nat {
+          chain postrouting {
+            type nat hook postrouting priority srcnat; policy accept;
+            ${nat}
+          }
+        }
+        table inet fencr-${cfg.name} {
+          chain forward {
+            type filter hook forward priority filter; policy accept;
+            ${forward}
+            oifname "${cfg.bridge}" drop
+          }
+          chain input {
+            type filter hook input priority -1; policy accept;
+            ${input}
+          }
+        }
+      '';
+    };
 
   # the environment itself: hardware shape, network posture, and a /var/lib
   # that survives reboots so whatever is installed inside keeps its state.

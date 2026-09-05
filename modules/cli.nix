@@ -5,31 +5,27 @@
 {
   lib,
   pkgs,
-  core,
   instances,
+  units,
 }:
 let
   vmRow =
     name: cfg:
-    ''("${name}", ${toString cfg.id}, ${toString (core.cidOf cfg)}, "${cfg.ip}", "${cfg.egress}", ${toString (lib.length cfg.allowedDomains)}),'';
+    ''("${name}", ${toString cfg.id}, ${toString cfg.cid}, "${cfg.ip}", "${cfg.egress}", ${toString (lib.length cfg.allowedDomains)}, "${units.${name}.unitNames.vm}"),'';
 
   socketRows =
-    name: cfg:
-    map (forward: ''
-      ("${name}", "${name}-forward-${toString forward.listenPort}.socket", "in  ${forward.listenAddress}:${toString forward.listenPort} -> guest ${toString forward.guestPort}"),
-    '') cfg.expose
-    ++ map (forward: ''
-      ("${name}", "${name}-host-forward-${toString forward.vsockPort}.socket", "out vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}"),
-    '') (core.hostForwardsOf cfg);
+    name: unitSet:
+    map (socket: ''
+      ("${name}", "${socket.unit}", "${socket.label}"),
+    '') unitSet.unitNames.sockets;
 
-  proxiedRows =
-    name: cfg: lib.optional (core.proxyOf cfg != null) ''("${name}", "${name}-egress-proxy.service"),'';
+  proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
   brokerRows =
-    name: cfg:
-    map (forward: ''
-      ("${name}", "${name}-broker-${toString forward.vsockPort}.service", "broker 127.0.0.1:${toString forward.broker.port} -> ${toString forward.targetPort}"),
-    '') (lib.filter (forward: forward.broker != null) cfg.hostForwards);
+    name: unitSet:
+    map (broker: ''
+      ("${name}", "${broker.unit}", "${broker.label}"),
+    '') unitSet.unitNames.brokers;
 in
 pkgs.writers.writeRustBin "fencr"
   {
@@ -48,24 +44,24 @@ pkgs.writers.writeRustBin "fencr"
     use std::process::{exit, Command};
     use std::{thread, time};
 
-    // name, id, cid, ip, egress, allowed domain count
-    static VMS: &[(&str, u32, u32, &str, &str, u32)] = &[
+    // name, id, cid, ip, egress, allowed domain count, vm unit
+    static VMS: &[(&str, u32, u32, &str, &str, u32, &str)] = &[
     ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}
     ];
 
     // vm, socket unit, human label
     static SOCKETS: &[(&str, &str, &str)] = &[
-    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList socketRows instances))}
+    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList socketRows units))}
     ];
 
     // vm, egress proxy unit
     static PROXIED: &[(&str, &str)] = &[
-    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows instances))}
+    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows units))}
     ];
 
     // vm, broker unit, human label
     static BROKERS: &[(&str, &str, &str)] = &[
-    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList brokerRows instances))}
+    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList brokerRows units))}
     ];
 
     const SOCAT: &str = "${pkgs.socat}/bin/socat";
@@ -74,7 +70,7 @@ pkgs.writers.writeRustBin "fencr"
     const JOURNALCTL: &str = "${pkgs.systemd}/bin/journalctl";
     const NFT: &str = "${pkgs.nftables}/bin/nft";
 
-    type Vm = (&'static str, u32, u32, &'static str, &'static str, u32);
+    type Vm = (&'static str, u32, u32, &'static str, &'static str, u32, &'static str);
 
     struct Style {
         bold: &'static str,
@@ -314,9 +310,8 @@ pkgs.writers.writeRustBin "fencr"
     }
 
     fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut Vec<String>) {
-        let unit = format!("microvm@{}.service", vm.0);
-        let p = props(&unit, "LoadState,ActiveState,MemoryCurrent");
-        let state = unit_health(&unit, s);
+        let p = props(vm.6, "LoadState,ActiveState,MemoryCurrent");
+        let state = unit_health(vm.6, s);
         let memory = p
             .get("MemoryCurrent")
             .and_then(|value| value.parse::<u64>().ok())
@@ -433,7 +428,7 @@ pkgs.writers.writeRustBin "fencr"
                     let vm = name.map(find).unwrap_or_else(|| usage());
                     fail(Command::new(SYSTEMCTL)
                         .arg("status")
-                        .arg(format!("microvm@{}.service", vm.0))
+                        .arg(vm.6)
                         .arg(format!("{}-*", vm.0))
                         .arg("--no-pager")
                         .exec());
