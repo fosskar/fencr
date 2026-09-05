@@ -21,7 +21,15 @@ privileges.
 
 A vm has no TCP address, so `ProxyJump` does not apply. Two ways:
 
-Quick, interactive:
+Quick, interactive (fencr installed on your machine too):
+
+```console
+fencr -H server list
+fencr -H server ssh <vm-name>
+```
+
+`-H` delegates the whole command to the server's fencr over ssh. Without
+a local fencr, plain double-ssh works the same:
 
 ```console
 ssh -t server ssh <vm-name>
@@ -39,6 +47,8 @@ Host myvm
   ProxyCommand ssh server fencr proxy <vm-name>
 ```
 
+(or `ProxyCommand fencr -H server proxy <vm-name>` with a local fencr.)
+
 The `fencr` command ships with the module on every fencr host; `proxy`
 resolves the vm name to its vsock address server-side. Your ssh
 authenticates directly against the vm; the server only shuttles bytes
@@ -52,10 +62,11 @@ fencr ssh sbx     # shell in the vm
 fencr status sbx  # the vm unit plus its forward/proxy/broker units
 ```
 
-`fencr update` exists only to tell you where updates actually happen:
-the system configuration on a nixos host, `flakelet update` on a
-flakelet host. fencr deliberately has no mutating commands —
-`nixos-rebuild` is the control plane.
+`fencr update <vm>` delegates to `flakelet update <vm>` when flakelet
+manages this host's sandboxes; on a declarative install it errors and
+points at the system configuration — there, `nixos-rebuild` is the
+control plane. That delegation is the only write-shaped command, and
+the write belongs to flakelet.
 
 ## host root, stated plainly
 

@@ -70,7 +70,9 @@ pkgs.writers.writeRustBin "fencr"
         eprintln!("  proxy <vm>       stdio splice to the vm's vsock sshd, for ProxyCommand");
         eprintln!("  status <vm>      the vm unit and its forward/proxy/broker units");
         eprintln!("  dashboard        live traffic view: allowed, blocked, ingress [--once]");
-        eprintln!("  update           where updates actually happen");
+        eprintln!("  update <vm>      delegate to flakelet update (errors on a declarative install)");
+        eprintln!();
+        eprintln!("  -H <host>        run the command on <host> over ssh (fencr must be installed there)");
         exit(1)
     }
 
@@ -198,8 +200,28 @@ pkgs.writers.writeRustBin "fencr"
         }
     }
 
+    fn flakelet_path() -> Option<String> {
+        let path = env::var("PATH").ok()?;
+        path.split(':')
+            .map(|dir| format!("{dir}/flakelet"))
+            .find(|candidate| std::path::Path::new(candidate).is_file())
+    }
+
     fn main() {
-        let args: Vec<String> = env::args().skip(1).collect();
+        let mut args: Vec<String> = env::args().skip(1).collect();
+        if args.first().map(String::as_str) == Some("-H") {
+            if args.len() < 3 {
+                usage();
+            }
+            let host = args[1].clone();
+            // -t so remote `fencr ssh` gets a tty; harmless for the rest
+            fail(Command::new(SSH)
+                .arg("-t")
+                .arg(host)
+                .arg("fencr")
+                .args(&args[2..])
+                .exec());
+        }
         match args.first().map(String::as_str) {
             Some("list") => print_list(),
             Some("dashboard") => dashboard(args.iter().any(|a| a == "--once")),
@@ -233,10 +255,17 @@ pkgs.writers.writeRustBin "fencr"
                     .exec());
             }
             Some("update") => {
-                eprintln!("fencr owns no update path. on this host the sandbox is part of the");
-                eprintln!("system configuration: change it there and run nixos-rebuild. on a");
-                eprintln!("flakelet host, the sandbox updates with: flakelet update <name>");
-                exit(1)
+                // flakelet owns its namespace, so the name passes through
+                // unchecked against the baked table
+                let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
+                match flakelet_path() {
+                    Some(flakelet) => fail(Command::new(flakelet).arg("update").arg(name).exec()),
+                    None => {
+                        eprintln!("fencr: no flakelet on this host; the sandbox is part of the");
+                        eprintln!("system configuration. change it there and run nixos-rebuild.");
+                        exit(1)
+                    }
+                }
             }
             _ => usage(),
         }
