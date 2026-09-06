@@ -10,8 +10,8 @@ not mutate host configuration, but `fencr ssh` can run commands as guest root.
 Instance and unit tables are compiled into its binary.
 
 Design rationale lives in `docs/decisions/`. Consult the relevant record before
-changing a boundary. `firecracker-over-crosvm.md` records the hypervisor port
-and its costs; `crosvm-over-qemu.md` is superseded by it. `docs/quickstart.md` and `docs/access.md` describe configuration and SSH access.
+changing a boundary. `hypervisor.md` holds the qemu, crosvm and Firecracker
+history and what each move cost. `docs/quickstart.md` and `docs/access.md` describe configuration and SSH access.
 
 ## architecture
 

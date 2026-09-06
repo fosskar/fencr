@@ -151,13 +151,13 @@ forwarding. See [access](docs/access.md) for other connection methods.
 
 The NixOS module, CLI, network and credential proxies are implemented in this
 repository. Flake checks cover module evaluation, core configuration logic,
-the CLI and NixOS boot integration. Firecracker replaced crosvm;
-[the record](docs/decisions/firecracker-over-crosvm.md) states what the port
-changed and what it costs.
+the CLI and NixOS boot integration. Firecracker replaced crosvm, which had
+replaced QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds
+the history and the costs.
 
 The design decisions explain the scope and security model:
 
 - [Sandbox only, no agent](docs/decisions/sandbox-only-scope.md)
 - [System-scoped identity](docs/decisions/system-scoped-identity.md)
 - [SSH access model](docs/decisions/ssh-access-model.md)
-- [Firecracker over crosvm](docs/decisions/firecracker-over-crosvm.md)
+- [Hypervisor](docs/decisions/hypervisor.md)
