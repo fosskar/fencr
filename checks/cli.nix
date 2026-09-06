@@ -1,7 +1,7 @@
 _self: pkgs:
 let
   inherit (pkgs) lib;
-  core = import ../modules/core.nix { inherit lib; };
+  core = import ../modules/core { inherit lib; };
   instance = core.resolveInstance {
     name = "sbx";
     credentials.api = {

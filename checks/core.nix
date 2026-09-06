@@ -1,10 +1,10 @@
 _self: pkgs:
 
-# Probes the builders in modules/core.nix without a host: instance derivation,
+# Probes the builders in modules/core without a host: instance derivation,
 # the seal text and the host units. Nothing is built.
 let
   inherit (pkgs) lib;
-  core = import ../modules/core.nix { inherit lib; };
+  core = import ../modules/core { inherit lib; };
   resolve =
     name: options:
     core.resolveInstance {
