@@ -73,7 +73,7 @@ in
       } ${
         pkgs.writeText "fencr-egress-intercepts" (
           lib.concatMapStrings (
-            credential: "${credential.domain} ${credentialSocketOf instance credential}\n"
+            credential: "${credential.domain} ${credentialSocketOf instance}\n"
           ) instance.credentials
         )
       }";

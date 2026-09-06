@@ -11,8 +11,8 @@ Nothing here is a rule.
   `upstream` such as `https://api.anthropic.com`, the `header` it travels
   in, and the `secretFile` holding the raw header value.
   `fencr.vms.<vm>.credentials` grants it to a vm by name. A host-side
-  caddy, one unit per vm and credential, injects the header; the value
-  never exists inside the vm. An injected agent behind the proxy can still
+  caddy, one unit per vm, injects the header; the value never exists
+  inside the vm. An injected agent behind the proxy can still
   call the api and do damage with it during the session; it cannot steal
   the key for use elsewhere or leak it into logs and model context. Keys
   outlive sessions, capabilities do not
@@ -59,14 +59,20 @@ fencr, had to be described a second time on the guest side.
 The design now in the code. The guest calls the credential's domain as it
 would anywhere. Inside the vm the name resolves to the host through
 `/etc/hosts`; on the bridge the egress proxy reads the server name from the
-client hello and hands the connection to that credential's caddy on its
-unix socket, which holds a certificate for the domain from a per-host
+client hello and hands the connection to the vm's caddy on its unix
+socket, which holds a certificate for each granted domain from a per-host
 authority, ends the tls, replaces the header and sends the request on.
 
+- one caddy per vm, `<vm>-credentials.service`, holding every credential
+  granted to that vm. It began as one unit per vm and credential, so a
+  bug in one proxy would expose one secret; dropped the same day, since
+  the vm can use every credential granted to it anyway and the extra
+  units separated nothing the vm could not reach. Two vms never share a
+  process
 - one authority per host, `fencr-ca.service`, made on first use with
-  openssl in `/var/lib/fencr/ca`, a directory root alone reads. Each
+  openssl in `/var/lib/fencr/ca`, a directory root alone reads. The
   credential unit gets the root as systemd credentials and lets caddy's
-  internal issuer sign its domain's leaf. A vm with a credential fetches
+  internal issuer sign each domain's leaf. A vm with a credential fetches
   the root certificate beside its secrets at boot and rebuilds the system
   trust store in `/run/fencr`: the store bundle with the authority
   appended, on every path the bundle sits on. Python's certifi and node

@@ -238,9 +238,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # sent as a header is replaced, the upstream called directly sees
       # none, and the proxy has no tcp port
       host.wait_for_unit("upstream-8765.service")
-      host.wait_for_unit("sbx-credential-api.service")
+      host.wait_for_unit("sbx-credentials.service")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/root.key)\" = root:600")
-      host.succeed("test -S /run/fencr-credential-sbx-api/credential.sock")
+      host.succeed("test -S /run/fencr-credentials-sbx/credentials.sock")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
       host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/fencr-ca.crt'", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)

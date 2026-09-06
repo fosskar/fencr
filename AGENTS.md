@@ -55,9 +55,10 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   environment variables. `*.example.com` does not include `example.com`.
 - `credentials` intercepts TLS for the credential's domain only: the guest's
   `/etc/hosts` points the domain at the bridge, the egress proxy hands the
-  connection by SNI to that credential's Caddy on a Unix socket, which holds a
-  certificate from the per-host authority `fencr-ca.service` keeps in
-  `/var/lib/fencr/ca` and injects the header. The guest fetches the authority
+  connection by SNI to the VM's Caddy, `<vm>-credentials.service`, on a Unix
+  socket; it holds a certificate per granted domain from the per-host
+  authority `fencr-ca.service` keeps in `/var/lib/fencr/ca` and injects that
+  credential's header. The guest fetches the authority
   beside its secrets and rebuilds the system trust store at boot in
   `/run/fencr`. Raw `secrets` instead enter guest `/run/agent-secrets`, fetched
   at boot over vsock port 5 from a socket unit that serves the VM unit's

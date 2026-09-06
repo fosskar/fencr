@@ -190,7 +190,7 @@ assert lib.assertMsg (
   && !keyed.dnsProxy
   && keyed.guest.dns == "9.9.9.9"
   && keyedUnits.services ? "keyed-egress-proxy"
-  && keyedUnits.services."keyed-egress-proxy".wants == [ "keyed-credential-api.service" ]
+  && keyedUnits.services."keyed-egress-proxy".wants == [ "keyed-credentials.service" ]
   && keyedUnits.sockets ? "keyed-secrets"
   &&
     keyedUnits.services."keyed-secrets@".serviceConfig.LoadCredential == [
@@ -228,11 +228,17 @@ assert lib.assertMsg (
   && units.services."sbx-forward-33627@".serviceConfig.DynamicUser
 ) "unit check: forward relay drifted";
 assert lib.assertMsg (
-  units.services."sbx-credential-api".serviceConfig.RuntimeDirectory == "fencr-credential-sbx-api"
-  && units.services."sbx-credential-api".serviceConfig.Group == "kvm"
-  && units.services."sbx-credential-api".requires == [ "fencr-ca.service" ]
+  units.services."sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-credentials-sbx"
+  && units.services."sbx-credentials".serviceConfig.Group == "kvm"
+  && units.services."sbx-credentials".requires == [ "fencr-ca.service" ]
+  &&
+    units.services."sbx-credentials".serviceConfig.LoadCredential == [
+      "api:/run/secrets/api-token"
+      "ca.crt:/var/lib/fencr/ca/root.crt"
+      "ca.key:/var/lib/fencr/ca/root.key"
+    ]
   && units.services."sbx-egress-proxy".serviceConfig.Group == "kvm"
-  && lib.hasInfix "api.example.com /run/fencr-credential-sbx-api/credential.sock" (
+  && lib.hasInfix "api.example.com /run/fencr-credentials-sbx/credentials.sock" (
     builtins.readFile (
       lib.last (lib.splitString " " units.services."sbx-egress-proxy".serviceConfig.ExecStart)
     )
@@ -241,11 +247,24 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   let
     caddyfile = builtins.readFile (
-      core.credentialCaddyfile pkgs "/run/x/credential.sock" (lib.head resolved.credentials)
+      core.credentialCaddyfile pkgs "/run/x/credentials.sock" (
+        resolved.credentials
+        ++ [
+          {
+            name = "second";
+            domain = "second.example.com";
+            upstream = "http://127.0.0.1:1";
+            header = "x-key";
+          }
+        ]
+      )
     );
   in
   lib.hasInfix "https://api.example.com {" caddyfile
+  && lib.hasInfix "https://second.example.com {" caddyfile
   && lib.hasInfix "tls internal" caddyfile
   && lib.hasInfix "reverse_proxy https://api.example.com" caddyfile
-) "unit check: credential proxy does not end tls for its domain and originate it to its upstream";
+  && lib.hasInfix ''header_up Authorization "{$FENCR_CREDENTIAL_0}"'' caddyfile
+  && lib.hasInfix ''header_up x-key "{$FENCR_CREDENTIAL_1}"'' caddyfile
+) "unit check: credential proxy does not end tls for every granted domain with its own header";
 pkgs.writeText "fencr-core-check" (builtins.toJSON units.unitNames)

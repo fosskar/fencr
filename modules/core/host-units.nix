@@ -25,8 +25,8 @@ in
       forwardName = forward: "${instance.name}-forward-${toString forward.listenPort}";
       hostForwardName = forward: "${instance.name}-host-forward-${toString forward.vsockPort}";
       proxyName = "${instance.name}-egress-proxy";
-      credentialName = credential: "${instance.name}-credential-${credential.name}";
-      credentialUnits = map (credential: "${credentialName credential}.service") instance.credentials;
+      credentialsName = "${instance.name}-credentials";
+      credentialUnits = lib.optional (instance.credentials != [ ]) "${credentialsName}.service";
       forwardServices = map (forward: {
         name = "${forwardName forward}@";
         value = exposeUnits.service pkgs instance vmUnit forward;
@@ -35,16 +35,16 @@ in
         name = "${hostForwardName forward}@";
         value = hostForwardUnits.service pkgs instance vmUnit forward;
       }) instance.hostForwards;
-      credentialServices = map (credential: {
-        name = credentialName credential;
+      credentialServices = lib.optional (instance.credentials != [ ]) {
+        name = credentialsName;
         value = {
-          description = "credential ${credential.name} for ${instance.name}";
+          description = "credentials for ${instance.name}";
           wantedBy = [ "multi-user.target" ];
           requires = [ caUnit ];
           after = [ caUnit ];
-          serviceConfig = credentialServiceConfig pkgs instance credential;
+          serviceConfig = credentialServiceConfig pkgs instance;
         };
-      }) instance.credentials;
+      };
       forwardSockets = map (forward: {
         name = forwardName forward;
         value = exposeUnits.socket instance forward;

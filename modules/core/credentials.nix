@@ -80,72 +80,88 @@ in
     else
       null;
 
-  # a credential proxy: the guest calls the credential's domain as usual and
-  # lands here, where caddy holds a certificate for that domain from the
-  # host's authority, ends the tls, injects the header and sends the
-  # request on, originating tls to an https upstream itself. the secret
-  # never exists inside the vm. it listens on a unix socket in its own
-  # runtime directory, group kvm, so only the vm's egress proxy reaches
-  # it: no host loopback port, nothing for another host process to borrow
-  # the credential through
-  credentialRuntimeDirOf = cfg: credential: "fencr-credential-${cfg.name}-${credential.name}";
+  # the vm's credential proxy: the guest calls a credential's domain as
+  # usual and lands here, where one caddy per vm holds a certificate for
+  # each granted domain from the host's authority, ends the tls, injects
+  # that credential's header and sends the request on, originating tls to
+  # an https upstream itself. the secrets never exist inside the vm; the
+  # vm can use every credential granted to it anyway, so one process for
+  # all of them separates nothing the vm could not reach. it listens on a
+  # unix socket in its own runtime directory, group kvm, so only the vm's
+  # egress proxy reaches it: no host loopback port, nothing for another
+  # host process to borrow a credential through
+  credentialRuntimeDirOf = cfg: "fencr-credentials-${cfg.name}";
 
-  credentialSocketOf =
-    cfg: credential: "/run/${credentialRuntimeDirOf cfg credential}/credential.sock";
+  credentialSocketOf = cfg: "/run/${credentialRuntimeDirOf cfg}/credentials.sock";
 
+  # the secrets reach caddy as FENCR_CREDENTIAL_<index>, since a credential
+  # name is no environment variable name
   credentialCaddyfile =
-    pkgs: socket: credential:
-    pkgs.writeText "fencr-credential.caddyfile" ''
-      {
-        admin off
-        auto_https disable_redirects
-        pki {
-          ca local {
-            root {
-              cert {$CREDENTIALS_DIRECTORY}/ca.crt
-              key {$CREDENTIALS_DIRECTORY}/ca.key
+    pkgs: socket: credentials:
+    pkgs.writeText "fencr-credentials.caddyfile" (
+      ''
+        {
+          admin off
+          auto_https disable_redirects
+          pki {
+            ca local {
+              root {
+                cert {$CREDENTIALS_DIRECTORY}/ca.crt
+                key {$CREDENTIALS_DIRECTORY}/ca.key
+              }
             }
           }
         }
-      }
-      https://${credential.domain} {
-        bind unix/${socket}|0660
-        tls internal
-        reverse_proxy ${credential.upstream} {
-          header_up Host {upstream_hostport}
-          header_up ${credential.header} "{$FENCR_CREDENTIAL}"
-        }
-      }
-    '';
+      ''
+      + lib.concatStrings (
+        lib.imap0 (index: credential: ''
+          https://${credential.domain} {
+            bind unix/${socket}|0660
+            tls internal
+            reverse_proxy ${credential.upstream} {
+              header_up Host {upstream_hostport}
+              header_up ${credential.header} "{$FENCR_CREDENTIAL_${toString index}}"
+            }
+          }
+        '') credentials
+      )
+    );
 
   credentialExec =
-    pkgs: socket: credential:
-    pkgs.writeShellScript "fencr-credential" ''
-      FENCR_CREDENTIAL="$(cat "$CREDENTIALS_DIRECTORY/secret")"
-      export FENCR_CREDENTIAL
-      exec ${pkgs.caddy}/bin/caddy run --config ${
-        credentialCaddyfile pkgs socket credential
-      } --adapter caddyfile
-    '';
+    pkgs: socket: credentials:
+    pkgs.writeShellScript "fencr-credentials" (
+      lib.concatStrings (
+        lib.imap0 (index: credential: ''
+          FENCR_CREDENTIAL_${toString index}="$(cat "$CREDENTIALS_DIRECTORY/${credential.name}")"
+          export FENCR_CREDENTIAL_${toString index}
+        '') credentials
+      )
+      + ''
+        exec ${pkgs.caddy}/bin/caddy run --config ${
+          credentialCaddyfile pkgs socket credentials
+        } --adapter caddyfile
+      ''
+    );
 
   # the upstream is loopback or the internet; a private range is never a
   # credential target, so an allowed name cannot resolve into the lan
   credentialServiceConfig =
-    pkgs: cfg: credential:
+    pkgs: cfg:
     proxyHardening
     // {
-      ExecStart = "${credentialExec pkgs (credentialSocketOf cfg credential) credential}";
-      LoadCredential = [
-        "secret:${credential.secretFile}"
-        "ca.crt:${caCert}"
-        "ca.key:${caKey}"
-      ];
+      ExecStart = "${credentialExec pkgs (credentialSocketOf cfg) cfg.credentials}";
+      LoadCredential =
+        map (credential: "${credential.name}:${credential.secretFile}") cfg.credentials
+        ++ [
+          "ca.crt:${caCert}"
+          "ca.key:${caKey}"
+        ];
       Environment = [
         "XDG_DATA_HOME=/tmp"
         "XDG_CONFIG_HOME=/tmp"
       ];
       Group = "kvm";
-      RuntimeDirectory = credentialRuntimeDirOf cfg credential;
+      RuntimeDirectory = credentialRuntimeDirOf cfg;
       RuntimeDirectoryMode = "0750";
       IPAddressAllow = [
         "0.0.0.0/0"

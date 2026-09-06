@@ -46,8 +46,8 @@ in
     }
     {
       assertion =
-        config.systemd.services."sbx-credential-anthropic".serviceConfig.LoadCredential == [
-          "secret:/run/secrets/anthropic"
+        config.systemd.services."sbx-credentials".serviceConfig.LoadCredential == [
+          "anthropic:/run/secrets/anthropic"
           "ca.crt:/var/lib/fencr/ca/root.crt"
           "ca.key:/var/lib/fencr/ca/root.key"
         ]
