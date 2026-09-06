@@ -50,6 +50,33 @@ rec {
   # socket only the vm's own user can open; the host side reads them as
   # systemd credentials, so they touch neither the store nor a disk
   secretsPort = 5;
+  # one certificate authority per host, made on first use in a directory
+  # root alone reads. each credential proxy signs its domain's certificate
+  # with it, and a vm with a credential trusts it, fetched beside the secrets
+  caUnit = "fencr-ca.service";
+  caDir = "/var/lib/fencr/ca";
+  caCert = "${caDir}/root.crt";
+  caKey = "${caDir}/root.key";
+
+  trustVariables = {
+    NIX_SSL_CERT_FILE = "/run/fencr/ca-bundle.crt";
+    NODE_EXTRA_CA_CERTS = "/run/fencr/ca.crt";
+  };
+
+  caService = pkgs: hostName: {
+    description = "fencr certificate authority";
+    unitConfig.ConditionPathExists = "!${caKey}";
+    serviceConfig = {
+      Type = "oneshot";
+      StateDirectory = "fencr/ca";
+      StateDirectoryMode = "0700";
+      UMask = "0077";
+    };
+    script = ''
+      ${pkgs.openssl}/bin/openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+        -subj "/CN=fencr on ${hostName}" -days 7300 -keyout ${caKey} -out ${caCert}
+    '';
+  };
 
   # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
   # runtime resolution and stay unsupported until name-based egress exists.
@@ -295,10 +322,9 @@ rec {
 
   # guest to host, the mirror image: a guest loopback listener relayed to the
   # host's cid, the host's socket unit on the path firecracker opens for that
-  # port, and a relay that splices the connection to a host loopback port or,
-  # for a granted credential, to its proxy's unix socket. the socket belongs
-  # to the vm's user with no group or other access, so only that vm's
-  # firecracker can open it: the path is the identity
+  # port, and a relay that splices the connection to a host loopback port.
+  # the socket belongs to the vm's user with no group or other access, so
+  # only that vm's firecracker can open it: the path is the identity
   hostForwardUnits = {
     socket = instance: forward: {
       description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
@@ -312,25 +338,16 @@ rec {
         TriggerLimitIntervalSec = 0;
       };
     };
-    service =
-      pkgs: instance: vmUnit: forward:
-      let
-        target =
-          if forward.credential != null then
-            "unix:${credentialSocketOf instance forward}"
-          else
-            toString forward.targetPort;
-      in
-      {
-        description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
-        after = [ vmUnit ];
-        requisite = [ vmUnit ];
-        partOf = [ vmUnit ];
-        unitConfig.CollectMode = "inactive-or-failed";
-        serviceConfig = forwardHardening // {
-          ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward serve ${target}";
-        };
+    service = pkgs: instance: vmUnit: forward: {
+      description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
+      after = [ vmUnit ];
+      requisite = [ vmUnit ];
+      partOf = [ vmUnit ];
+      unitConfig.CollectMode = "inactive-or-failed";
+      serviceConfig = forwardHardening // {
+        ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward serve ${toString forward.targetPort}";
       };
+    };
     guest = pkgs: forward: {
       name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
       value = {
@@ -346,27 +363,50 @@ rec {
   # domain-allowlist egress: the guest's resolver is the bridge address,
   # where the egress proxy answers every name with itself, so every tls
   # connection lands on the host and is judged by the server name in its
-  # client hello; nothing is decrypted and no dns leaves the host
-  proxyOf = cfg: cfg.allowedDomains != [ ];
+  # client hello; an allowed name is passed through unread
+  dnsProxyOf = cfg: cfg.allowedDomains != [ ];
 
-  # a granted credential is a host forward whose target is its proxy's unix
-  # socket; the guest sees it as one loopback port, named in agentSandbox
-  credentialPortsOf =
-    credentials:
-    lib.listToAttrs (
-      lib.imap0 (i: name: lib.nameValuePair name (14000 + i)) (lib.attrNames credentials)
-    );
+  # the same listener takes the credentials' domains, which the guest's
+  # /etc/hosts points at the bridge: by server name the proxy hands the
+  # connection to that credential's caddy, which holds the certificate
+  proxyOf = cfg: cfg.allowedDomains != [ ] || cfg.credentials != [ ];
 
-  hostForwardsOf =
+  # a credential's domain is the name the vm calls; it defaults to the
+  # upstream's host, which a loopback upstream cannot supply
+  upstreamHost =
+    upstream:
+    let
+      host = builtins.match "https?://([^/:]+).*" upstream;
+    in
+    if host == null then null else builtins.head host;
+
+  credentialsOf =
     cfg: credentials:
-    map (forward: forward // { credential = null; }) cfg.hostForwards
-    ++ map (name: {
-      vsockPort = (credentialPortsOf credentials).${name};
-      targetPort = (credentialPortsOf credentials).${name};
-      credential = credentials.${name} // {
+    map (
+      name:
+      credentials.${name}
+      // {
         inherit name;
-      };
-    }) (lib.filter (name: credentials ? ${name}) cfg.credentials);
+        domain =
+          if credentials.${name}.domain != null then
+            credentials.${name}.domain
+          else
+            upstreamHost credentials.${name}.upstream;
+      }
+    ) (lib.filter (name: credentials ? ${name}) cfg.credentials);
+
+  credentialDomainError =
+    credential:
+    if
+      credential.domain == null
+      || credential.domain == "localhost"
+      || builtins.match "[0-9.]+" credential.domain != null
+    then
+      "credential \"${credential.name}\" needs fencr.credentials.${credential.name}.domain: its upstream \"${credential.upstream}\" names no host a vm could call"
+    else if lib.hasPrefix "*" credential.domain || domainPatternError credential.domain != null then
+      "credential \"${credential.name}\": domain \"${credential.domain}\" is not a host name"
+    else
+      null;
 
   # a pattern is a hostname, optionally with a leading "*." label. anything
   # else is rejected: "*github.com" also matches evilgithub.com, and stray
@@ -394,7 +434,8 @@ rec {
 
   # listens on the bridge address only, so the guest's subnet is allowed in
   # beside the internet; every other private range stays denied, and an
-  # allowed name resolving into the lan goes nowhere
+  # allowed name resolving into the lan goes nowhere. group kvm is what
+  # the credential proxies' sockets admit
   egressProxyServiceConfig =
     pkgs: instance:
     proxyHardening
@@ -403,7 +444,14 @@ rec {
         pkgs.writeText "fencr-egress-domains" (
           lib.concatMapStrings (domain: "${domain}\n") instance.allowedDomains
         )
+      } ${
+        pkgs.writeText "fencr-egress-intercepts" (
+          lib.concatMapStrings (
+            credential: "${credential.domain} ${credentialSocketOf instance credential}\n"
+          ) instance.credentials
+        )
       }";
+      Group = "kvm";
       CapabilityBoundingSet = "CAP_NET_BIND_SERVICE";
       AmbientCapabilities = "CAP_NET_BIND_SERVICE";
       # resolving on the host goes through resolved, over its unix socket
@@ -422,26 +470,37 @@ rec {
       ];
     };
 
-  # a credential proxy: the guest talks plain http through the vsock
-  # forward; this proxy holds the secret and injects the header on the host
-  # side, so the value never exists inside the vm. it listens on a unix
-  # socket in its own runtime directory, group kvm, so only the vm's own
-  # relay reaches it: no host loopback port, nothing for another host
-  # process to borrow the credential through. the upstream may be https;
-  # caddy originates that tls on the host, the guest never sees a cert
-  credentialRuntimeDirOf = cfg: forward: "fencr-credential-${cfg.name}-${forward.credential.name}";
+  # a credential proxy: the guest calls the credential's domain as usual and
+  # lands here, where caddy holds a certificate for that domain from the
+  # host's authority, ends the tls, injects the header and sends the
+  # request on, originating tls to an https upstream itself. the secret
+  # never exists inside the vm. it listens on a unix socket in its own
+  # runtime directory, group kvm, so only the vm's egress proxy reaches
+  # it: no host loopback port, nothing for another host process to borrow
+  # the credential through
+  credentialRuntimeDirOf = cfg: credential: "fencr-credential-${cfg.name}-${credential.name}";
 
-  credentialSocketOf = cfg: forward: "/run/${credentialRuntimeDirOf cfg forward}/credential.sock";
+  credentialSocketOf =
+    cfg: credential: "/run/${credentialRuntimeDirOf cfg credential}/credential.sock";
 
   credentialCaddyfile =
     pkgs: socket: credential:
     pkgs.writeText "fencr-credential.caddyfile" ''
       {
         admin off
-        auto_https off
+        auto_https disable_redirects
+        pki {
+          ca local {
+            root {
+              cert {$CREDENTIALS_DIRECTORY}/ca.crt
+              key {$CREDENTIALS_DIRECTORY}/ca.key
+            }
+          }
+        }
       }
-      http:// {
+      https://${credential.domain} {
         bind unix/${socket}|0660
+        tls internal
         reverse_proxy ${credential.upstream} {
           header_up Host {upstream_hostport}
           header_up ${credential.header} "{$FENCR_CREDENTIAL}"
@@ -462,17 +521,21 @@ rec {
   # the upstream is loopback or the internet; a private range is never a
   # credential target, so an allowed name cannot resolve into the lan
   credentialServiceConfig =
-    pkgs: cfg: forward:
+    pkgs: cfg: credential:
     proxyHardening
     // {
-      ExecStart = "${credentialExec pkgs (credentialSocketOf cfg forward) forward.credential}";
-      LoadCredential = "secret:${forward.credential.secretFile}";
+      ExecStart = "${credentialExec pkgs (credentialSocketOf cfg credential) credential}";
+      LoadCredential = [
+        "secret:${credential.secretFile}"
+        "ca.crt:${caCert}"
+        "ca.key:${caKey}"
+      ];
       Environment = [
         "XDG_DATA_HOME=/tmp"
         "XDG_CONFIG_HOME=/tmp"
       ];
       Group = "kvm";
-      RuntimeDirectory = credentialRuntimeDirOf cfg forward;
+      RuntimeDirectory = credentialRuntimeDirOf cfg credential;
       RuntimeDirectoryMode = "0750";
       IPAddressAllow = [
         "0.0.0.0/0"
@@ -499,6 +562,7 @@ rec {
     }@args:
     let
       options = defaults // args.options;
+      granted = credentialsOf options credentials;
       guest = {
         inherit name sshKeys;
         inherit (options)
@@ -506,9 +570,10 @@ rec {
           mem
           stateSize
           prefixLength
+          hostForwards
           ;
         # with a domain allowlist the egress proxy is the guest's resolver
-        dns = if proxyOf options then hostIpOf options else options.dns;
+        dns = if dnsProxyOf options then hostIpOf options else options.dns;
         tap = tapOf name;
         bridge = bridgeOf name;
         mac = macOf options;
@@ -516,10 +581,7 @@ rec {
         hostIp = hostIpOf options;
         ip = ipOf options;
         expose = map parseExpose options.expose;
-        hostForwards = hostForwardsOf options credentials;
-        credentials = lib.genAttrs options.credentials (credential: {
-          port = (credentialPortsOf credentials).${credential};
-        });
+        credentialDomains = map (credential: credential.domain) granted;
         secretNames = lib.attrNames options.secrets;
       };
       errors =
@@ -539,6 +601,12 @@ rec {
         )
         ++ map (credential: "${name}: credential \"${credential}\" is not declared in fencr.credentials") (
           lib.filter (credential: !(credentials ? ${credential})) options.credentials
+        )
+        ++ map (error: "${name}: ${error}") (
+          lib.filter (error: error != null) (map credentialDomainError granted)
+        )
+        ++ map (domain: "${name}: credential domain ${domain} granted twice") (
+          duplicates (map (credential: credential.domain) granted)
         )
         ++ map (port: "${name}: expose port ${toString port} declared twice") (
           duplicates (map (forward: forward.listenPort) guest.expose)
@@ -564,8 +632,9 @@ rec {
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       proxy = proxyOf options;
+      dnsProxy = dnsProxyOf options;
       subnet = subnetOf options;
-      credentialForwards = lib.filter (forward: forward.credential != null) guest.hostForwards;
+      credentials = granted;
       # the ports also name the socket units; the listen address is no
       # separator, a second bind on the port fails either way
       forwardEndpoints =
@@ -590,7 +659,8 @@ rec {
       forwardName = forward: "${instance.name}-forward-${toString forward.listenPort}";
       hostForwardName = forward: "${instance.name}-host-forward-${toString forward.vsockPort}";
       proxyName = "${instance.name}-egress-proxy";
-      credentialName = forward: "${instance.name}-credential-${forward.credential.name}";
+      credentialName = credential: "${instance.name}-credential-${credential.name}";
+      credentialUnits = map (credential: "${credentialName credential}.service") instance.credentials;
       forwardServices = map (forward: {
         name = "${forwardName forward}@";
         value = exposeUnits.service pkgs instance vmUnit forward;
@@ -599,14 +669,16 @@ rec {
         name = "${hostForwardName forward}@";
         value = hostForwardUnits.service pkgs instance vmUnit forward;
       }) instance.hostForwards;
-      credentialServices = map (forward: {
-        name = credentialName forward;
+      credentialServices = map (credential: {
+        name = credentialName credential;
         value = {
-          description = "credential ${forward.credential.name} for ${instance.name}";
+          description = "credential ${credential.name} for ${instance.name}";
           wantedBy = [ "multi-user.target" ];
-          serviceConfig = credentialServiceConfig pkgs instance forward;
+          requires = [ caUnit ];
+          after = [ caUnit ];
+          serviceConfig = credentialServiceConfig pkgs instance credential;
         };
-      }) instance.credentialForwards;
+      }) instance.credentials;
       forwardSockets = map (forward: {
         name = forwardName forward;
         value = exposeUnits.socket instance forward;
@@ -641,9 +713,10 @@ rec {
         };
       };
       # raw secrets, served once per boot as a tar stream of the unit's
-      # credentials directory into a connection the guest opened
+      # credentials directory into a connection the guest opened; the
+      # host's ca certificate rides along for a vm with a credential
       secretsName = "${instance.name}-secrets";
-      secretsUnits = lib.optionalAttrs (instance.secrets != { }) {
+      secretsUnits = lib.optionalAttrs (instance.secrets != { } || instance.credentials != [ ]) {
         socket.${secretsName} = {
           description = "raw secrets for ${instance.name}";
           wantedBy = [ "sockets.target" ];
@@ -658,14 +731,15 @@ rec {
         };
         service."${secretsName}@" = {
           description = "raw secrets for ${instance.name}";
-          after = [ vmUnit ];
+          after = [ vmUnit ] ++ lib.optional (instance.credentials != [ ]) caUnit;
           requisite = [ vmUnit ];
+          requires = lib.optional (instance.credentials != [ ]) caUnit;
           partOf = [ vmUnit ];
           unitConfig.CollectMode = "inactive-or-failed";
           serviceConfig = forwardHardening // {
-            LoadCredential = lib.mapAttrsToList (
-              secretName: source: "${secretName}:${source}"
-            ) instance.secrets;
+            LoadCredential =
+              lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
+              ++ lib.optional (instance.credentials != [ ]) "fencr-ca.crt:${caCert}";
             ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
               exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
             '';
@@ -680,9 +754,10 @@ rec {
         // secretsUnits.service or { }
         // lib.optionalAttrs instance.proxy {
           ${proxyName} = {
-            description = "domain-allowlist egress proxy for ${instance.name}";
+            description = "egress proxy for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ];
+            after = [ "network.target" ] ++ credentialUnits;
+            wants = credentialUnits;
             serviceConfig = egressProxyServiceConfig pkgs instance;
           };
         };
@@ -708,7 +783,7 @@ rec {
             label = "host -> guest: ssh";
           };
         proxy = lib.optional instance.proxy "${proxyName}.service";
-        credentials = map (forward: "${credentialName forward}.service") instance.credentialForwards;
+        credentials = credentialUnits;
       };
     };
 
@@ -771,8 +846,10 @@ rec {
         lib.concatMapStringsSep ", " toString ports
       } } counter accept comment "fencr:${cfg.name}:host"
     ''
-    + lib.optionalString cfg.proxy ''
+    + lib.optionalString cfg.dnsProxy ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 counter accept comment "fencr:${cfg.name}:egress-dns"
+    ''
+    + lib.optionalString cfg.proxy ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 counter accept comment "fencr:${cfg.name}:egress-tls"
     ''
     + ''
@@ -910,7 +987,7 @@ rec {
       # the guest ends of the forwards; the host ends live beside them in
       # exposeUnits and hostForwardUnits
       systemd.services = lib.mkMerge [
-        (lib.mkIf (agentSandbox.secretNames != [ ]) {
+        (lib.mkIf (agentSandbox.secretNames != [ ] || agentSandbox.credentialDomains != [ ]) {
           # the vsock device comes up with udev; the fetch waits for it
           fencr-secrets = {
             description = "Materialize fencr secrets in volatile guest storage";
@@ -932,8 +1009,15 @@ rec {
                 fi
                 sleep 0.5
               done
-              test -e /run/agent-secrets/${lib.head agentSandbox.secretNames}
+              test -e /run/agent-secrets/${lib.head (agentSandbox.secretNames ++ [ "fencr-ca.crt" ])}
               chmod 0400 /run/agent-secrets/*
+            ''
+            + lib.optionalString (agentSandbox.credentialDomains != [ ]) ''
+              install -d -m 0755 /run/fencr
+              install -m 0444 /run/agent-secrets/fencr-ca.crt /run/fencr/ca.crt
+              rm /run/agent-secrets/fencr-ca.crt
+              cat ${config.security.pki.caBundle} /run/fencr/ca.crt > /run/fencr/ca-bundle.crt
+              chmod 0444 /run/fencr/ca-bundle.crt
             '';
           };
         })
@@ -970,7 +1054,29 @@ rec {
         firewall.enable = true;
         # the iptables backend drags perl in through libpcap and rdma-core
         nftables.enable = true;
+        # a credential's domain is the host, where its proxy answers with a
+        # certificate from the host's authority
+        hosts = lib.mkIf (agentSandbox.credentialDomains != [ ]) {
+          ${agentSandbox.hostIp} = agentSandbox.credentialDomains;
+        };
       };
+
+      # the system trust store, fetched at boot with the host's authority in
+      # it, on every path the store bundle sits on; python's certifi and
+      # node carry bundles of their own and read only these variables
+      environment.etc = lib.mkIf (agentSandbox.credentialDomains != [ ]) (
+        lib.genAttrs
+          [
+            "ssl/certs/ca-certificates.crt"
+            "ssl/certs/ca-bundle.crt"
+            "pki/tls/certs/ca-bundle.crt"
+          ]
+          (_: {
+            source = lib.mkForce "/run/fencr/ca-bundle.crt";
+          })
+      );
+      environment.sessionVariables = lib.mkIf (agentSandbox.credentialDomains != [ ]) trustVariables;
+      systemd.globalEnvironment = lib.mkIf (agentSandbox.credentialDomains != [ ]) trustVariables;
 
       # virtio gives unpredictable enp0sN names, so match the mac we assigned.
       # v4 only: no RA-assigned v6 for the host's v4 forward rules to miss

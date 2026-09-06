@@ -1,8 +1,8 @@
 //! the host end of a forward on firecracker's unix-socket vsock.
 //! `serve <target>` takes a connection the guest opened, accepted by systemd
 //! on `<uds>_<port>` and handed over as stdin, and splices it to a host
-//! loopback port or a unix socket path. `connect <uds> <port>` splices stdio
-//! to a guest port through firecracker's CONNECT handshake.
+//! loopback port. `connect <uds> <port>` splices stdio to a guest port
+//! through firecracker's CONNECT handshake.
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpStream};
@@ -18,9 +18,6 @@ enum Stream {
 
 impl Stream {
     fn connect(spec: &str) -> io::Result<Stream> {
-        if let Some(path) = spec.strip_prefix("unix:") {
-            return UnixStream::connect(path).map(Stream::Unix);
-        }
         let port = spec
             .parse::<u16>()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid target port"))?;
@@ -118,7 +115,7 @@ fn run() -> io::Result<()> {
     let usage = || {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: fencr-vsock-forward serve <target-port|unix:<path>> | connect <uds> <port>",
+            "usage: fencr-vsock-forward serve <target-port> | connect <uds> <port>",
         )
     };
     match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {

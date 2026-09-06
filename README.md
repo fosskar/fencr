@@ -92,8 +92,8 @@ authentication.
 
 ## Credentials and secrets
 
-A granted credential lets a VM call an HTTP API through a host-side proxy
-that adds the secret header:
+A granted credential lets a VM call an HTTPS API with the secret header
+added on the host:
 
 ```nix
 fencr.credentials.anthropic = {
@@ -105,11 +105,20 @@ fencr.credentials.anthropic = {
 fencr.vms.myagent.credentials = [ "anthropic" ];
 ```
 
-The workload module receives `agentSandbox.credentials.anthropic.port` and
-configures its client to use `http://127.0.0.1:<port>` as the API base URL.
-The proxy keeps the credential value outside the VM, but the agent can
-still exercise the API permissions it grants. Method and path restrictions
-are not implemented.
+The workload calls `https://api.anthropic.com` as it would anywhere. Inside
+the VM the name resolves to the host, where the credential's proxy ends the
+TLS with a certificate from a per-host certificate authority the VM trusts,
+replaces the header with the secret value and sends the request on. A
+client that insists on a key can be given any placeholder. The VM's system
+trust store carries the authority; Python's `certifi` and Node read it
+through `NIX_SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`, which fencr sets. A
+client that pins the upstream's real certificate cannot use a credential.
+The agent can still exercise the API permissions the credential grants.
+Method and path restrictions are not implemented.
+
+An upstream on host loopback has no name a VM could call; give it one with
+`domain`, for example `domain = "mcp.fencr"` for
+`upstream = "http://127.0.0.1:8764"`.
 
 When a workload needs the raw value instead, use
 `fencr.vms.myagent.secrets."agent.env" = "/run/secrets/agent.env";`.
