@@ -2,7 +2,7 @@
 
 fencr is a NixOS module for running AI agents in microVMs with explicit
 network permissions, persistent storage and resource limits. It uses
-[crosvm](https://crosvm.dev/) through
+[Firecracker](https://firecracker-microvm.github.io/) through
 [microvm.nix](https://github.com/microvm-nix/microvm.nix).
 
 VMs run as system-wide systemd services, independent of login sessions.
@@ -46,8 +46,8 @@ as the flake input:
 Replace the example public key with your own and add your agent's NixOS
 module to `services`. Each VM needs a unique `id` between `0` and `8`.
 
-The host requires `/dev/kvm`, unprivileged user namespaces and
-systemd-networkd. The module enables nftables and disables kernel same-page
+The host requires `/dev/kvm` and systemd-networkd. The module enables
+nftables and disables kernel same-page
 merging (KSM). It uses the host's first `networking.nameservers` entry by
 default; set `fencr.vms.<name>.dns` if the host has no resolver listed there.
 
@@ -85,9 +85,10 @@ server name. Shared CDN infrastructure can allow a client to reach a
 different site through an allowed server name; this is not application-level
 request filtering. See [domain egress](docs/decisions/domain-egress-proxy.md).
 
-`expose` does not authenticate clients. Every host account can also reach
-exposed guest ports directly over vsock, regardless of the TCP listen
-address. Services on those ports must provide their own authentication.
+`expose` does not authenticate clients. Members of the host group `kvm` can
+also reach any guest port directly through the VM's vsock socket, regardless
+of the TCP listen address. Services on those ports must provide their own
+authentication.
 
 ## Credentials and secrets
 
@@ -113,8 +114,9 @@ are not implemented.
 When a workload needs the raw value instead, use
 `fencr.vms.myagent.secrets."agent.env" = "/run/secrets/agent.env";`.
 The file appears at `/run/agent-secrets/agent.env` inside the VM and is
-readable by guest root. Raw `secrets` currently require `x86_64-linux`.
-See [credentials](docs/decisions/credentials.md) for the transport and trust
+readable by guest root. The guest fetches raw `secrets` over vsock at boot
+from a host socket only that VM's user can open. See
+[credentials](docs/decisions/credentials.md) for the transport and trust
 model.
 
 ## Access and operation
@@ -149,13 +151,13 @@ forwarding. See [access](docs/access.md) for other connection methods.
 
 The NixOS module, CLI, network and credential proxies are implemented in this
 repository. Flake checks cover module evaluation, core configuration logic,
-the CLI and NixOS boot integration. crosvm is the current hypervisor;
-[Firecracker is proposed](docs/decisions/firecracker-over-crosvm.md), not
-implemented.
+the CLI and NixOS boot integration. Firecracker replaced crosvm;
+[the record](docs/decisions/firecracker-over-crosvm.md) states what the port
+changed and what it costs.
 
 The design decisions explain the scope and security model:
 
 - [Sandbox only, no agent](docs/decisions/sandbox-only-scope.md)
 - [System-scoped identity](docs/decisions/system-scoped-identity.md)
 - [SSH access model](docs/decisions/ssh-access-model.md)
-- [crosvm over QEMU](docs/decisions/crosvm-over-qemu.md)
+- [Firecracker over crosvm](docs/decisions/firecracker-over-crosvm.md)
