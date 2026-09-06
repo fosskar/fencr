@@ -15,21 +15,27 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 
 ## architecture
 
-- `modules/nixos.nix` declares options and composes host networking, systemd
-  units, users, and guest evaluations. Guests use the host's `pkgs`; payloads
-  receive the resolved contract through `specialArgs.agentSandbox`.
-- `modules/core.nix` contains pure builders: `resolveInstance` derives instance
-  identity and validates configuration, `fleetErrors` checks collisions,
-  `hostUnits` produces transports and the guest contract, `firewallOf` renders
-  nftables tables, and `guestBase` configures the guest. Keep shared defaults in
+- `modules/nixos/options.nix` declares the options; `modules/nixos/default.nix`
+  composes host networking, systemd units, users, and guest evaluations. Guests
+  use the host's `pkgs`; payloads receive the resolved contract through
+  `specialArgs.agentSandbox`.
+- `modules/core/` holds the pure builders, one file per concern, joined by
+  `default.nix` into one fixed point every part sees as `core`: `instance.nix`
+  (`defaults`, derived names, `resolveInstance`, `fleetErrors`),
+  `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
+  (`vmService`), `forwards.nix` (expose and host-forward units),
+  `egress.nix` (egress proxy unit, `firewallOf`), `credentials.nix` (the
+  authority and credential proxies), `host-units.nix` (`hostUnits`, ssh door,
+  secrets) and `guest.nix` (`guestBase`). Keep shared defaults in
   `core.defaults` and derivation logic here rather than duplicating it in the
   module or CLI.
-- `modules/cli.nix` generates Rust; `modules/vsock-forward.rs` has two modes:
-  `serve` splices an accepted connection to a host target, `connect` opens a
-  guest vsock port through Firecracker's `CONNECT <port>` handshake on the VM's
-  unix socket. `modules/egress-proxy.rs` answers DNS queries and applies the
-  allowlist to TLS SNI. These binaries use `pkgs.writers.writeRustBin` with Rust
-  edition 2024, not a Cargo workspace.
+- `modules/cli.nix` generates Rust; `modules/core/vsock-forward.rs` has two
+  modes: `serve` splices an accepted connection to a host loopback port,
+  `connect` opens a guest vsock port through Firecracker's `CONNECT <port>`
+  handshake on the VM's unix socket. `modules/core/egress-proxy.rs` answers DNS
+  queries, hands credential domains to their proxies by TLS SNI and applies the
+  allowlist to the rest. These binaries use `pkgs.writers.writeRustBin` with
+  Rust edition 2024, not a Cargo workspace.
 - Firecracker's vsock is the unix socket `/run/fencr-<name>/vsock`, in a
   directory only the VM's user and group `kvm` enter. Guest-to-host connections
   to port N arrive on `vsock_N` beside it; the path is the identity. The ssh
