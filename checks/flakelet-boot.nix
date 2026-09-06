@@ -93,7 +93,6 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       testScript = ''
         ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - VSOCK-CONNECT:3:22' root@sbx"
 
-        host.wait_for_unit("sbx-virtiofsd.service", timeout=1200)
         host.wait_for_unit("sbx.service", timeout=1200)
         # the vm unit must come up once, not survive on a restart
         host.succeed("test \"$(systemctl show sbx.service -p NRestarts --value)\" = 0")

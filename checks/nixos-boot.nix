@@ -143,6 +143,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'cp /run/current-system/sw/bin/true /var/lib/fencr-probe && chmod 4755 /var/lib/fencr-probe'", timeout=60)
       host.succeed("test -u /var/lib/fencr-vms/sbx/fencr-probe")
       host.fail("/var/lib/fencr-vms/sbx/fencr-probe")
+      # guest root and a guest user land in the vm's host uid range
+      host.succeed("test \"$(stat -c %u /var/lib/fencr-vms/sbx/fencr-probe)\" = 1000000")
+      host.succeed(f"{ssh} 'install -d -o nobody -g nogroup /var/lib/fencr-user && su nobody -s /bin/sh -c \"touch /var/lib/fencr-user/file\"'", timeout=60)
+      host.succeed("test \"$(stat -c %u /var/lib/fencr-vms/sbx/fencr-user/file)\" = $((1000000 + 65534))")
 
       # the seal, probed with real packets from inside the vm. every probe
       # carries a timeout: a hang here means the seal swallowed the reply

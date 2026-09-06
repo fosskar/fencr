@@ -19,6 +19,7 @@ rec {
   bridgeOf = name: "br-${name}";
   macOf = cfg: "02:00:00:00:20:0${toString (cfg.id + 1)}";
   cidOf = cfg: 3 + cfg.id;
+  uidBaseOf = cfg: 1000000 + cfg.id * 65536;
   hostIpOf = cfg: "10.30.${toString (cfg.id + 1)}.1";
   ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
 
@@ -114,11 +115,19 @@ rec {
     ];
   };
 
-  # qemu needs nothing beyond three device nodes and unix sockets to qmp and
-  # virtiofsd, which live in the runner's working directory (writablePaths)
+  # crosvm needs three device nodes, unix sockets, AF_INET for the tap ioctls
+  # only, and CAP_SETUID/CAP_SETGID only to map guest uids onto the vm's
+  # range. its jails remount /proc, and its file device applies the guest's
+  # modes and umask, so those four knobs of the shared set stay off
   vmServiceConfig =
     { instance, writablePaths }:
-    removeAttrs hardened [ "PrivateDevices" ]
+    removeAttrs hardened [
+      "PrivateDevices"
+      "ProcSubset"
+      "ProtectProc"
+      "RestrictSUIDSGID"
+      "UMask"
+    ]
     // {
       MemoryMax = instance.memoryMax;
       CPUQuota = instance.cpuQuota;
@@ -126,57 +135,83 @@ rec {
       LoadCredential = lib.mapAttrsToList (
         secretName: source: "${secretName}:${source}"
       ) instance.secrets;
-      ReadWritePaths = writablePaths;
+      ReadWritePaths = writablePaths ++ [ (stateDirOf instance.name) ];
       DevicePolicy = "closed";
       DeviceAllow = [
         "/dev/kvm rw"
         "/dev/net/tun rw"
         "/dev/vhost-vsock rw"
       ];
-      RestrictAddressFamilies = [ "AF_UNIX" ];
-    };
-
-  # the guest writes this tree through a root virtiofsd that keeps mknod and
-  # setfcap, so it is mounted nosuid,nodev,noexec before export. a unit of
-  # its own: a mount from the virtiofsd unit's ExecStartPre stays in that
-  # unit's mount namespace, "+" prefix or not
-  stateService = pkgs: name: {
-    description = "state tree for fencr sandbox ${name}";
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = pkgs.writeShellScript "fencr-${name}-state" ''
-        set -eu
-        ${pkgs.coreutils}/bin/install -d -o root -g root -m 0700 ${stateDirOf name}
-        ${pkgs.util-linux}/bin/mountpoint -q ${stateDirOf name} \
-          || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${stateDirOf name} ${stateDirOf name}
-      '';
-    };
-  };
-
-  # virtiofsd refuses to start with less than its file capability set plus
-  # CAP_SYS_ADMIN and CAP_SETPCAP for its sandbox; PrivateDevices strips
-  # CAP_MKNOD, ProcSubset hides the fs/nr_open it reads, umask and suid
-  # bits are the guest's
-  virtiofsdServiceConfig =
-    instance: workDir:
-    removeAttrs hardened [
-      "PrivateDevices"
-      "ProcSubset"
-      "RestrictSUIDSGID"
-      "UMask"
-    ]
-    // {
-      MemoryMax = instance.memoryMax;
-      CapabilityBoundingSet = "CAP_SYS_ADMIN CAP_SETPCAP CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_SETGID CAP_SETUID CAP_MKNOD CAP_SETFCAP";
-      RestrictNamespaces = "mnt pid net";
-      RestrictAddressFamilies = [ "AF_UNIX" ];
-      PrivateNetwork = true;
-      ReadWritePaths = [
-        workDir
-        (stateDirOf instance.name)
+      RestrictAddressFamilies = [
+        "AF_UNIX"
+        "AF_INET"
       ];
-      LimitNOFILE = 1048576;
+      RestrictNamespaces = "user mnt pid net";
+      CapabilityBoundingSet = "CAP_SETUID CAP_SETGID";
+      AmbientCapabilities = "CAP_SETUID CAP_SETGID";
     };
+
+  # what must exist before the vm unit starts: the device nodes its
+  # DeviceAllow resolves at start, and the state tree. guest root is an
+  # unprivileged host uid and no two vms share an owner; files from before
+  # the mapping are moved into the range once. a unit of its own, because a
+  # mount from the vm unit's ExecStartPre stays in that unit's namespace
+  setupService =
+    pkgs: instance:
+    let
+      dir = stateDirOf instance.name;
+      base = toString instance.uidBase;
+    in
+    {
+      description = "setup for fencr sandbox ${instance.name}";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = pkgs.writeShellScript "fencr-${instance.name}-setup" ''
+          set -eu
+          ${pkgs.kmod}/bin/modprobe -a tun vhost_vsock
+          if ${pkgs.gnugrep}/bin/grep -qw vmx /proc/cpuinfo; then
+            ${pkgs.kmod}/bin/modprobe kvm_intel
+          else
+            ${pkgs.kmod}/bin/modprobe kvm_amd
+          fi
+          ${pkgs.systemd}/bin/udevadm wait --timeout=30 /dev/kvm
+          ${pkgs.coreutils}/bin/install -d -o ${base} -g ${base} -m 0700 ${dir}
+          ${pkgs.findutils}/bin/find ${dir} -xdev \( -uid -${base} -o -gid -${base} \) -printf '%U %G %p\0' \
+            | while IFS=' ' read -r -d "" uid gid path; do
+              ${pkgs.coreutils}/bin/chown -h \
+                "$(( uid < ${base} ? uid + ${base} : uid ))":"$(( gid < ${base} ? gid + ${base} : gid ))" "$path"
+            done
+          ${pkgs.util-linux}/bin/mountpoint -q ${dir} \
+            || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${dir} ${dir}
+        '';
+      };
+    };
+
+  # crosvm's fw_cfg device carries the systemd credentials but has no acpi
+  # node; this is the node qemu's own dsdt declares for it, at the same port
+  fwCfgTable =
+    pkgs:
+    pkgs.runCommand "fencr-fw-cfg-ssdt" { nativeBuildInputs = [ pkgs.acpica-tools ]; } ''
+      cat > fwcfg.dsl <<'EOF'
+      DefinitionBlock ("", "SSDT", 2, "FENCR", "FWCFG", 1)
+      {
+          Scope (\_SB)
+          {
+              Device (FWCF)
+              {
+                  Name (_HID, "QEMU0002")
+                  Name (_STA, 0x0B)
+                  Name (_CRS, ResourceTemplate ()
+                  {
+                      IO (Decode16, 0x0510, 0x0510, 0x01, 0x0C)
+                  })
+              }
+          }
+      }
+      EOF
+      iasl -p out fwcfg.dsl
+      cp out.aml $out
+    '';
 
   credentialFilesOf =
     vmUnit: secretNames:
@@ -466,6 +501,7 @@ rec {
         bridge = bridgeOf name;
         mac = macOf options;
         cid = cidOf options;
+        uidBase = uidBaseOf options;
         hostIp = hostIpOf options;
         ip = ipOf options;
         proxy = proxyOf options;
@@ -696,14 +732,24 @@ rec {
   # the environment itself: hardware shape, network posture, and a /var/lib
   # that survives reboots so whatever is installed inside keeps its state.
   guestBase =
+    microvmSrc:
     {
       agentSandbox,
+      config,
       lib,
       modulesPath,
       pkgs,
       ...
     }:
     let
+      # microvm.nix's crosvm runner attaches the store image with the
+      # deprecated -r, which makes crosvm add root=/dev/vda to the kernel
+      # command line and the systemd initrd fails on two root mounts
+      patchedMicrovm = pkgs.applyPatches {
+        name = "microvm.nix";
+        src = microvmSrc;
+        patches = [ ./microvm-crosvm-block.patch ];
+      };
       # with a domain allowlist the proxy is the only road out, so every
       # process learns about it; tools that ignore the variables just hit
       # the closed firewall
@@ -725,10 +771,19 @@ rec {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
 
       microvm = {
-        hypervisor = "qemu";
+        hypervisor = "crosvm";
+        runner.crosvm = lib.mkForce (
+          import "${patchedMicrovm}/lib/runner.nix" {
+            inherit pkgs;
+            microvmConfig = config.microvm // {
+              inherit (config.networking) hostName;
+              hypervisor = "crosvm";
+            };
+            inherit (config.system.build) toplevel;
+          }
+        );
         inherit (agentSandbox) vcpu mem;
         balloon = true;
-        deflateOnOOM = true;
         vsock.cid = agentSandbox.cid;
 
         interfaces = [
@@ -739,37 +794,47 @@ rec {
           }
         ];
 
-        inherit (agentSandbox) credentialFiles;
-
-        # no host store share: microvm.nix then builds an erofs image of the
-        # guest's closure, and the guest cannot read the whole host store
-        shares = [
-          {
-            # every agent keeps its state under /var/lib, so share the whole
-            # tree rather than making each one declare a directory
-            source = stateDirOf agentSandbox.name;
-            mountPoint = "/var/lib";
-            tag = "state";
-            proto = "virtiofs";
-          }
-        ];
-
-        # a second -sandbox stacks a stricter seccomp filter on microvm.nix's
-        # "-sandbox on"; the last -cpu wins and hides nested virtualization
-        # (CVE-2021-3653, CVE-2021-3656)
-        qemu.extraArgs = [
-          "-sandbox"
-          "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny"
-        ]
-        ++ lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
-          "-cpu"
-          "host,+x2apic,-sgx,-svm,-vmx"
-        ];
+        # no microvm.nix share: that would be a root virtiofsd, and without a
+        # host store share it builds an erofs image of the guest's closure.
+        # credentials go through fw_cfg, which microvm.nix's runner refuses
+        crosvm.extraArgs =
+          let
+            base = toString agentSandbox.uidBase;
+          in
+          [
+            "--shared-dir"
+            "${stateDirOf agentSandbox.name}:state:type=fs:uidmap=0 ${base} 65536:gidmap=0 ${base} 65536:security_ctx=false"
+          ]
+          ++ lib.optionals pkgs.stdenv.hostPlatform.isx86_64 (
+            [
+              "--nested"
+              "mode=off"
+              "--acpi-table"
+              "${fwCfgTable pkgs}"
+            ]
+            ++ lib.concatMap (secretName: [
+              "--fw-cfg"
+              "name=opt/io.systemd.credentials/${secretName},path=${agentSandbox.credentialFiles.${secretName}}"
+            ]) agentSandbox.secretNames
+          );
       };
+
+      fileSystems."/var/lib" = {
+        device = "state";
+        fsType = "virtiofs";
+      };
+      boot.initrd.kernelModules = lib.optional pkgs.stdenv.hostPlatform.isx86_64 "qemu_fw_cfg";
+      assertions = [
+        {
+          assertion = pkgs.stdenv.hostPlatform.isx86_64 || agentSandbox.secretNames == [ ];
+          message = "fencr: secrets reach a crosvm guest through fw_cfg, which only x86_64 gets";
+        }
+      ];
 
       system.switch.enable = false;
       # perl-free activation, as the perlless profile sets it; the profile's
       # ban on perl in the closure is not taken, payloads may need it
+      boot.initrd.systemd.enable = true;
       system.etc.overlay.enable = true;
       services.userborn.enable = true;
 

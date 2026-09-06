@@ -37,7 +37,7 @@ update independently of the host (`flakelets.default`).
 
 ## What you get
 
-- one qemu microVM per instance ([microvm.nix](https://github.com/microvm-nix/microvm.nix)), vhost-vsock transport
+- one crosvm microVM per instance ([microvm.nix](https://github.com/microvm-nix/microvm.nix)), every device in its own jail, vhost-vsock transport
 - default-deny egress, including dns
 - explicit pinholes for the destinations you name; optional open internet
   still blocks every private range

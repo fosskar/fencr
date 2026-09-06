@@ -130,7 +130,7 @@ in
             type = lib.types.attrsOf lib.types.path;
             default = { };
             description = ''
-              host files passed through qemu fw_cfg and materialized in the
+              host files passed through fw_cfg and materialized in the
               vm's volatile /run/agent-secrets. guest root can read these raw
               values; use a brokered hostForward when the value must remain
               outside the vm.
@@ -254,6 +254,10 @@ in
         )
       ++ [
         {
+          assertion = instances == { } || (config.boot.kernel.sysctl."user.max_user_namespaces" or 1) != 0;
+          message = "fencr.vms: crosvm jails every device in a user namespace; unprivileged user namespaces must stay enabled on this host.";
+        }
+        {
           assertion = instances == { } || config.systemd.network.enable;
           message = "fencr.vms: the bridge and tap are configured through systemd-networkd; set networking.useNetworkd = true (or systemd.network.enable = true) on this host.";
         }
@@ -289,23 +293,22 @@ in
       ]
       ++ lib.mapAttrsToList (name: instance: {
         # microvm.nix's root-privileged post hooks run a script out of the
-        # working directory the qemu user owns; they only serve
+        # working directory the vm user owns; they only serve
         # registerWithMachined
-        "microvm@${name}".serviceConfig =
-          core.vmServiceConfig {
-            inherit instance;
-            writablePaths = [ "${config.microvm.stateDir}/${name}" ];
-          }
-          // {
-            ExecStartPost = [ "" ];
-            ExecStopPost = [ "" ];
-          };
-        "${name}-state" = core.stateService pkgs name;
-        "microvm-virtiofsd@${name}" = {
-          requires = [ "${name}-state.service" ];
-          after = [ "${name}-state.service" ];
-          serviceConfig = core.virtiofsdServiceConfig instance "${config.microvm.stateDir}/${name}";
+        "microvm@${name}" = {
+          requires = [ "${name}-setup.service" ];
+          after = [ "${name}-setup.service" ];
+          serviceConfig =
+            core.vmServiceConfig {
+              inherit instance;
+              writablePaths = [ "${config.microvm.stateDir}/${name}" ];
+            }
+            // {
+              ExecStartPost = [ "" ];
+              ExecStopPost = [ "" ];
+            };
         };
+        "${name}-setup" = core.setupService pkgs instance;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
     );
@@ -320,7 +323,7 @@ in
       config =
         { ... }:
         {
-          imports = [ core.guestBase ] ++ cfg.services;
+          imports = [ (core.guestBase inputs.microvm) ] ++ cfg.services;
         };
     }) instances;
 
