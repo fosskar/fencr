@@ -377,7 +377,7 @@ pkgs.writers.writeRustBin "fencr"
             Some("dashboard") => show(None, !args.iter().any(|a| a == "--once")),
             Some("ssh") => {
                 let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-                let vm = find(name);
+                find(name);
                 let proxy = format!("ProxyCommand={SOCAT} - UNIX-CONNECT:/run/fencr-ssh-{name}");
                 fail(Command::new(SSH)
                     .arg("-o").arg(proxy)
