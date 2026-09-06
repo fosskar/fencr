@@ -176,6 +176,18 @@ in
             type = lib.types.str;
             default = core.defaults.cpuQuota;
           };
+          secrets = lib.mkOption {
+            type = lib.types.attrsOf lib.types.path;
+            default = core.defaults.secrets;
+            description = ''
+              host files the guest fetches over vsock at boot into its
+              volatile /run/agent-secrets, mode 0400. guest root can read
+              these raw values. for a key a program must hold itself, a
+              signing key or a recovery key; an http api key is a
+              credential instead, which the vm can use but never read.
+            '';
+          };
+
           egress = lib.mkOption {
             type = lib.types.enum [
               "open"

@@ -19,6 +19,7 @@ rec {
     expose = [ ];
     hostForwards = [ ];
     hostPorts = [ ];
+    secrets = { };
   };
 
   tapOf = name: "tap-${name}";
@@ -45,6 +46,10 @@ rec {
   # the power button: a guest listener on this vsock port powers off on any
   # connection, and only the vm's user and group kvm can open the vsock
   powerPort = 4;
+  # raw secrets: at boot the guest fetches them as one archive from a host
+  # socket only the vm's own user can open; the host side reads them as
+  # systemd credentials, so they touch neither the store nor a disk
+  secretsPort = 5;
 
   # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
   # runtime resolution and stay unsupported until name-based egress exists.
@@ -515,9 +520,14 @@ rec {
         credentials = lib.genAttrs options.credentials (credential: {
           port = (credentialPortsOf credentials).${credential};
         });
+        secretNames = lib.attrNames options.secrets;
       };
       errors =
         lib.optional (options.id < 0 || options.id > 8) "${name}: id must be between 0 and 8"
+        ++ map (
+          secretName:
+          "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
+        ) (lib.filter (secretName: builtins.match "[A-Za-z0-9_.-]+" secretName == null) guest.secretNames)
         ++ lib.optional (
           lib.stringLength guest.tap > 15
         ) "vm name \"${name}\" is too long: \"${guest.tap}\" exceeds IFNAMSIZ"
@@ -550,6 +560,7 @@ rec {
         egress
         allowedDomains
         hostPorts
+        secrets
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       proxy = proxyOf options;
@@ -629,11 +640,44 @@ rec {
           };
         };
       };
+      # raw secrets, served once per boot as a tar stream of the unit's
+      # credentials directory into a connection the guest opened
+      secretsName = "${instance.name}-secrets";
+      secretsUnits = lib.optionalAttrs (instance.secrets != { }) {
+        socket.${secretsName} = {
+          description = "raw secrets for ${instance.name}";
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            ListenStream = "${vsockOf instance.name}_${toString secretsPort}";
+            SocketUser = userOf instance.name;
+            SocketMode = "0600";
+            Accept = true;
+            MaxConnections = 4;
+            TriggerLimitIntervalSec = 0;
+          };
+        };
+        service."${secretsName}@" = {
+          description = "raw secrets for ${instance.name}";
+          after = [ vmUnit ];
+          requisite = [ vmUnit ];
+          partOf = [ vmUnit ];
+          unitConfig.CollectMode = "inactive-or-failed";
+          serviceConfig = forwardHardening // {
+            LoadCredential = lib.mapAttrsToList (
+              secretName: source: "${secretName}:${source}"
+            ) instance.secrets;
+            ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
+              exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
+            '';
+          };
+        };
+      };
     in
     {
       services =
         lib.listToAttrs (forwardServices ++ hostForwardServices ++ credentialServices)
         // sshUnits.service or { }
+        // secretsUnits.service or { }
         // lib.optionalAttrs instance.proxy {
           ${proxyName} = {
             description = "domain-allowlist egress proxy for ${instance.name}";
@@ -642,7 +686,10 @@ rec {
             serviceConfig = egressProxyServiceConfig pkgs instance;
           };
         };
-      sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets) // sshUnits.socket or { };
+      sockets =
+        lib.listToAttrs (forwardSockets ++ hostForwardSockets)
+        // sshUnits.socket or { }
+        // secretsUnits.socket or { };
       # what the guest system is built against
       inherit (instance) guest;
       unitNames = {
@@ -853,6 +900,33 @@ rec {
       # the guest ends of the forwards; the host ends live beside them in
       # exposeUnits and hostForwardUnits
       systemd.services = lib.mkMerge [
+        (lib.mkIf (agentSandbox.secretNames != [ ]) {
+          # the vsock device comes up with udev; the fetch waits for it
+          fencr-secrets = {
+            description = "Materialize fencr secrets in volatile guest storage";
+            wantedBy = [ "sysinit.target" ];
+            before = [ "sysinit.target" ];
+            after = [ "local-fs.target" ];
+            requires = [ "local-fs.target" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+            };
+            script = ''
+              install -d -m 0700 /run/agent-secrets
+              for _ in $(seq 60); do
+                if ${pkgs.socat}/bin/socat -u VSOCK-CONNECT:2:${toString secretsPort} - \
+                    | ${pkgs.gnutar}/bin/tar -C /run/agent-secrets -xf - --no-same-owner --no-same-permissions; then
+                  break
+                fi
+                sleep 0.5
+              done
+              test -e /run/agent-secrets/${lib.head agentSandbox.secretNames}
+              chmod 0400 /run/agent-secrets/*
+            '';
+          };
+        })
         {
           # firecracker exits on cpu reset; a power-off only halts the cpu
           # and leaves the process running

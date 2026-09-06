@@ -10,6 +10,7 @@ let
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
   credentialFile = pkgs.writeText "fencr-test-credential" "Bearer fencr-api-token\n";
+  rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
   # the api behind the credential: echoes the Authorization header it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -86,6 +87,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         vcpu = 1;
         mem = 768;
         authorizedKeys = [ snakeOilEd25519PublicKey ];
+        secrets.raw = rawSecret;
         # the seal: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
@@ -170,6 +172,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
       host.wait_until_succeeds(f"{ssh} 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=300)
+      # a raw secret arrived over vsock, readable by guest root only
+      host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
+      host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
+      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = fencr-sbx:600")
       # the vm's vsock sockets belong to its user; the ssh socket is for all
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:770")
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_14000)\" = fencr-sbx:600")

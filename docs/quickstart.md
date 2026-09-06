@@ -32,6 +32,7 @@ Each further line is one permission or one limit:
   allowedTCPDestinations = [ "192.168.1.50:8123" ];  # out: one address
   egress = "open";                                    # out: public internet
   credentials = [ "anthropic" ];                      # api key the vm uses, never sees
+  secrets."nostr.key" = "/run/secrets/nostr.key";     # a key the program must hold itself
   vcpu = 8; mem = 8192;                               # bigger box
 ```
 

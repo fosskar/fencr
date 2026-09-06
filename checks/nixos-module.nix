@@ -68,6 +68,9 @@ in
     {
       assertion =
         config.systemd.sockets."sbx-ssh".socketConfig.ListenStream == "/run/fencr-ssh-sbx"
+        && config.systemd.sockets."sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
+        && config.systemd.services."sbx-secrets@".serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
+        && guestConfig.systemd.services ? fencr-secrets
         &&
           config.systemd.sockets."sbx-host-forward-18764".socketConfig.ListenStream
           == "/run/fencr-sbx/vsock_18764"
@@ -124,6 +127,7 @@ in
       }
     ];
     credentials = [ "anthropic" ];
+    secrets.raw = "/run/secrets/raw";
     # a payload learns a credential's port from agentSandbox
     services = [
       (

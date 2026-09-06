@@ -24,8 +24,10 @@ assumed:
   vm's own runtime directory, owned by the vm's user, the path is the
   identity. Host-to-guest needs a `CONNECT <port>` handshake, which the
   relay can do.
-- fw_cfg was only needed for raw `secrets`, and those are gone
-  (`credentials.md`), so no credential transport is needed at all.
+- fw_cfg was only needed for raw `secrets`. They now ride the vsock: at
+  boot the guest fetches one tar stream from a host socket only its user
+  can open, served from the unit's systemd credentials. No firmware
+  device, nothing in the store, nothing on disk.
 
 ## facts
 

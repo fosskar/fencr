@@ -121,6 +121,7 @@ assert lib.assertMsg (
     "mem"
     "name"
     "prefixLength"
+    "secretNames"
     "sshKeys"
     "stateSize"
     "tap"
