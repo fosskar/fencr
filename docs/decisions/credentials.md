@@ -11,12 +11,15 @@ request crosses vsock, and a host-side proxy (caddy) injects the header and
 sends it on. The agent can use the credential but cannot read, log or
 exfiltrate it.
 
-There is no second way. `secrets`, which copied host files into the vm's
-volatile `/run/agent-secrets`, was removed on 2026-09-06: a prompt-injected
-agent could print those files, and a sandbox with an escape hatch for the
-one thing it exists to hold is not a sandbox. A program that needs a secret
-value itself gets one made inside the vm, a session token for its own
-dashboard for example, which is worth nothing outside it.
+The second way is for a key a program must hold itself, and only for that:
+`fencr.vms.<vm>.secrets` copies host files into the vm's volatile
+`/run/agent-secrets`, mode 0400, fetched over vsock at boot from a host
+socket only that vm's user can open. The agent reads the real value, and a
+prompt-injected agent can print it. Removing this was considered on
+2026-09-06 and rejected on the facts of one real agent: a Nostr signing
+key, a Matrix recovery key and a token for a service on the lan have no
+header to ride in. An http api key is never a `secrets` entry; it is a
+credential.
 
 ## what a granted credential protects, stated plainly
 
