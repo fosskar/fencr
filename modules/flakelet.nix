@@ -137,7 +137,12 @@ in
         proxyName = "egress-proxy";
         brokerName = forward: "broker-${toString forward.vsockPort}";
       };
-      ruleset = hostPkgs.writeText "fencr-${name}.nft" (core.firewallOf instance).standalone;
+      # destroy is a no-op on an absent table, so one nft -f replaces the seal
+      ruleset = hostPkgs.writeText "fencr-${name}.nft" ''
+        destroy table inet fencr-${name}
+        destroy table ip fencr-${name}-nat
+        ${(core.firewallOf instance).standalone}
+      '';
       # the runner's working directory: qmp and virtiofs sockets, shared by
       # the virtiofsd unit (root) and the vm unit (dynamic user in kvm)
       runDir = "/run/fencr-${name}";
@@ -155,14 +160,12 @@ in
         }
         $ip link set ${instance.tap} master ${instance.bridge}
         $ip link set ${instance.tap} up
-        ${hostPkgs.nftables}/bin/nft delete table inet fencr-${name} 2>/dev/null || true
-        ${hostPkgs.nftables}/bin/nft delete table ip fencr-${name}-nat 2>/dev/null || true
         ${hostPkgs.nftables}/bin/nft -f ${ruleset}
       '';
 
       teardownScript = hostPkgs.writeShellScript "fencr-${name}-teardown" ''
-        ${hostPkgs.nftables}/bin/nft delete table inet fencr-${name} 2>/dev/null || true
-        ${hostPkgs.nftables}/bin/nft delete table ip fencr-${name}-nat 2>/dev/null || true
+        ${hostPkgs.nftables}/bin/nft destroy table inet fencr-${name}
+        ${hostPkgs.nftables}/bin/nft destroy table ip fencr-${name}-nat
         ${hostPkgs.iproute2}/bin/ip link del ${instance.tap} 2>/dev/null || true
         ${hostPkgs.iproute2}/bin/ip link del ${instance.bridge} 2>/dev/null || true
         exit 0
