@@ -43,7 +43,7 @@ fn peer_cid(fd: RawFd) -> io::Result<u32> {
 }
 
 /// the host side of a forward: a loopback tcp port, or the credential
-/// broker's unix socket
+/// proxy's unix socket
 enum Target {
     Tcp(TcpStream),
     Unix(UnixStream),

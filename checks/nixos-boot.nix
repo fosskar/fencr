@@ -10,8 +10,8 @@ let
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
   rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
-  brokerSecret = pkgs.writeText "fencr-test-broker-secret" "Bearer fencr-broker-token\n";
-  # the brokered api: echoes the Authorization header it received
+  credentialFile = pkgs.writeText "fencr-test-credential" "Bearer fencr-api-token\n";
+  # the api behind the credential: echoes the Authorization header it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -78,16 +78,16 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
             guestPort = 9119;
           }
         ];
-        # the credential broker: the guest calls 127.0.0.1:8765, the host
-        # injects the bearer token, the value never enters the vm
-        hostForwards = [
-          {
-            vsockPort = 18765;
-            targetPort = 8765;
-            broker.secretFile = brokerSecret;
-          }
-        ];
+        # the credential: the guest calls its loopback port, the host injects
+        # the bearer token, the value never enters the vm
+        credentials = [ "api" ];
         services = [
+          (
+            { agentSandbox, ... }:
+            {
+              environment.variables.FENCR_TEST_API = "http://127.0.0.1:${toString agentSandbox.credentials.api.port}";
+            }
+          )
           {
             environment.systemPackages = [ pkgs.curl ];
             systemd.services.ingress = {
@@ -96,6 +96,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
             };
           }
         ];
+      };
+
+      fencr.credentials.api = {
+        upstream = "http://127.0.0.1:8765";
+        secretFile = credentialFile;
       };
 
       system.stateVersion = "25.11";
@@ -159,14 +164,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:blocked\"' | grep -qv 'packets 0 '")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:host-blocked\"' | grep -qv 'packets 0 '")
 
-      # the credential broker, end to end: the guest sees the header injected,
-      # the upstream called directly sees none, and the broker has no tcp port
+      # the credential, end to end: the guest sees the header injected, the
+      # upstream called directly sees none, and the proxy has no tcp port
       host.wait_for_unit("upstream-8765.service")
-      host.wait_for_unit("sbx-broker-18765.service")
-      host.succeed("test -S /run/fencr-broker-sbx-18765/broker.sock")
+      host.wait_for_unit("sbx-credential-api.service")
+      host.succeed("test -S /run/fencr-credential-sbx-api/credential.sock")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://127.0.0.1:8765/' | grep -Fx 'authorization: Bearer fencr-broker-token'", timeout=60)
-      host.fail(f"{ssh} 'grep -r fencr-broker-token /run/agent-secrets /proc/self/environ'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 \"$FENCR_TEST_API/\"' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
+      host.fail(f"{ssh} 'grep -r fencr-api-token /run/agent-secrets /proc/self/environ'", timeout=60)
     '';
 
     meta.timeout = 1800;

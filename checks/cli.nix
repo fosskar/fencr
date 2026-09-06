@@ -4,21 +4,17 @@ let
   core = import ../modules/core.nix { inherit lib; };
   instance = core.resolveInstance {
     name = "sbx";
+    credentials.api = {
+      upstream = "http://127.0.0.1:8764";
+      header = "Authorization";
+      secretFile = "/run/secrets/api-token";
+    };
     options = {
       id = 0;
       dns = "9.9.9.9";
       allowedDomains = [ "github.com" ];
       expose = [ "33627" ];
-      hostForwards = [
-        {
-          vsockPort = 18764;
-          targetPort = 8764;
-          broker = {
-            header = "Authorization";
-            secretFile = "/run/secrets/broker-token";
-          };
-        }
-      ];
+      credentials = [ "api" ];
     };
   };
   units = core.hostUnits pkgs instance;
@@ -63,21 +59,21 @@ pkgs.runCommand "fencr-cli-check" { } ''
 
   Connections:
     host -> guest: 127.0.0.1:33627 -> guest 33627  2 active (7 total)
-    guest -> host: vsock 18764 -> host 8764  2 active (7 total)
     guest -> host: vsock 13128 -> host 13128  2 active (7 total)
+    guest -> host: vsock 14000 -> host 14000  2 active (7 total)
 
   Domains: no requests observed
-  Services: egress proxy RUNNING, credential broker RUNNING
+  Services: egress proxy RUNNING, credential RUNNING
 
   EOF
   diff -u expected actual
   cat > expected-queries <<'EOF'
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent
   show sbx-forward-33627.socket --property=LoadState,ActiveState,NAccepted,NConnections
-  show sbx-host-forward-18764.socket --property=LoadState,ActiveState,NAccepted,NConnections
   show sbx-host-forward-13128.socket --property=LoadState,ActiveState,NAccepted,NConnections
+  show sbx-host-forward-14000.socket --property=LoadState,ActiveState,NAccepted,NConnections
   show sbx-egress-proxy.service --property=LoadState,ActiveState
-  show sbx-broker-18764.service --property=LoadState,ActiveState
+  show sbx-credential-api.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
   for state in failed inactive missing unavailable; do
@@ -89,7 +85,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
     esac
     ${cli}/bin/fencr status sbx > actual
     grep -F "sbx  $health  10.30.1.2" actual
-    grep -Fx "Services: egress proxy $health, credential broker $health" actual
+    grep -Fx "Services: egress proxy $health, credential $health" actual
   done
   touch "$out"
 ''

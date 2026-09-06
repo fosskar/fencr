@@ -9,6 +9,11 @@ let
     name: options:
     core.resolveInstance {
       inherit name;
+      credentials.api = {
+        upstream = "https://api.example.com";
+        header = "Authorization";
+        secretFile = "/run/secrets/api-token";
+      };
       options = {
         dns = "9.9.9.9";
       }
@@ -23,13 +28,14 @@ let
       {
         vsockPort = 18764;
         targetPort = 8764;
-        broker = {
-          header = "Authorization";
-          secretFile = "/run/secrets/broker-token";
-        };
       }
     ];
+    credentials = [ "api" ];
     hostPorts = [ 443 ];
+  };
+  unknownCredential = resolve "sbx" {
+    id = 0;
+    credentials = [ "nope" ];
   };
   units = core.hostUnits pkgs resolved;
   longName = resolve "coding-agent-1" {
@@ -58,12 +64,10 @@ let
       {
         vsockPort = 18764;
         targetPort = 8764;
-        broker = null;
       }
       {
         vsockPort = 18765;
         targetPort = 8764;
-        broker = null;
       }
     ];
   };
@@ -74,7 +78,6 @@ let
       {
         vsockPort = 13128;
         targetPort = 8764;
-        broker = null;
       }
     ];
   };
@@ -116,6 +119,7 @@ assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
     "bridge"
     "cid"
+    "credentials"
     "dns"
     "expose"
     "hostForwards"
@@ -144,9 +148,16 @@ assert lib.assertMsg (
   && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
 ) "core check: seal chain priority or v6 drop drifted";
 assert lib.assertMsg (
+  unknownCredential.errors == [ "sbx: credential \"nope\" is not declared in fencr.credentials" ]
+) "core check: unknown credential accepted";
+assert lib.assertMsg (
+  resolved.guest.credentials.api.port == 14000
+) "core check: credential port not in the guest contract";
+assert lib.assertMsg (
   builtins.attrNames units.sockets == [
     "sbx-forward-33627"
     "sbx-host-forward-13128"
+    "sbx-host-forward-14000"
     "sbx-host-forward-18764"
   ]
   && units.sockets."sbx-forward-33627".socketConfig.ListenStream == "127.0.0.1:33627"
@@ -157,10 +168,16 @@ assert lib.assertMsg (
   && units.services."sbx-forward-33627@".serviceConfig.DynamicUser
 ) "unit check: forward relay drifted";
 assert lib.assertMsg (
-  units.services."sbx-broker-18764".serviceConfig.RuntimeDirectory == "fencr-broker-sbx-18764"
-  && units.services."sbx-broker-18764".serviceConfig.Group == "kvm"
+  units.services."sbx-credential-api".serviceConfig.RuntimeDirectory == "fencr-credential-sbx-api"
+  && units.services."sbx-credential-api".serviceConfig.Group == "kvm"
   &&
-    lib.hasSuffix "unix:/run/fencr-broker-sbx-18764/broker.sock"
-      units.services."sbx-host-forward-18764@".serviceConfig.ExecStart
-) "unit check: broker is not on its unix socket";
+    lib.hasSuffix "unix:/run/fencr-credential-sbx-api/credential.sock"
+      units.services."sbx-host-forward-14000@".serviceConfig.ExecStart
+) "unit check: credential proxy is not on its unix socket";
+assert lib.assertMsg (lib.hasInfix "reverse_proxy https://api.example.com" (
+  builtins.readFile (
+    core.credentialCaddyfile pkgs "/run/x/credential.sock"
+      (lib.findFirst (forward: forward.credential != null) null resolved.guest.hostForwards).credential
+  )
+)) "unit check: credential proxy does not originate tls to its upstream";
 pkgs.writeText "fencr-core-check" (builtins.toJSON units.unitNames)

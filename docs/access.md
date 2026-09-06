@@ -59,7 +59,7 @@ On the host itself the same tool covers the day-to-day reads:
 ```console
 fencr list        # declared vms: id, cid, ip, egress, domain count
 fencr ssh sbx     # shell in the vm
-fencr status sbx  # the vm unit plus its forward/proxy/broker units
+fencr status sbx  # the vm unit plus its forward, proxy and credential units
 ```
 
 Every command is a read; changing a vm means changing the system

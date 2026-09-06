@@ -32,6 +32,7 @@ Each further line is one permission or one limit:
   allowedTCPDestinations = [ "192.168.1.50:8123" ];  # out: one address
   egress = "open";                                    # out: public internet
   secrets."agent.env" = "/run/secrets/agent.env";     # file at /run/agent-secrets/
+  credentials = [ "anthropic" ];                      # api key the vm uses, never sees
   vcpu = 8; mem = 8192;                               # bigger box
 ```
 
@@ -47,5 +48,5 @@ Inside the vm, `services` entries are ordinary NixOS configuration:
 Day-two reading, when a need appears and not before:
 
 - [access.md](access.md) — ssh from other machines, the fencr command
-- [decisions/credential-brokering.md](decisions/credential-brokering.md)
+- [decisions/credentials.md](decisions/credentials.md)
   — using an api without the key ever entering the vm

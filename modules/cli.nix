@@ -20,7 +20,8 @@ let
 
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
-  brokerRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.brokers;
+  credentialRows =
+    name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.credentials;
 in
 pkgs.writers.writeRustBin "fencr"
   {
@@ -54,9 +55,9 @@ pkgs.writers.writeRustBin "fencr"
     ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows units))}
     ];
 
-    // vm, broker unit
-    static BROKERS: &[(&str, &str)] = &[
-    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList brokerRows units))}
+    // vm, credential unit
+    static CREDENTIALS: &[(&str, &str)] = &[
+    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList credentialRows units))}
     ];
 
     const SOCAT: &str = "${pkgs.socat}/bin/socat";
@@ -285,9 +286,9 @@ pkgs.writers.writeRustBin "fencr"
                 services.push(format!("egress proxy {}", unit_health(&props(unit, "LoadState,ActiveState"), s)));
             }
         }
-        for (vm, unit) in BROKERS {
+        for (vm, unit) in CREDENTIALS {
             if *vm == name {
-                services.push(format!("credential broker {}", unit_health(&props(unit, "LoadState,ActiveState"), s)));
+                services.push(format!("credential {}", unit_health(&props(unit, "LoadState,ActiveState"), s)));
             }
         }
         if !services.is_empty() {

@@ -1,7 +1,7 @@
 self: system:
 
 # Evaluation smoke test: a machine with one instance exercising forwards,
-# host forwards and the credential broker.
+# host forwards and a credential.
 { config, lib, ... }:
 let
   guestConfig = config.fencr.guestSystems.sbx.config;
@@ -9,6 +9,7 @@ let
     "sbx-forward-33627"
     "sbx-forward-33628"
     "sbx-host-forward-18764"
+    "sbx-host-forward-14000"
   ];
   missingHostSockets = lib.filter (name: !(config.systemd.sockets ? ${name})) expectedHostSockets;
 in
@@ -43,6 +44,13 @@ in
     {
       assertion = !guestConfig.nix.enable && guestConfig.environment.defaultPackages == [ ];
       message = "nixos module check: guest minimal profile drifted";
+    }
+    {
+      assertion =
+        config.systemd.services."sbx-credential-anthropic".serviceConfig.LoadCredential
+        == "secret:/run/secrets/anthropic"
+        && guestConfig.environment.variables.FENCR_TEST_CREDENTIAL == "http://127.0.0.1:14000";
+      message = "nixos module check: credential grant did not reach the guest";
     }
     {
       assertion = config.fencr.vms.sealed.egress == "closed";
@@ -99,9 +107,24 @@ in
       {
         vsockPort = 18764;
         targetPort = 8764;
-        broker.secretFile = "/run/secrets/broker-token";
       }
     ];
+    credentials = [ "anthropic" ];
+    # a payload learns a credential's port from agentSandbox
+    services = [
+      (
+        { agentSandbox, ... }:
+        {
+          environment.variables.FENCR_TEST_CREDENTIAL = "http://127.0.0.1:${toString agentSandbox.credentials.anthropic.port}";
+        }
+      )
+    ];
+  };
+
+  fencr.credentials.anthropic = {
+    upstream = "https://api.anthropic.com";
+    header = "x-api-key";
+    secretFile = "/run/secrets/anthropic";
   };
 
   fencr.vms.sealed = {

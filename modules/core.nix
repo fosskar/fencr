@@ -1,5 +1,5 @@
 # the builders behind the nixos module: instance derivation, firewall rule
-# text, forward transports, the credential broker and the guest system. pure
+# text, forward transports, the credential proxies and the guest system. pure
 # functions of an instance, so checks/core.nix probes them without a host.
 { lib }:
 rec {
@@ -13,6 +13,7 @@ rec {
     stateSize = 32768;
     egress = "closed";
     prefixLength = 24;
+    credentials = [ ];
     allowedDomains = [ ];
     allowedTCPDestinations = [ ];
     expose = [ ];
@@ -304,8 +305,8 @@ rec {
 
   # guest to host, the mirror image: a guest loopback listener relayed to the
   # host's cid, the host's vsock socket unit, and a cid-checked relay that
-  # splices the connection to a host loopback port or, for a brokered
-  # forward, to the broker's unix socket
+  # splices the connection to a host loopback port or, for a granted
+  # credential, to its proxy's unix socket
   hostForwardUnits = {
     socket = instance: forward: {
       description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
@@ -321,8 +322,8 @@ rec {
       pkgs: instance: vmUnit: forward:
       let
         target =
-          if forward.broker != null then
-            "unix:${brokerSocketOf instance forward}"
+          if forward.credential != null then
+            "unix:${credentialSocketOf instance forward}"
           else
             toString forward.targetPort;
       in
@@ -336,7 +337,7 @@ rec {
           // {
             ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString instance.cid} ${target}";
           }
-          // lib.optionalAttrs (forward.broker != null) {
+          // lib.optionalAttrs (forward.credential != null) {
             SupplementaryGroups = [ "kvm" ];
             RestrictAddressFamilies = [
               "AF_INET"
@@ -365,14 +366,29 @@ rec {
 
   proxyOf = cfg: if cfg.allowedDomains == [ ] then null else { port = proxyPortOf cfg; };
 
+  # a granted credential is a host forward whose target is its proxy's unix
+  # socket; the guest sees it as one loopback port, named in agentSandbox
+  credentialPortsOf =
+    credentials:
+    lib.listToAttrs (
+      lib.imap0 (i: name: lib.nameValuePair name (14000 + i)) (lib.attrNames credentials)
+    );
+
   hostForwardsOf =
-    cfg:
-    cfg.hostForwards
+    cfg: credentials:
+    map (forward: forward // { credential = null; }) cfg.hostForwards
     ++ lib.optional (proxyOf cfg != null) {
       vsockPort = (proxyOf cfg).port;
       targetPort = (proxyOf cfg).port;
-      broker = null;
-    };
+      credential = null;
+    }
+    ++ map (name: {
+      vsockPort = (credentialPortsOf credentials).${name};
+      targetPort = (credentialPortsOf credentials).${name};
+      credential = credentials.${name} // {
+        inherit name;
+      };
+    }) (lib.filter (name: credentials ? ${name}) cfg.credentials);
 
   # a pattern is a hostname, optionally with a leading "*." label. anything
   # else is rejected: "*github.com" also matches evilgithub.com, and stray
@@ -426,56 +442,67 @@ rec {
       ];
     };
 
-  # the credential broker: the guest talks plain http through the vsock
+  # a credential proxy: the guest talks plain http through the vsock
   # forward; this proxy holds the secret and injects the header on the host
   # side, so the value never exists inside the vm. it listens on a unix
   # socket in its own runtime directory, group kvm, so only the cid-checked
   # relay reaches it: no host loopback port, nothing for another host
-  # process to borrow the credential through.
-  brokerRuntimeDirOf = cfg: forward: "fencr-broker-${cfg.name}-${toString forward.vsockPort}";
+  # process to borrow the credential through. the upstream may be https;
+  # caddy originates that tls on the host, the guest never sees a cert
+  credentialRuntimeDirOf = cfg: forward: "fencr-credential-${cfg.name}-${forward.credential.name}";
 
-  brokerSocketOf = cfg: forward: "/run/${brokerRuntimeDirOf cfg forward}/broker.sock";
+  credentialSocketOf = cfg: forward: "/run/${credentialRuntimeDirOf cfg forward}/credential.sock";
 
-  brokerCaddyfile =
-    pkgs: socket: broker: targetPort:
-    pkgs.writeText "fencr-broker.caddyfile" ''
+  credentialCaddyfile =
+    pkgs: socket: credential:
+    pkgs.writeText "fencr-credential.caddyfile" ''
       {
         admin off
         auto_https off
       }
       http:// {
         bind unix/${socket}|0660
-        reverse_proxy 127.0.0.1:${toString targetPort} {
-          header_up ${broker.header} "{$FENCR_BROKER_SECRET}"
+        reverse_proxy ${credential.upstream} {
+          header_up Host {upstream_hostport}
+          header_up ${credential.header} "{$FENCR_CREDENTIAL}"
         }
       }
     '';
 
-  brokerExec =
-    pkgs: socket: broker: targetPort:
-    pkgs.writeShellScript "fencr-broker" ''
-      FENCR_BROKER_SECRET="$(cat "$CREDENTIALS_DIRECTORY/secret")"
-      export FENCR_BROKER_SECRET
+  credentialExec =
+    pkgs: socket: credential:
+    pkgs.writeShellScript "fencr-credential" ''
+      FENCR_CREDENTIAL="$(cat "$CREDENTIALS_DIRECTORY/secret")"
+      export FENCR_CREDENTIAL
       exec ${pkgs.caddy}/bin/caddy run --config ${
-        brokerCaddyfile pkgs socket broker targetPort
+        credentialCaddyfile pkgs socket credential
       } --adapter caddyfile
     '';
 
-  brokerServiceConfig =
+  # the upstream is loopback or the internet; a private range is never a
+  # credential target, so an allowed name cannot resolve into the lan
+  credentialServiceConfig =
     pkgs: cfg: forward:
     proxyHardening
     // {
-      ExecStart = "${brokerExec pkgs (brokerSocketOf cfg forward) forward.broker forward.targetPort}";
-      LoadCredential = "secret:${forward.broker.secretFile}";
+      ExecStart = "${credentialExec pkgs (credentialSocketOf cfg forward) forward.credential}";
+      LoadCredential = "secret:${forward.credential.secretFile}";
       Environment = [
         "XDG_DATA_HOME=/tmp"
         "XDG_CONFIG_HOME=/tmp"
       ];
       Group = "kvm";
-      RuntimeDirectory = brokerRuntimeDirOf cfg forward;
+      RuntimeDirectory = credentialRuntimeDirOf cfg forward;
       RuntimeDirectoryMode = "0750";
+      IPAddressAllow = [
+        "0.0.0.0/0"
+        "::/0"
+        "127.0.0.1/32"
+      ];
+      IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
       RestrictAddressFamilies = [
         "AF_INET"
+        "AF_INET6"
         "AF_UNIX"
       ];
     };
@@ -487,6 +514,7 @@ rec {
     {
       name,
       sshKeys ? [ ],
+      credentials ? { },
       ...
     }@args:
     let
@@ -511,7 +539,10 @@ rec {
         ip = ipOf options;
         proxy = proxyOf options;
         expose = map parseExpose options.expose;
-        hostForwards = hostForwardsOf options;
+        hostForwards = hostForwardsOf options credentials;
+        credentials = lib.genAttrs options.credentials (credential: {
+          port = (credentialPortsOf credentials).${credential};
+        });
         secretNames = lib.attrNames options.secrets;
       };
       errors =
@@ -528,6 +559,9 @@ rec {
         ) "${name}: allowedDomains requires egress = \"closed\""
         ++ map (error: "${name}: invalid allowedDomains ${error}") (
           domainPatternErrors options.allowedDomains
+        )
+        ++ map (credential: "${name}: credential \"${credential}\" is not declared in fencr.credentials") (
+          lib.filter (credential: !(credentials ? ${credential})) options.credentials
         )
         ++ map (port: "${name}: expose port ${toString port} declared twice") (
           duplicates (map (forward: forward.listenPort) guest.expose)
@@ -552,7 +586,7 @@ rec {
         secrets
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
-      brokeredForwards = lib.filter (forward: forward.broker != null) options.hostForwards;
+      credentialForwards = lib.filter (forward: forward.credential != null) guest.hostForwards;
       # the ports also name the socket units; the listen address is no
       # separator, a second bind on the port fails either way
       forwardEndpoints =
@@ -577,7 +611,7 @@ rec {
       forwardName = forward: "${instance.name}-forward-${toString forward.listenPort}";
       hostForwardName = forward: "${instance.name}-host-forward-${toString forward.vsockPort}";
       proxyName = "${instance.name}-egress-proxy";
-      brokerName = forward: "${instance.name}-broker-${toString forward.vsockPort}";
+      credentialName = forward: "${instance.name}-credential-${forward.credential.name}";
       forwardServices = map (forward: {
         name = "${forwardName forward}@";
         value = exposeUnits.service pkgs instance vmUnit forward;
@@ -586,14 +620,14 @@ rec {
         name = "${hostForwardName forward}@";
         value = hostForwardUnits.service pkgs instance vmUnit forward;
       }) instance.hostForwards;
-      brokerServices = map (forward: {
-        name = brokerName forward;
+      credentialServices = map (forward: {
+        name = credentialName forward;
         value = {
-          description = "credential broker for ${instance.name} vsock port ${toString forward.vsockPort}";
+          description = "credential ${forward.credential.name} for ${instance.name}";
           wantedBy = [ "multi-user.target" ];
-          serviceConfig = brokerServiceConfig pkgs instance forward;
+          serviceConfig = credentialServiceConfig pkgs instance forward;
         };
-      }) instance.brokeredForwards;
+      }) instance.credentialForwards;
       forwardSockets = map (forward: {
         name = forwardName forward;
         value = exposeUnits.socket instance forward;
@@ -605,7 +639,7 @@ rec {
     in
     {
       services =
-        lib.listToAttrs (forwardServices ++ hostForwardServices ++ brokerServices)
+        lib.listToAttrs (forwardServices ++ hostForwardServices ++ credentialServices)
         // lib.optionalAttrs (instance.proxy != null) {
           ${proxyName} = {
             description = "domain-allowlist egress proxy for ${instance.name}";
@@ -631,7 +665,7 @@ rec {
             label = "guest -> host: vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
           }) instance.hostForwards;
         proxy = lib.optional (instance.proxy != null) "${proxyName}.service";
-        brokers = map (forward: "${brokerName forward}.service") instance.brokeredForwards;
+        credentials = map (forward: "${credentialName forward}.service") instance.credentialForwards;
       };
     };
 

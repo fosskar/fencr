@@ -28,6 +28,16 @@ fencr.vms.myagent = {
   # phone keypad and as good a default example as any
   expose = [ "33627" ];
   secrets."agent.env" = "/run/secrets/agent.env";
+
+  # a credential the agent may use but never sees: inside the vm it is a
+  # loopback port, the host adds the header on the way out
+  credentials = [ "anthropic" ];
+};
+
+fencr.credentials.anthropic = {
+  upstream = "https://api.anthropic.com";
+  header = "x-api-key";
+  secretFile = "/run/secrets/anthropic";
 };
 ```
 
@@ -73,4 +83,4 @@ with claude code, anything. fencr is only the enclosure.
 
 Getting code into a vm is payload too: fencr does not clone repositories or
 mount host working trees. A `services` module fetches whatever it needs,
-using a brokered credential if the source is private.
+using a granted credential if the source is private.

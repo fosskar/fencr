@@ -27,6 +27,7 @@ let
     core.resolveInstance {
       inherit name options;
       sshKeys = sshKeysOf options;
+      credentials = config.fencr.credentials;
     }
   ) instances;
   unitSets = lib.mapAttrs (_: core.hostUnits pkgs) resolvedInstances;
@@ -73,6 +74,35 @@ in
     type = lib.types.attrsOf lib.types.raw;
     readOnly = true;
     description = "the evaluated guest system of every vm, keyed by vm name.";
+  };
+
+  options.fencr.credentials = lib.mkOption {
+    default = { };
+    description = "credentials a vm may use without ever seeing the value, granted by name in fencr.vms.<name>.credentials.";
+    type = lib.types.attrsOf (
+      lib.types.submodule {
+        options = {
+          upstream = lib.mkOption {
+            type = lib.types.str;
+            example = "https://api.anthropic.com";
+            description = ''
+              where requests go, with the credential injected: a public
+              https api or a plain http port on host loopback. private
+              ranges are refused.
+            '';
+          };
+          header = lib.mkOption {
+            type = lib.types.str;
+            default = "Authorization";
+            description = "request header that carries the credential.";
+          };
+          secretFile = lib.mkOption {
+            type = lib.types.path;
+            description = "host file with the raw header value, for example \"Bearer x\"; never enters a vm.";
+          };
+        };
+      }
+    );
   };
 
   options.fencr.adminKeys = lib.mkOption {
@@ -152,7 +182,7 @@ in
             description = ''
               host files passed through fw_cfg and materialized in the
               vm's volatile /run/agent-secrets. guest root can read these raw
-              values; use a brokered hostForward when the value must remain
+              values; grant a credential instead when the value must remain
               outside the vm.
             '';
           };
@@ -211,33 +241,24 @@ in
                 options = {
                   vsockPort = lib.mkOption { type = lib.types.port; };
                   targetPort = lib.mkOption { type = lib.types.port; };
-                  broker = lib.mkOption {
-                    type = lib.types.nullOr (
-                      lib.types.submodule {
-                        options = {
-                          header = lib.mkOption {
-                            type = lib.types.str;
-                            default = "Authorization";
-                          };
-                          secretFile = lib.mkOption {
-                            type = lib.types.path;
-                            description = "file with the raw header value; never enters the vm.";
-                          };
-                        };
-                      }
-                    );
-                    default = null;
-                    description = ''
-                      credential broker for this forward: the guest speaks
-                      plain http, the broker injects the header on the host
-                      side of the vsock hop.
-                    '';
-                  };
                 };
               }
             );
             default = core.defaults.hostForwards;
             description = "guest loopback ports forwarded to host ports over vsock.";
+          };
+
+          credentials = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = core.defaults.credentials;
+            example = lib.literalExpression ''[ "anthropic" ]'';
+            description = ''
+              names from fencr.credentials this vm may use. each becomes a
+              guest loopback port, agentSandbox.credentials.<name>.port, that
+              speaks plain http to the credential's upstream with the
+              credential injected on the host; the value never enters
+              the vm.
+            '';
           };
 
           hostPorts = lib.mkOption {

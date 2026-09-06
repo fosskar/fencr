@@ -22,8 +22,8 @@ workstation identity.
 fencr makes the opposite choice, and the rest of the design follows from it:
 
 - there is no ambient user agent or keychain to lean on, so credentials that
-  must stay out of a vm are brokered on the hub (see
-  `credential-brokering.md`), not read from a user session
+  must stay out of a vm are held on the hub and proxied (see
+  `credentials.md`), not read from a user session
 - ssh agent forwarding, where offered, is a property of a client's
   connection, not of the service; it serves connected sessions and cannot
   serve an autonomous agent running while nobody is attached
