@@ -56,8 +56,8 @@ Sources: firecracker `README.md`, `CREDITS.md`, `docs/design.md`,
 1. block image for the state tree. Removed virtio-fs, the uid range,
    `CAP_SETUID`/`CAP_SETGID` on the vm unit, the bind mount and the setup
    unit, on crosvm as well
-1. credentials declared once and granted by name, and raw `secrets`
-   removed with them
+1. credentials declared once and granted by name. Raw `secrets` stay,
+   for keys a program must hold itself (`credentials.md`)
 1. transparent SNI proxy for `allowedDomains`. Not required for the port;
    it replaced tinyproxy and the guest proxy environment in the same
    sequence
@@ -96,8 +96,9 @@ Sources: firecracker `README.md`, `CREDITS.md`, `docs/design.md`,
 
 - no memory balloon: microvm.nix's firecracker runner refuses it, so a vm
   keeps its `MemoryMax` cap but does not return unused memory to the host
-- the runner boots the unstripped `vmlinux` from the kernel's `dev` output;
-  larger closure per guest than crosvm's bzImage
+- the runner boots `vmlinux` from the kernel's `dev` output, 400 MiB with
+  debug symbols; fencr strips it to 57 MiB. A bzImage needs firecracker
+  1.17, unreleased (issue 10)
 - the boot check's host needs `-cpu host`: firecracker requires
   `KVM_CAP_XCRS`, which the synthetic `kvm64` model does not offer a nested
   hypervisor. A real host offers it
