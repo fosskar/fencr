@@ -40,3 +40,8 @@ and a benchmark, priced against a second transport implementation.
 - microvm.nix's qemu runner has no notify socket support, so the microvm
   unit is `Type=simple`: the host knows the process started, not that the
   guest booted
+
+## superseded
+
+fencr moved to crosvm, which has kernel vhost-vsock too; see
+[crosvm-over-qemu.md](crosvm-over-qemu.md).

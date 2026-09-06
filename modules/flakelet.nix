@@ -71,7 +71,7 @@ in
     secrets = {
       type = types.attrsOf types.string;
       default = { };
-      description = "host files passed through qemu fw_cfg and materialized in volatile guest /run/agent-secrets; guest root can read them.";
+      description = "host files passed through fw_cfg and materialized in volatile guest /run/agent-secrets; guest root can read them.";
     };
     egress = {
       type = types.enum "egress" [
@@ -143,21 +143,22 @@ in
         destroy table ip fencr-${name}-nat
         ${(core.firewallOf instance).standalone}
       '';
-      # the runner's working directory: qmp and virtiofs sockets, shared by
-      # the virtiofsd unit (root) and the vm unit (dynamic user in kvm)
       runDir = "/run/fencr-${name}";
 
+      # crosvm jails every device in a user namespace, and marks all guest
+      # memory mergeable: the host must allow the former and not run ksm
       setupScript = hostPkgs.writeShellScript "fencr-${name}-setup" ''
         set -eu
-        ${hostPkgs.kmod}/bin/modprobe vhost_vsock
+        test "$(${hostPkgs.procps}/bin/sysctl -n user.max_user_namespaces)" -gt 0
+        if [ -e /sys/kernel/mm/ksm/run ]; then echo 0 > /sys/kernel/mm/ksm/run; fi
         ${hostPkgs.procps}/bin/sysctl -q net.ipv4.conf.all.forwarding=1
         ip=${hostPkgs.iproute2}/bin/ip
         $ip link show ${instance.bridge} >/dev/null 2>&1 || $ip link add ${instance.bridge} type bridge
         $ip addr replace ${instance.hostIp}/${toString instance.prefixLength} dev ${instance.bridge}
         $ip link set ${instance.bridge} up
-        $ip link show ${instance.tap} >/dev/null 2>&1 || $ip tuntap add ${instance.tap} mode tap group kvm ${
-          lib.optionalString (options.vcpu > 1) "multi_queue"
-        }
+        # crosvm attaches with a virtio header and one queue; a persistent
+        # tap's flags must match
+        $ip link show ${instance.tap} >/dev/null 2>&1 || $ip tuntap add ${instance.tap} mode tap group kvm vnet_hdr
         $ip link set ${instance.tap} master ${instance.bridge}
         $ip link set ${instance.tap} up
         ${hostPkgs.nftables}/bin/nft -f ${ruleset}
@@ -176,7 +177,7 @@ in
         specialArgs.agentSandbox = units.guest;
         modules = [
           flakeInputs.microvm.nixosModules.microvm
-          core.guestBase
+          (core.guestBase flakeInputs.microvm)
         ]
         ++ map (path: import (storePath path)) options.guestModules;
       };
@@ -184,36 +185,15 @@ in
     in
     {
       services = {
-        # the virtiofs daemon the runner dials for its state share;
-        # microvm.nix's host module runs the same script as root
-        "${name}-state" = core.stateService hostPkgs name;
-        "${name}-virtiofsd" = {
-          description = "virtiofs daemons for fencr sandbox ${name}";
-          before = [ "${name}.service" ];
-          partOf = [ "${name}.service" ];
-          requires = [ "${name}-state.service" ];
-          after = [ "${name}-state.service" ];
-          serviceConfig = core.virtiofsdServiceConfig instance runDir // {
-            ExecStart = "${runner}/bin/virtiofsd-run";
-            Type = "notify";
-            NotifyAccess = "all";
-            KillMode = "mixed";
-            Group = "kvm";
-            RuntimeDirectory = "fencr-${name}";
-            RuntimeDirectoryMode = "0770";
-            WorkingDirectory = runDir;
-            Restart = "always";
-            RestartSec = 5;
-          };
-        };
+        "${name}-setup" = core.setupService hostPkgs instance;
         ${name} = {
           description = "fencr sandbox ${name}";
           wantedBy = [ "multi-user.target" ];
           after = [
             "network.target"
-            "${name}-virtiofsd.service"
+            "${name}-setup.service"
           ];
-          requires = [ "${name}-virtiofsd.service" ];
+          requires = [ "${name}-setup.service" ];
           serviceConfig =
             core.vmServiceConfig {
               inherit instance;
@@ -226,6 +206,7 @@ in
               ExecStopPost = "+${teardownScript}";
               DynamicUser = true;
               SupplementaryGroups = [ "kvm" ];
+              RuntimeDirectory = "fencr-${name}";
               WorkingDirectory = runDir;
               Restart = "on-failure";
               RestartSec = 5;

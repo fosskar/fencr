@@ -49,7 +49,7 @@ in
       message = "nixos module check: egress is not closed by default";
     }
     {
-      assertion = guestConfig.microvm.credentialFiles.raw == "/run/credentials/microvm@sbx.service/raw";
+      assertion = builtins.elem "name=opt/io.systemd.credentials/raw,path=/run/credentials/microvm@sbx.service/raw" guestConfig.microvm.crosvm.extraArgs;
       message = "nixos module check: raw secret is not transported as a systemd credential";
     }
     {
@@ -59,8 +59,12 @@ in
       message = "nixos module check: microvm.nix root post hooks are not cleared";
     }
     {
-      assertion = config.systemd.services."microvm-virtiofsd@sbx".serviceConfig.ProtectSystem == "strict";
-      message = "nixos module check: virtiofsd is not confined";
+      assertion =
+        guestConfig.microvm.hypervisor == "crosvm"
+        &&
+          config.systemd.services."microvm@sbx".serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
+        && config.systemd.services."microvm@sbx".requires == [ "sbx-setup.service" ];
+      message = "nixos module check: hypervisor unit drifted";
     }
     {
       assertion =

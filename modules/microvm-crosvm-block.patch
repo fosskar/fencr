@@ -1,0 +1,11 @@
+--- a/lib/runners/crosvm.nix
++++ b/lib/runners/crosvm.nix
+@@ -80,7 +80,7 @@
+       )
+       ++
+       lib.optionals storeOnDisk [
+-        "-r" storeDisk
++        "--block" "${storeDisk},ro=true"
+       ]
+       ++
+       lib.optionals graphics.enable [

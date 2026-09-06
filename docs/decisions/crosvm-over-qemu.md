@@ -14,7 +14,8 @@ over vsock works unchanged.
   qemu is one process behind one seccomp filter
 - the file server for the state tree is a jailed device in a user namespace,
   not a root daemon: guest root is an unprivileged host uid by construction
-- nested virtualization is a flag (`--nested off`), not a cpu feature string
+- nested virtualization is a flag (`--nested mode=off`), not a cpu feature
+  string
 - a tap is attached by name without any capability
 
 ## decisions
@@ -25,12 +26,22 @@ over vsock works unchanged.
   credentials, and the guest gets an ssdt declaring qemu's QEMU0002 node
   because crosvm exposes no acpi node and the nixos kernel's driver takes no
   command line parameter. proven by checks/crosvm-credentials.nix
-- the state tree maps guest uids to a per-vm range of host uids; crosvm holds
-  CAP_SETUID and CAP_SETGID for that mapping and nothing else. guest root
-  becomes an unprivileged host uid, non-root guest users keep working, and one
-  vm cannot reach another vm's files. existing state trees are chowned once
+- the state tree maps guest uids to a per-vm range of 65536 host uids from
+  1000000; crosvm holds CAP_SETUID and CAP_SETGID for that mapping and
+  nothing else. guest root becomes an unprivileged host uid, non-root guest
+  users keep working, and one vm cannot reach another vm's files. the setup
+  unit moves files from before the mapping into the range once
 - the shared credential gateway (issue 6) is separate work; it does not remove
   the need for raw secrets
+
+## what the hypervisor unit gives up
+
+Four knobs of the shared hardening set are off for crosvm, each because the
+tests failed with it on: `ProcSubset` and `ProtectProc` (the device jails
+remount /proc in their namespaces), `RestrictSUIDSGID` and `UMask` (the file
+device applies the guest's modes; a setuid bit on a file owned by an
+unprivileged uid is harmless on the host). `AF_INET` is allowed for the tap
+ioctls; crosvm opens no network socket.
 
 ## cost
 
@@ -38,4 +49,10 @@ over vsock works unchanged.
 - crosvm marks all guest memory mergeable, so KSM stays off on the host
 - unprivileged user namespaces must be allowed on the host
 - microvm.nix's crosvm runner refuses `credentialFiles` and uses an external
-  virtiofsd instead of crosvm's own file device; fencr bypasses it for both
+  virtiofsd instead of crosvm's own file device; fencr passes both through
+  `crosvm.extraArgs`
+- microvm.nix's crosvm runner attaches the store image with the deprecated
+  `-r`, which makes crosvm add `root=/dev/vda` to the kernel command line and
+  the systemd initrd fails on two root mounts. fencr applies a one-line patch
+  to the runner at evaluation time (`modules/microvm-crosvm-block.patch`,
+  import from derivation); it goes away once upstream takes `--block`

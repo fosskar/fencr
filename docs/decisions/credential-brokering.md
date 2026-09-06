@@ -3,7 +3,7 @@
 Secrets reach a vm in one of two ways, and only one of them exposes the
 value:
 
-1. `secrets` passes host files through QEMU `fw_cfg` as systemd
+1. `secrets` passes host files through `fw_cfg` as systemd
    credentials. An early guest service materializes mode-0400 copies in the
    volatile `/run/agent-secrets`. The agent reads the real value. A
    prompt-injected agent can print it. The values never occupy a host share or

@@ -92,8 +92,7 @@ let
   };
   expectedUnits = [
     "sbx"
-    "sbx-virtiofsd"
-    "sbx-state"
+    "sbx-setup"
     "fwd-33627@"
     "fwd-33628@"
     "hfwd-18764@"
@@ -149,6 +148,7 @@ assert lib.assertMsg (
     "secretNames"
     "sshKeys"
     "tap"
+    "uidBase"
     "vcpu"
   ]
 ) "core check: guest contract drifted";
@@ -175,14 +175,16 @@ assert lib.assertMsg (
   && result.services.sbx.serviceConfig.CPUQuota == core.defaults.cpuQuota
 ) "unit check: flakelet vm has no resource cap";
 assert lib.assertMsg (
-  result.services.sbx.serviceConfig.CapabilityBoundingSet == ""
+  result.services.sbx.serviceConfig.CapabilityBoundingSet == "CAP_SETUID CAP_SETGID"
   && result.services.sbx.serviceConfig.DevicePolicy == "closed"
-  && result.services.sbx.serviceConfig.RestrictAddressFamilies == [ "AF_UNIX" ]
+  &&
+    result.services.sbx.serviceConfig.RestrictAddressFamilies == [
+      "AF_UNIX"
+      "AF_INET"
+    ]
+  && result.services.sbx.requires == [ "sbx-setup.service" ]
 ) "unit check: flakelet vm confinement drifted";
-assert lib.assertMsg (
-  result.services.sbx-virtiofsd.serviceConfig.ProtectSystem == "strict"
-  && result.services.sbx-virtiofsd.requires == [ "sbx-state.service" ]
-) "unit check: flakelet virtiofsd confinement drifted";
+assert lib.assertMsg (resolved.uidBase == 1000000) "core check: wrong uid base";
 assert lib.assertMsg (
   let
     seal = (core.firewallOf resolved).standalone;
