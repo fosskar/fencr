@@ -1,7 +1,7 @@
 self: pkgs:
 
 # Boots the flakelet surface: its units go onto a plain host, and the same
-# ingress path as checks/ingress.nix is driven through them (the exposed
+# path as checks/nixos-boot.nix is driven through them (the exposed
 # port, ssh over vsock, a staged secret). Building this check runs the vm.
 let
   inherit (import (pkgs.path + "/nixos/tests/ssh-keys.nix") pkgs)
