@@ -29,8 +29,8 @@ over vsock works unchanged.
 - the state tree maps guest uids to a per-vm range of 65536 host uids from
   1000000; crosvm holds CAP_SETUID and CAP_SETGID for that mapping and
   nothing else. guest root becomes an unprivileged host uid, non-root guest
-  users keep working, and one vm cannot reach another vm's files. the setup
-  unit moves files from before the mapping into the range once
+  users keep working, and one vm cannot reach another vm's files. a state
+  tree from before the port must be chowned into the range by hand
 - the shared credential gateway (issue 6) is separate work; it does not remove
   the need for raw secrets
 

@@ -146,6 +146,7 @@ rec {
         "AF_UNIX"
         "AF_INET"
       ];
+      IPAddressDeny = "any";
       RestrictNamespaces = "user mnt pid net";
       CapabilityBoundingSet = "CAP_SETUID CAP_SETGID";
       AmbientCapabilities = "CAP_SETUID CAP_SETGID";
@@ -153,12 +154,11 @@ rec {
 
   # what must exist before the vm unit starts: the device nodes its
   # DeviceAllow resolves at start, and the state tree. guest root is an
-  # unprivileged host uid and no two vms share an owner; files from before
-  # the mapping are moved into the range once. the guest sets the tree's own
-  # mode through the file device, so the parent is what keeps host users
-  # outside group kvm out (the vm user needs to traverse it). a unit of its
-  # own, because a mount from the vm unit's ExecStartPre stays in that unit's
-  # namespace
+  # unprivileged host uid and no two vms share an owner. the guest sets the
+  # tree's own mode through the file device, so the parent is what keeps
+  # host users outside group kvm out (the vm user needs to traverse it). a
+  # unit of its own, because a mount from the vm unit's ExecStartPre stays
+  # in that unit's namespace
   setupService =
     pkgs: instance:
     let
@@ -180,11 +180,6 @@ rec {
           ${pkgs.systemd}/bin/udevadm wait --timeout=30 /dev/kvm
           ${pkgs.coreutils}/bin/install -d -g kvm -m 0710 ${builtins.dirOf dir}
           ${pkgs.coreutils}/bin/install -d -o ${base} -g ${base} -m 0700 ${dir}
-          ${pkgs.findutils}/bin/find ${dir} -xdev \( -uid -${base} -o -gid -${base} \) -printf '%U %G %p\0' \
-            | while IFS=' ' read -r -d "" uid gid path; do
-              ${pkgs.coreutils}/bin/chown -h \
-                "$(( uid < ${base} ? uid + ${base} : uid ))":"$(( gid < ${base} ? gid + ${base} : gid ))" "$path"
-            done
           ${pkgs.util-linux}/bin/mountpoint -q ${dir} \
             || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${dir} ${dir}
         '';
