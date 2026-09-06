@@ -286,7 +286,8 @@ rec {
     service = pkgs: instance: vmUnit: forward: {
       description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
       after = [ vmUnit ];
-      requires = [ vmUnit ];
+      requisite = [ vmUnit ];
+      partOf = [ vmUnit ];
       unitConfig.CollectMode = "inactive-or-failed";
       serviceConfig = forwardHardening // {
         ExecStart = "${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString instance.cid}:${toString forward.guestPort}";
@@ -331,7 +332,8 @@ rec {
       {
         description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
         after = [ vmUnit ];
-        requires = [ vmUnit ];
+        requisite = [ vmUnit ];
+        partOf = [ vmUnit ];
         unitConfig.CollectMode = "inactive-or-failed";
         serviceConfig =
           forwardHardening

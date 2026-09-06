@@ -165,6 +165,9 @@ assert lib.assertMsg (
 ) "unit check: host sockets drifted";
 assert lib.assertMsg (
   units.services."sbx-forward-33627@".after == [ "fencr-sbx.service" ]
+  && units.services."sbx-forward-33627@".requisite == [ "fencr-sbx.service" ]
+  && units.services."sbx-host-forward-18764@".partOf == [ "fencr-sbx.service" ]
+  && !(units.services."sbx-forward-33627@" ? requires)
   && units.services."sbx-forward-33627@".serviceConfig.DynamicUser
 ) "unit check: forward relay drifted";
 assert lib.assertMsg (
