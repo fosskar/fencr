@@ -1,41 +1,58 @@
-# domain-allowlist egress via proxy
+# domain-allowlist egress by server name
 
 `allowedDomains` grants egress by name — "this vm may reach github.com and
 nothing else". Firewalls cannot do that (rules match addresses, names
-resolve to changing addresses), so like every agent sandbox that offers it,
-fencr routes egress through a host-side proxy:
+resolve to changing addresses), so fencr judges each connection by the
+name the client itself puts in the tls handshake:
 
 - setting it implies `egress = "closed"`; an explicit `egress = "open"`
-  next to it is rejected, because a filtered proxy beside open egress is
+  next to it is rejected, because a filtered road beside open egress is
   decoration
-- a per-instance tinyproxy on host loopback is reachable only through a
-  vsock hostForward — the road out has no IP path at all
-- tinyproxy enforces the allowlist on the CONNECT hostname
-  (`FilterType fnmatch`, `FilterDefaultDeny`) and permits CONNECT only on
-  port 443; https needs no interception
-- the proxy unit denies private, link-local, multicast and other special-use
-  destination ranges, so an allowed hostname cannot grant LAN access by
-  resolving to a private address
-- the guest base exports `HTTP_PROXY`/`HTTPS_PROXY` system-wide and into
-  `systemd.globalEnvironment`
+- the vm's resolver is the host's bridge address. There the egress proxy
+  answers every A query with that same address and everything else with
+  an empty answer, so no dns query leaves the host and every tls
+  connection the guest opens lands on the host
+- on port 443 of the bridge address the proxy reads the server name
+  indication from the client hello, checks it against the allowlist,
+  resolves the allowed name with the host's resolver, connects, and
+  splices the bytes through unread. Nothing is decrypted and the guest
+  holds no certificate authority
+- the proxy unit denies private, link-local, multicast and other
+  special-use destination ranges, so an allowed hostname cannot grant lan
+  access by resolving to a private address
+- the seal's input chain admits only dns and 443 from the bridge to the
+  host; a raw address on 443 hits the closed forward chain
 
-A process that ignores the proxy variables is not a bypass: it hits the
-closed firewall. Cooperation is the only way out, not a security
-assumption.
+No proxy variables in the guest, no cooperation required: a tool that
+ignores nothing and simply connects is judged the same as curl.
 
 ## limits, stated plainly
 
-- proxy-aware tools only. curl, git, pip, npm and nix honor the variables;
-  raw sockets to arbitrary hosts stay dead by design
-- fnmatch patterns: `*.github.com` does not match bare `github.com`; list
-  both
-- CONNECT is restricted to port 443; plain http rides ordinary proxying
-- the allowlist names hosts, not paths or methods
+- tls only. Plain http, and any protocol that is not tls with a server
+  name, has no road out. `allowedTCPDestinations` remains for addresses
+- `*.github.com` does not match bare `github.com`; list both
+- the allowlist names hosts, not paths or methods; a granted credential
+  is where request-level scoping belongs (`credentials.md`)
+- encrypted client hello hides the server name; such a connection has no
+  name and is refused
+- a client may say one name in the handshake and another inside the
+  encrypted request. On a shared cdn address that reaches a different site
+  than the allowlist named; the same holds for every sandbox that
+  enforces by server name
+
+## earlier shape, replaced
+
+A per-vm tinyproxy on host loopback, reached over a vsock forward, with
+`HTTP_PROXY`/`HTTPS_PROXY` exported into the guest. It enforced the
+allowlist on the CONNECT hostname and worked only for tools that honor the
+variables; everything else hit the closed firewall. Replaced because
+enforcement by server name needs no cooperation and removes the proxy
+variables, the vsock forward and tinyproxy.
 
 ## alternative considered
 
 dnsmasq's `nftset=` can inject resolved addresses of allowlisted names
-into an nftables set, giving transparent per-domain rules without proxy
-variables. Rejected for now: shared CDN addresses make an accepted IP far
-broader than the name that resolved to it, and cache churn makes the seal
-racy. The proxy names the destination explicitly on every connection.
+into an nftables set, giving transparent per-domain rules. Rejected:
+shared cdn addresses make an accepted address far broader than the name
+that resolved to it, and cache churn makes the seal racy. The server name
+names the destination explicitly on every connection.

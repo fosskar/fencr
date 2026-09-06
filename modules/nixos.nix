@@ -205,11 +205,12 @@ in
             default = core.defaults.allowedDomains;
             example = lib.literalExpression ''[ "github.com" "*.github.com" ]'';
             description = ''
-              domains reachable through the egress proxy; fnmatch patterns,
-              so "*.github.com" does not match the bare "github.com" — list
-              both. implies egress = "closed": the proxy becomes the only
-              road out, enforced on the CONNECT hostname without
-              interception.
+              domains reachable over tls; "*.github.com" does not match the
+              bare "github.com", list both. implies egress = "closed": the
+              vm resolves every name to the host, which reads the server
+              name from the tls handshake and passes allowed connections
+              through unread. no proxy variables, no interception, and no
+              dns leaves the host.
             '';
           };
 
@@ -408,9 +409,14 @@ in
       }
     );
 
+    # the seal's input chain accepts first, but the main chain's drop policy
+    # still runs after it, so the egress proxy's ports open there too
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
-        ${cfg.bridge}.allowedTCPPorts = cfg.hostPorts;
+        ${cfg.bridge} = {
+          allowedTCPPorts = cfg.hostPorts ++ lib.optional cfg.proxy 443;
+          allowedUDPPorts = lib.optional cfg.proxy 53;
+        };
       }
     );
 

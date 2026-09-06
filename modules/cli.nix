@@ -28,7 +28,7 @@ pkgs.writers.writeRustBin "fencr"
     rustcArgs = [
       "-O"
       "--edition"
-      "2021"
+      "2024"
     ];
   }
   ''
@@ -217,27 +217,22 @@ pkgs.writers.writeRustBin "fencr"
         let Some(log) = output(JOURNALCTL, &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"]) else {
             return format!("{}journal access denied{}", s.dim, s.reset);
         };
+        // the egress proxy logs one line per connection: "allow <host>",
+        // "deny <host>", or "deny: <reason>" when there was no server name
         let mut seen: BTreeMap<String, (u64, u64)> = BTreeMap::new();
         for line in log.lines() {
-            if let Some(rest) = line.split("): CONNECT ").nth(1) {
-                if let Some(hostport) = rest.split_whitespace().next() {
-                    let host = hostport.rsplit_once(':').map(|(h, _)| h).unwrap_or(hostport);
-                    seen.entry(host.to_string()).or_default().0 += 1;
-                }
-            }
-            if let Some(rest) = line.split("filtered domain \"").nth(1) {
-                if let Some(host) = rest.split('"').next() {
-                    seen.entry(host.to_string()).or_default().1 += 1;
-                }
+            if let Some(host) = line.strip_prefix("allow ") {
+                seen.entry(host.to_string()).or_default().0 += 1;
+            } else if let Some(host) = line.strip_prefix("deny ") {
+                seen.entry(host.to_string()).or_default().1 += 1;
             }
         }
         if seen.is_empty() {
             return format!("{}no requests observed{}", s.dim, s.reset);
         }
         let mut result = String::new();
-        for (host, (requests, refused)) in &seen {
-            let allowed = requests.saturating_sub(*refused);
-            if allowed > 0 {
+        for (host, (allowed, refused)) in &seen {
+            if *allowed > 0 {
                 let _ = write!(result, "{}\u{2713} {host} ({allowed}){}  ", s.green, s.reset);
             }
             if *refused > 0 {

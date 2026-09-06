@@ -19,9 +19,10 @@ fencr.vms.myagent = {
   # egress is closed by default, including dns. grant only what is needed.
   allowedTCPDestinations = [ "192.168.1.50:8123" ];
 
-  # or grant egress by name: implies a closed seal, everything routes
-  # through a host-side proxy over vsock, allowlist enforced on the
-  # CONNECT hostname — no tls interception
+  # or grant egress by name: implies a closed seal. the vm resolves every
+  # name to the host, which reads the server name from the tls handshake
+  # and passes allowed connections through unread — no proxy variables,
+  # no tls interception, no dns leaves the host
   # allowedDomains = [ "github.com" "*.github.com" ];
 
   # "expose" opens a host endpoint into the vm; 33627 is "fencr" on a

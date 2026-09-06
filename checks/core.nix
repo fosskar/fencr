@@ -71,16 +71,6 @@ let
       }
     ];
   };
-  onProxyPort = resolve "sbx" {
-    id = 0;
-    allowedDomains = [ "github.com" ];
-    hostForwards = [
-      {
-        vsockPort = 13128;
-        targetPort = 8764;
-      }
-    ];
-  };
   seal = lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf resolved));
   occurrences = needle: lib.length (lib.splitString needle seal) - 1;
 in
@@ -95,7 +85,12 @@ assert lib.assertMsg (
     }
   ]
 ) "core check: expose was not resolved";
-assert lib.assertMsg (resolved.proxy.port == 13128) "core check: proxy was not resolved";
+assert lib.assertMsg (
+  resolved.proxy
+  && resolved.guest.dns == "10.30.1.1"
+  && !longName.proxy
+  && longName.guest.dns == "9.9.9.9"
+) "core check: the egress proxy is not the guest's resolver";
 assert lib.assertMsg (longName.errors != [ ]) "core check: long interface name accepted";
 assert lib.assertMsg (
   sameListenPort.errors == [ "sbx: expose port 22100 declared twice" ]
@@ -104,9 +99,6 @@ assert lib.assertMsg (sameGuestPort.errors == [ ]) "core check: shared guest por
 assert lib.assertMsg (
   sameTargetPort.errors == [ "sbx: hostForward target port 8764 declared twice" ]
 ) "core check: repeated hostForward target port accepted";
-assert lib.assertMsg (
-  onProxyPort.errors == [ "sbx: hostForward vsock port 13128 declared twice" ]
-) "core check: hostForward on the egress proxy port accepted";
 assert lib.assertMsg (
   lib.length (
     core.fleetErrors {
@@ -129,7 +121,6 @@ assert lib.assertMsg (
     "mem"
     "name"
     "prefixLength"
-    "proxy"
     "secretNames"
     "sshKeys"
     "stateSize"
@@ -144,6 +135,16 @@ assert lib.assertMsg (lib.all (
   )
 ) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";
 assert lib.assertMsg (
+  units.services."sbx-egress-proxy".serviceConfig.AmbientCapabilities == "CAP_NET_BIND_SERVICE"
+  && lib.hasInfix "10.30.1.0/24" (
+    toString units.services."sbx-egress-proxy".serviceConfig.IPAddressAllow
+  )
+  &&
+    occurrences ''ip daddr 10.30.1.1 udp dport 53 counter accept comment "fencr:sbx:egress-dns"'' == 1
+  &&
+    occurrences ''ip daddr 10.30.1.1 tcp dport 443 counter accept comment "fencr:sbx:egress-tls"'' == 1
+) "unit check: egress proxy is not the vm's road out";
+assert lib.assertMsg (
   occurrences "priority filter - 1;" == 2
   && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
 ) "core check: seal chain priority or v6 drop drifted";
@@ -156,7 +157,6 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   builtins.attrNames units.sockets == [
     "sbx-forward-33627"
-    "sbx-host-forward-13128"
     "sbx-host-forward-14000"
     "sbx-host-forward-18764"
   ]

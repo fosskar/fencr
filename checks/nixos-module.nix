@@ -53,6 +53,15 @@ in
       message = "nixos module check: credential grant did not reach the guest";
     }
     {
+      assertion =
+        config.fencr.guestSystems.sealed.config.systemd.network.networks."10-lan".networkConfig.DNS
+        == "10.30.2.1"
+        && config.systemd.services ? "sealed-egress-proxy"
+        && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 53 ]
+        && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 443 ];
+      message = "nixos module check: allowedDomains did not make the egress proxy the resolver";
+    }
+    {
       assertion = config.fencr.vms.sealed.egress == "closed";
       message = "nixos module check: egress is not closed by default";
     }

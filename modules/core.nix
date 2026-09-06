@@ -28,6 +28,7 @@ rec {
   cidOf = cfg: 3 + cfg.id;
   hostIpOf = cfg: "10.30.${toString (cfg.id + 1)}.1";
   ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
+  subnetOf = cfg: "10.30.${toString (cfg.id + 1)}.0/24";
 
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
@@ -84,7 +85,7 @@ rec {
       rustcArgs = [
         "-O"
         "--edition"
-        "2021"
+        "2024"
       ];
     } ./vsock-forward.rs;
 
@@ -358,13 +359,11 @@ rec {
     };
   };
 
-  # domain-allowlist egress: the guest's only way out is a host-side
-  # tinyproxy reached over vsock; it enforces the allowlist on the CONNECT
-  # hostname, so https needs no interception. the port doubles as the
-  # guest's loopback proxy port and the vsock port.
-  proxyPortOf = cfg: 13128 + cfg.id;
-
-  proxyOf = cfg: if cfg.allowedDomains == [ ] then null else { port = proxyPortOf cfg; };
+  # domain-allowlist egress: the guest's resolver is the bridge address,
+  # where the egress proxy answers every name with itself, so every tls
+  # connection lands on the host and is judged by the server name in its
+  # client hello; nothing is decrypted and no dns leaves the host
+  proxyOf = cfg: cfg.allowedDomains != [ ];
 
   # a granted credential is a host forward whose target is its proxy's unix
   # socket; the guest sees it as one loopback port, named in agentSandbox
@@ -377,11 +376,6 @@ rec {
   hostForwardsOf =
     cfg: credentials:
     map (forward: forward // { credential = null; }) cfg.hostForwards
-    ++ lib.optional (proxyOf cfg != null) {
-      vsockPort = (proxyOf cfg).port;
-      targetPort = (proxyOf cfg).port;
-      credential = null;
-    }
     ++ map (name: {
       vsockPort = (credentialPortsOf credentials).${name};
       targetPort = (credentialPortsOf credentials).${name};
@@ -404,35 +398,37 @@ rec {
 
   domainPatternErrors = domains: lib.filter (e: e != null) (map domainPatternError domains);
 
-  proxyFilterFile =
-    pkgs: domains:
-    pkgs.writeText "fencr-egress-domains" (lib.concatMapStrings (domain: "${domain}\n") domains);
+  egressProxyBin =
+    pkgs:
+    pkgs.writers.writeRustBin "fencr-egress-proxy" {
+      rustcArgs = [
+        "-O"
+        "--edition"
+        "2024"
+      ];
+    } ./egress-proxy.rs;
 
-  tinyproxyConfig =
-    pkgs: port: domains:
-    pkgs.writeText "fencr-tinyproxy.conf" ''
-      Port ${toString port}
-      Listen 127.0.0.1
-      Allow 127.0.0.1
-      Timeout 600
-      MaxClients 32
-      LogLevel Connect
-      DisableViaHeader Yes
-      FilterType fnmatch
-      FilterDefaultDeny Yes
-      Filter "${proxyFilterFile pkgs domains}"
-      ConnectPort 443
-    '';
-
+  # listens on the bridge address only, so the guest's subnet is allowed in
+  # beside the internet; every other private range stays denied, and an
+  # allowed name resolving into the lan goes nowhere
   egressProxyServiceConfig =
-    pkgs: port: domains:
+    pkgs: instance:
     proxyHardening
     // {
-      ExecStart = "${pkgs.tinyproxy}/bin/tinyproxy -d -c ${tinyproxyConfig pkgs port domains}";
+      ExecStart = "${egressProxyBin pkgs}/bin/fencr-egress-proxy ${instance.hostIp} ${
+        pkgs.writeText "fencr-egress-domains" (
+          lib.concatMapStrings (domain: "${domain}\n") instance.allowedDomains
+        )
+      }";
+      CapabilityBoundingSet = "CAP_NET_BIND_SERVICE";
+      AmbientCapabilities = "CAP_NET_BIND_SERVICE";
+      # resolving on the host goes through resolved, over its unix socket
+      # or its stub on 127.0.0.53
       IPAddressAllow = [
         "0.0.0.0/0"
         "::/0"
-        "127.0.0.1/32"
+        "127.0.0.53/32"
+        instance.subnet
       ];
       IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
       RestrictAddressFamilies = [
@@ -528,16 +524,16 @@ rec {
           vcpu
           mem
           stateSize
-          dns
           prefixLength
           ;
+        # with a domain allowlist the egress proxy is the guest's resolver
+        dns = if proxyOf options then hostIpOf options else options.dns;
         tap = tapOf name;
         bridge = bridgeOf name;
         mac = macOf options;
         cid = cidOf options;
         hostIp = hostIpOf options;
         ip = ipOf options;
-        proxy = proxyOf options;
         expose = map parseExpose options.expose;
         hostForwards = hostForwardsOf options credentials;
         credentials = lib.genAttrs options.credentials (credential: {
@@ -586,6 +582,8 @@ rec {
         secrets
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
+      proxy = proxyOf options;
+      subnet = subnetOf options;
       credentialForwards = lib.filter (forward: forward.credential != null) guest.hostForwards;
       # the ports also name the socket units; the listen address is no
       # separator, a second bind on the port fails either way
@@ -640,11 +638,12 @@ rec {
     {
       services =
         lib.listToAttrs (forwardServices ++ hostForwardServices ++ credentialServices)
-        // lib.optionalAttrs (instance.proxy != null) {
+        // lib.optionalAttrs instance.proxy {
           ${proxyName} = {
             description = "domain-allowlist egress proxy for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
-            serviceConfig = egressProxyServiceConfig pkgs instance.proxy.port instance.allowedDomains;
+            after = [ "network.target" ];
+            serviceConfig = egressProxyServiceConfig pkgs instance;
           };
         };
       sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets);
@@ -664,7 +663,7 @@ rec {
             unit = "${hostForwardName forward}.socket";
             label = "guest -> host: vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
           }) instance.hostForwards;
-        proxy = lib.optional (instance.proxy != null) "${proxyName}.service";
+        proxy = lib.optional instance.proxy "${proxyName}.service";
         credentials = map (forward: "${credentialName forward}.service") instance.credentialForwards;
       };
     };
@@ -728,6 +727,10 @@ rec {
         lib.concatMapStringsSep ", " toString ports
       } } counter accept comment "fencr:${cfg.name}:host"
     ''
+    + lib.optionalString cfg.proxy ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 counter accept comment "fencr:${cfg.name}:egress-dns"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 counter accept comment "fencr:${cfg.name}:egress-tls"
+    ''
     + ''
       iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-host-blocked: "
       iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
@@ -782,22 +785,6 @@ rec {
         src = microvmSrc;
         patches = [ ./microvm-crosvm-block.patch ];
       };
-      # with a domain allowlist the proxy is the only road out, so every
-      # process learns about it; tools that ignore the variables just hit
-      # the closed firewall
-      proxyEnvironment = lib.mkIf (agentSandbox.proxy != null) (
-        let
-          url = "http://127.0.0.1:${toString agentSandbox.proxy.port}";
-        in
-        {
-          http_proxy = url;
-          https_proxy = url;
-          HTTP_PROXY = url;
-          HTTPS_PROXY = url;
-          no_proxy = "127.0.0.1,localhost";
-          NO_PROXY = "127.0.0.1,localhost";
-        }
-      );
     in
     {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
@@ -964,9 +951,6 @@ rec {
       };
 
       users.users.root.openssh.authorizedKeys.keys = agentSandbox.sshKeys;
-
-      environment.variables = proxyEnvironment;
-      systemd.globalEnvironment = proxyEnvironment;
 
       documentation.enable = false;
       environment.defaultPackages = lib.mkForce [ ];

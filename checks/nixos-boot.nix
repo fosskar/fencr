@@ -25,6 +25,23 @@ let
 
     HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
   '';
+  tlsCert = pkgs.runCommand "fencr-test-cert" { nativeBuildInputs = [ pkgs.openssl ]; } ''
+    mkdir $out
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=allowed.test \
+      -keyout $out/key.pem -out $out/cert.pem
+  '';
+  # the site behind an allowed name: tls with a throwaway certificate
+  tlsServer = pkgs.writeText "fencr-test-tls.py" ''
+    from http.server import SimpleHTTPRequestHandler, HTTPServer
+    import os, ssl
+
+    os.chdir("${targetRoot}")
+    server = HTTPServer(("0.0.0.0", 443), SimpleHTTPRequestHandler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain("${tlsCert}/cert.pem", "${tlsCert}/key.pem")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+  '';
 in
 import (pkgs.path + "/nixos/tests/make-test-python.nix")
   ({ pkgs, ... }: {
@@ -69,8 +86,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         mem = 768;
         authorizedKeys = [ snakeOilEd25519PublicKey ];
         secrets.raw = rawSecret;
-        # the seal: closed egress with one pinhole into the test network
+        # the seal: closed egress with one pinhole into the test network,
+        # and one name allowed over tls; both names resolve to the target
+        # on the host, only one is on the list
         allowedTCPDestinations = [ "192.168.1.2:8123" ];
+        allowedDomains = [ "allowed.test" ];
         expose = [
           {
             listenAddress = "127.0.0.1";
@@ -103,6 +123,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         secretFile = credentialFile;
       };
 
+      networking.hosts."192.168.1.2" = [
+        "allowed.test"
+        "denied.test"
+      ];
+      # the test network is a private range the proxy unit denies; allow
+      # the one target, which is the "internet" here
+      systemd.services.sbx-egress-proxy.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
+
       system.stateVersion = "25.11";
     };
 
@@ -111,8 +139,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
     nodes.target = {
       networking.firewall.allowedTCPPorts = [
         80
+        443
         8123
       ];
+      systemd.services.target-443 = {
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${tlsServer}";
+      };
       systemd.services.target-8123 = {
         wantedBy = [ "multi-user.target" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 8123 --bind 0.0.0.0 --directory ${targetRoot}";
@@ -163,6 +196,18 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.1:80'", timeout=60)
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:blocked\"' | grep -qv 'packets 0 '")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:host-blocked\"' | grep -qv 'packets 0 '")
+
+      # egress by name: every name resolves to the host, the allowed one is
+      # passed through to the real site, the other is refused by name, and a
+      # raw address on 443 hits the closed forward chain
+      target.wait_for_unit("target-443.service")
+      host.wait_for_unit("sbx-egress-proxy.service")
+      host.succeed(f"{ssh} 'getent hosts denied.test' | grep -q '^10.30.1.1 '", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://allowed.test/' | grep -Fx 'fencr target'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://denied.test/'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
+      host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
+      host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
 
       # the credential, end to end: the guest sees the header injected, the
       # upstream called directly sees none, and the proxy has no tcp port
