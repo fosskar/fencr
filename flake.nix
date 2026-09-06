@@ -64,7 +64,6 @@
 
         nixos-boot = import ./checks/nixos-boot.nix self pkgs;
 
-        crosvm-credentials = import ./checks/crosvm-credentials.nix self pkgs;
       });
 
       devShells = forAllSystems (pkgs: {

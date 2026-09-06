@@ -25,7 +25,7 @@ over vsock works unchanged.
 - raw `secrets` keep their shape: crosvm's fw_cfg device carries the systemd
   credentials, and the guest gets an ssdt declaring qemu's QEMU0002 node
   because crosvm exposes no acpi node and the nixos kernel's driver takes no
-  command line parameter. proven by checks/crosvm-credentials.nix
+  command line parameter; both boot checks read a staged secret
 - the state tree maps guest uids to a per-vm range of 65536 host uids from
   1000000; crosvm holds CAP_SETUID and CAP_SETGID for that mapping and
   nothing else. guest root becomes an unprivileged host uid, non-root guest
