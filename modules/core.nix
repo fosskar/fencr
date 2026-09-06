@@ -605,10 +605,13 @@ rec {
     ip saddr ${cfg.ip} oifname != "${cfg.bridge}" masquerade
   '';
 
-  # input-chain fragment sealing the vms' host access to the declared ports
+  # input-chain fragment sealing the vms' host access to the declared ports;
+  # v6 dropped first like on forward: the host's own link-local multicast
+  # reflects off the bridge
   sealInputFragment =
     cfg: ports:
     ''
+      iifname "${cfg.bridge}" meta nfproto ipv6 drop
       iifname "${cfg.bridge}" ct state established,related accept
     ''
     + lib.optionalString (ports != [ ]) ''
@@ -624,7 +627,9 @@ rec {
   # the seal as complete nftables tables. both frontends install exactly this
   # text: the nixos module as networking.nftables.tables, the flakelet unit
   # with nft -f. the tables stand on their own so no frontend chain runs
-  # ahead of them, and so the same text can be loaded and probed in a test
+  # ahead of them, and so the same text can be loaded and probed in a test.
+  # both chains sit one below filter: a host chain at the same priority
+  # would tie
   firewallOf =
     cfg:
     let
@@ -642,12 +647,12 @@ rec {
           family = "inet";
           content = ''
             chain forward {
-              type filter hook forward priority filter; policy accept;
+              type filter hook forward priority filter - 1; policy accept;
               ${forwardFilterFragment cfg}
               oifname "${cfg.bridge}" drop
             }
             chain input {
-              type filter hook input priority -1; policy accept;
+              type filter hook input priority filter - 1; policy accept;
               ${sealInputFragment cfg cfg.hostPorts}
             }
           '';

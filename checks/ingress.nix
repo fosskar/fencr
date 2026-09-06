@@ -50,6 +50,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       # a globally opened host port: the seal must still keep it from the vm
       networking.firewall.allowedTCPPorts = [ 80 ];
+      networking.firewall.filterForward = true;
       systemd.services.host-80 = {
         wantedBy = [ "multi-user.target" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 80 --bind 0.0.0.0 --directory ${targetRoot}";

@@ -370,5 +370,11 @@ in
         ${cfg.bridge}.allowedTCPPorts = cfg.hostPorts;
       }
     );
+
+    # with filterForward the main forward chain drops by policy, and a drop
+    # in any chain is final even after the seal accepted
+    networking.firewall.extraForwardRules = lib.concatMapStrings (cfg: ''
+      iifname "${cfg.bridge}" accept
+    '') (lib.attrValues resolvedInstances);
   };
 }
