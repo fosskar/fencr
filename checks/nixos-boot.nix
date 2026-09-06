@@ -100,16 +100,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
             guestPort = 9119;
           }
         ];
-        # the credential: the guest calls its loopback port, the host injects
-        # the bearer token, the value never enters the vm
+        # the credential: the guest calls api.test over https as it would
+        # any site, the host ends the tls and injects the bearer token,
+        # the value never enters the vm
         credentials = [ "api" ];
         services = [
-          (
-            { agentSandbox, ... }:
-            {
-              environment.variables.FENCR_TEST_API = "http://127.0.0.1:${toString agentSandbox.credentials.api.port}";
-            }
-          )
           {
             environment.systemPackages = [ pkgs.curl ];
             systemd.services.ingress = {
@@ -122,6 +117,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       fencr.credentials.api = {
         upstream = "http://127.0.0.1:8765";
+        domain = "api.test";
         secretFile = credentialFile;
       };
 
@@ -178,7 +174,6 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = fencr-sbx:600")
       # the vm's vsock sockets belong to its user; the ssh socket is for all
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:770")
-      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_14000)\" = fencr-sbx:600")
       host.succeed("test \"$(stat -c %a /run/fencr-ssh-sbx)\" = 666")
 
       host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
@@ -220,13 +215,18 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
       host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
 
-      # the credential, end to end: the guest sees the header injected, the
-      # upstream called directly sees none, and the proxy has no tcp port
+      # the credential, end to end: the guest calls the domain over https
+      # and trusts the host's authority without being told to, whatever it
+      # sent as a header is replaced, the upstream called directly sees
+      # none, and the proxy has no tcp port
       host.wait_for_unit("upstream-8765.service")
       host.wait_for_unit("sbx-credential-api.service")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/root.key)\" = root:600")
       host.succeed("test -S /run/fencr-credential-sbx-api/credential.sock")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 \"$FENCR_TEST_API/\"' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
+      host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/fencr-ca.crt'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
+      host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
     '';
 

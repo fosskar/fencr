@@ -47,11 +47,16 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 - `allowedDomains` requires closed egress. The host answers guest DNS with its
   bridge address and authorizes TLS by SNI without decrypting it or using proxy
   environment variables. `*.example.com` does not include `example.com`.
-- `credentials` grants host-side header injection through a vsock socket only
-  the VM's user can open and a Caddy Unix socket. Raw `secrets` instead enter
-  guest `/run/agent-secrets`, fetched at boot over vsock port 5 from a socket
-  unit that serves the VM unit's systemd credentials; they are readable by
-  guest root. Never put real secret values in the Nix store.
+- `credentials` intercepts TLS for the credential's domain only: the guest's
+  `/etc/hosts` points the domain at the bridge, the egress proxy hands the
+  connection by SNI to that credential's Caddy on a Unix socket, which holds a
+  certificate from the per-host authority `fencr-ca.service` keeps in
+  `/var/lib/fencr/ca` and injects the header. The guest fetches the authority
+  beside its secrets and rebuilds the system trust store at boot in
+  `/run/fencr`. Raw `secrets` instead enter guest `/run/agent-secrets`, fetched
+  at boot over vsock port 5 from a socket unit that serves the VM unit's
+  systemd credentials; they are readable by guest root. Never put real secret
+  values in the Nix store.
 - SSH combines `fencr.adminKeys` and per-VM `authorizedKeys`; no keys means no
   SSH listener. Guest root is the intended privilege level. `expose` narrows TCP
   listening addresses, not direct vsock access by host users.

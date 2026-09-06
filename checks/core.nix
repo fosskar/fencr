@@ -9,10 +9,19 @@ let
     name: options:
     core.resolveInstance {
       inherit name;
-      credentials.api = {
-        upstream = "https://api.example.com";
-        header = "Authorization";
-        secretFile = "/run/secrets/api-token";
+      credentials = {
+        api = {
+          upstream = "https://api.example.com";
+          domain = null;
+          header = "Authorization";
+          secretFile = "/run/secrets/api-token";
+        };
+        local = {
+          upstream = "http://127.0.0.1:8764";
+          domain = null;
+          header = "Authorization";
+          secretFile = "/run/secrets/local-token";
+        };
       };
       options = {
         dns = "9.9.9.9";
@@ -37,6 +46,17 @@ let
     id = 0;
     credentials = [ "nope" ];
   };
+  loopbackCredential = resolve "sbx" {
+    id = 0;
+    credentials = [ "local" ];
+  };
+  # a credential alone brings the egress proxy, but not its resolver
+  keyed = resolve "keyed" {
+    id = 2;
+    egress = "open";
+    credentials = [ "api" ];
+  };
+  keyedUnits = core.hostUnits pkgs keyed;
   units = core.hostUnits pkgs resolved;
   longName = resolve "coding-agent-1" {
     id = 1;
@@ -111,7 +131,7 @@ assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
     "bridge"
     "cid"
-    "credentials"
+    "credentialDomains"
     "dns"
     "expose"
     "hostForwards"
@@ -152,13 +172,34 @@ assert lib.assertMsg (
   unknownCredential.errors == [ "sbx: credential \"nope\" is not declared in fencr.credentials" ]
 ) "core check: unknown credential accepted";
 assert lib.assertMsg (
-  resolved.guest.credentials.api.port == 14000
-) "core check: credential port not in the guest contract";
+  resolved.guest.credentialDomains == [ "api.example.com" ]
+  &&
+    loopbackCredential.errors == [
+      "sbx: credential \"local\" needs fencr.credentials.local.domain: its upstream \"http://127.0.0.1:8764\" names no host a vm could call"
+    ]
+) "core check: credential domain drifted";
+assert lib.assertMsg (
+  keyed.proxy
+  && !keyed.dnsProxy
+  && keyed.guest.dns == "9.9.9.9"
+  && keyedUnits.services ? "keyed-egress-proxy"
+  && keyedUnits.services."keyed-egress-proxy".wants == [ "keyed-credential-api.service" ]
+  && keyedUnits.sockets ? "keyed-secrets"
+  &&
+    keyedUnits.services."keyed-secrets@".serviceConfig.LoadCredential == [
+      "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
+    ]
+  &&
+    lib.hasInfix ''ip daddr 10.30.3.1 tcp dport 443 counter accept comment "fencr:keyed:egress-tls"''
+      (core.firewallOf keyed)."fencr-keyed".content
+  && !lib.hasInfix "udp dport 53 counter accept comment \"fencr:keyed:egress-dns\""
+    (core.firewallOf keyed)."fencr-keyed".content
+) "core check: a credential alone does not bring the interception path";
 assert lib.assertMsg (
   builtins.attrNames units.sockets == [
     "sbx-forward-33627"
-    "sbx-host-forward-14000"
     "sbx-host-forward-18764"
+    "sbx-secrets"
   ]
   && units.sockets."sbx-forward-33627".socketConfig.ListenStream == "127.0.0.1:33627"
   && units.sockets."sbx-host-forward-18764".socketConfig.ListenStream == "/run/fencr-sbx/vsock_18764"
@@ -181,14 +222,22 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   units.services."sbx-credential-api".serviceConfig.RuntimeDirectory == "fencr-credential-sbx-api"
   && units.services."sbx-credential-api".serviceConfig.Group == "kvm"
-  &&
-    lib.hasSuffix "unix:/run/fencr-credential-sbx-api/credential.sock"
-      units.services."sbx-host-forward-14000@".serviceConfig.ExecStart
-) "unit check: credential proxy is not on its unix socket";
-assert lib.assertMsg (lib.hasInfix "reverse_proxy https://api.example.com" (
-  builtins.readFile (
-    core.credentialCaddyfile pkgs "/run/x/credential.sock"
-      (lib.findFirst (forward: forward.credential != null) null resolved.guest.hostForwards).credential
+  && units.services."sbx-credential-api".requires == [ "fencr-ca.service" ]
+  && units.services."sbx-egress-proxy".serviceConfig.Group == "kvm"
+  && lib.hasInfix "api.example.com /run/fencr-credential-sbx-api/credential.sock" (
+    builtins.readFile (
+      lib.last (lib.splitString " " units.services."sbx-egress-proxy".serviceConfig.ExecStart)
+    )
   )
-)) "unit check: credential proxy does not originate tls to its upstream";
+) "unit check: credential proxy is not behind the egress proxy on its unix socket";
+assert lib.assertMsg (
+  let
+    caddyfile = builtins.readFile (
+      core.credentialCaddyfile pkgs "/run/x/credential.sock" (lib.head resolved.credentials)
+    );
+  in
+  lib.hasInfix "https://api.example.com {" caddyfile
+  && lib.hasInfix "tls internal" caddyfile
+  && lib.hasInfix "reverse_proxy https://api.example.com" caddyfile
+) "unit check: credential proxy does not end tls for its domain and originate it to its upstream";
 pkgs.writeText "fencr-core-check" (builtins.toJSON units.unitNames)

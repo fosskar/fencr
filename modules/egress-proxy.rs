@@ -1,9 +1,11 @@
-//! the road out for a vm with allowedDomains: on the bridge address it
-//! answers every dns name with itself and, on 443, reads the server name
-//! from the tls client hello, checks it against the allowlist and splices
-//! the connection to the real host unread. nothing is decrypted.
+//! the road out for a vm with allowedDomains or credentials: on the bridge
+//! address it answers every dns name with itself and, on 443, reads the
+//! server name from the tls client hello. a credential's domain goes to
+//! that credential's proxy on its unix socket, which holds the certificate;
+//! an allowed name is spliced to the real host unread; the rest is refused.
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::thread;
@@ -107,16 +109,43 @@ fn read_client_hello(
     }
 }
 
-fn splice(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
+/// a server end: the real host over tcp or a credential proxy over its
+/// unix socket
+trait Server: Read + Write + Send + 'static {
+    fn duplicate(&self) -> io::Result<Self>
+    where
+        Self: Sized;
+    fn close_write(&self) -> io::Result<()>;
+}
+
+impl Server for TcpStream {
+    fn duplicate(&self) -> io::Result<Self> {
+        self.try_clone()
+    }
+    fn close_write(&self) -> io::Result<()> {
+        self.shutdown(Shutdown::Write)
+    }
+}
+
+impl Server for UnixStream {
+    fn duplicate(&self) -> io::Result<Self> {
+        self.try_clone()
+    }
+    fn close_write(&self) -> io::Result<()> {
+        self.shutdown(Shutdown::Write)
+    }
+}
+
+fn splice<S: Server>(mut client: TcpStream, mut server: S) -> io::Result<()> {
     let mut client_reader = client.try_clone()?;
-    let mut server_writer = server.try_clone()?;
+    let mut server_writer = server.duplicate()?;
     let server_to_client = thread::spawn(move || {
         let result = io::copy(&mut server, &mut client);
         let _ = client.shutdown(Shutdown::Write);
         result
     });
     let client_to_server = io::copy(&mut client_reader, &mut server_writer);
-    let _ = server_writer.shutdown(Shutdown::Write);
+    let _ = server_writer.close_write();
     server_to_client
         .join()
         .map_err(|_| io::Error::other("relay thread panicked"))??;
@@ -124,7 +153,11 @@ fn splice(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
     Ok(())
 }
 
-fn serve_tls(mut client: TcpStream, patterns: &[String]) -> io::Result<()> {
+fn serve_tls(
+    mut client: TcpStream,
+    patterns: &[String],
+    intercepts: &[(String, String)],
+) -> io::Result<()> {
     client.set_read_timeout(Some(Duration::from_secs(10)))?;
     let (hello, name) = read_client_hello(&mut client)?;
     let host = match name {
@@ -134,6 +167,16 @@ fn serve_tls(mut client: TcpStream, patterns: &[String]) -> io::Result<()> {
             return Ok(());
         }
     };
+    if let Some((_, socket)) = intercepts
+        .iter()
+        .find(|(domain, _)| host.eq_ignore_ascii_case(domain))
+    {
+        let mut server = UnixStream::connect(socket)?;
+        client.set_read_timeout(None)?;
+        eprintln!("intercept {host}");
+        server.write_all(&hello)?;
+        return splice(client, server);
+    }
     if !allowed(patterns, &host) {
         eprintln!("deny {host}");
         return Ok(());
@@ -186,24 +229,41 @@ fn serve_dns(socket: &UdpSocket, answer: Ipv4Addr) -> io::Result<()> {
     }
 }
 
+fn lines(path: &str) -> io::Result<Vec<String>> {
+    Ok(std::fs::read_to_string(path)?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
-    let (Some(address), Some(allowlist)) = (args.next(), args.next()) else {
+    let (Some(address), Some(allowlist), Some(interceptlist)) =
+        (args.next(), args.next(), args.next())
+    else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: fencr-egress-proxy <bridge address> <allowlist file>",
+            "usage: fencr-egress-proxy <bridge address> <allowlist file> <intercept file>",
         ));
     };
     let answer: Ipv4Addr = address
         .parse()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bridge address must be ipv4"))?;
-    let patterns: Arc<Vec<String>> = Arc::new(
-        std::fs::read_to_string(allowlist)?
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_owned)
-            .collect(),
+    let patterns: Arc<Vec<String>> = Arc::new(lines(&allowlist)?);
+    // "<domain> <unix socket>" per line
+    let intercepts: Arc<Vec<(String, String)>> = Arc::new(
+        lines(&interceptlist)?
+            .iter()
+            .map(|line| {
+                line.split_once(' ')
+                    .map(|(domain, socket)| (domain.to_owned(), socket.to_owned()))
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "intercept line without socket")
+                    })
+            })
+            .collect::<io::Result<_>>()?,
     );
     // the bridge gets its address from networkd; be there when it does
     let dns = loop {
@@ -224,8 +284,9 @@ fn run() -> io::Result<()> {
     for client in listener.incoming() {
         let client = client?;
         let patterns = Arc::clone(&patterns);
+        let intercepts = Arc::clone(&intercepts);
         thread::spawn(move || {
-            if let Err(error) = serve_tls(client, &patterns) {
+            if let Err(error) = serve_tls(client, &patterns, &intercepts) {
                 eprintln!("relay: {error}");
             }
         });

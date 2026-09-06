@@ -9,7 +9,6 @@ let
     "sbx-forward-33627"
     "sbx-forward-33628"
     "sbx-host-forward-18764"
-    "sbx-host-forward-14000"
   ];
   missingHostSockets = lib.filter (name: !(config.systemd.sockets ? ${name})) expectedHostSockets;
 in
@@ -47,9 +46,15 @@ in
     }
     {
       assertion =
-        config.systemd.services."sbx-credential-anthropic".serviceConfig.LoadCredential
-        == "secret:/run/secrets/anthropic"
-        && guestConfig.environment.variables.FENCR_TEST_CREDENTIAL == "http://127.0.0.1:14000";
+        config.systemd.services."sbx-credential-anthropic".serviceConfig.LoadCredential == [
+          "secret:/run/secrets/anthropic"
+          "ca.crt:/var/lib/fencr/ca/root.crt"
+          "ca.key:/var/lib/fencr/ca/root.key"
+        ]
+        && config.systemd.services ? fencr-ca
+        && guestConfig.networking.hosts."10.30.1.1" == [ "api.anthropic.com" ]
+        && guestConfig.environment.etc."ssl/certs/ca-certificates.crt".source == "/run/fencr/ca-bundle.crt"
+        && guestConfig.systemd.globalEnvironment.NIX_SSL_CERT_FILE == "/run/fencr/ca-bundle.crt";
       message = "nixos module check: credential grant did not reach the guest";
     }
     {
@@ -69,7 +74,11 @@ in
       assertion =
         config.systemd.sockets."sbx-ssh".socketConfig.ListenStream == "/run/fencr-ssh-sbx"
         && config.systemd.sockets."sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
-        && config.systemd.services."sbx-secrets@".serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
+        &&
+          config.systemd.services."sbx-secrets@".serviceConfig.LoadCredential == [
+            "raw:/run/secrets/raw"
+            "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
+          ]
         && guestConfig.systemd.services ? fencr-secrets
         &&
           config.systemd.sockets."sbx-host-forward-18764".socketConfig.ListenStream
@@ -128,15 +137,6 @@ in
     ];
     credentials = [ "anthropic" ];
     secrets.raw = "/run/secrets/raw";
-    # a payload learns a credential's port from agentSandbox
-    services = [
-      (
-        { agentSandbox, ... }:
-        {
-          environment.variables.FENCR_TEST_CREDENTIAL = "http://127.0.0.1:${toString agentSandbox.credentials.anthropic.port}";
-        }
-      )
-    ];
   };
 
   fencr.credentials.anthropic = {

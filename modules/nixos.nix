@@ -91,6 +91,17 @@ in
               ranges are refused.
             '';
           };
+          domain = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            example = "mcp.fencr";
+            description = ''
+              the name a vm calls. it resolves to the host, where the
+              credential's proxy answers with a certificate from the
+              host's own authority, which the vm trusts. defaults to the
+              upstream's host; an upstream on host loopback needs one.
+            '';
+          };
           header = lib.mkOption {
             type = lib.types.str;
             default = "Authorization";
@@ -255,11 +266,11 @@ in
             default = core.defaults.credentials;
             example = lib.literalExpression ''[ "anthropic" ]'';
             description = ''
-              names from fencr.credentials this vm may use. each becomes a
-              guest loopback port, agentSandbox.credentials.<name>.port, that
-              speaks plain http to the credential's upstream with the
-              credential injected on the host; the value never enters
-              the vm.
+              names from fencr.credentials this vm may use. the vm calls
+              the credential's domain as it would anywhere; the name
+              resolves to the host, whose proxy ends the tls with a
+              certificate the vm trusts, injects the credential and sends
+              the request on. the value never enters the vm.
             '';
           };
 
@@ -349,6 +360,11 @@ in
         "fencr-${name}" = core.vmService pkgs instance guestSystems.${name}.config.microvm.declaredRunner;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
+      ++
+        lib.optional (lib.any (instance: instance.credentials != [ ]) (lib.attrValues resolvedInstances))
+          {
+            fencr-ca = core.caService pkgs config.networking.hostName;
+          }
     );
 
     systemd.sockets = lib.mkMerge (map (units: units.sockets) (lib.attrValues unitSets));
@@ -414,7 +430,7 @@ in
       _: cfg: {
         ${cfg.bridge} = {
           allowedTCPPorts = cfg.hostPorts ++ lib.optional cfg.proxy 443;
-          allowedUDPPorts = lib.optional cfg.proxy 53;
+          allowedUDPPorts = lib.optional cfg.dnsProxy 53;
         };
       }
     );
