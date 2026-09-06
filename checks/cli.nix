@@ -59,7 +59,6 @@ pkgs.runCommand "fencr-cli-check" { } ''
 
   Connections:
     host -> guest: 127.0.0.1:33627 -> guest 33627  2 active (7 total)
-    guest -> host: vsock 14000 -> host 14000  2 active (7 total)
 
   Domains: no requests observed
   Services: egress proxy RUNNING, credential RUNNING
@@ -69,7 +68,6 @@ pkgs.runCommand "fencr-cli-check" { } ''
   cat > expected-queries <<'EOF'
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent
   show sbx-forward-33627.socket --property=LoadState,ActiveState,NAccepted,NConnections
-  show sbx-host-forward-14000.socket --property=LoadState,ActiveState,NAccepted,NConnections
   show sbx-egress-proxy.service --property=LoadState,ActiveState
   show sbx-credential-api.service --property=LoadState,ActiveState
   EOF
