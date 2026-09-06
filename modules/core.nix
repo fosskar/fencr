@@ -699,7 +699,10 @@ rec {
       );
     in
     {
-      imports = [ "${modulesPath}/profiles/minimal.nix" ];
+      imports = [
+        "${modulesPath}/profiles/minimal.nix"
+        "${modulesPath}/profiles/perlless.nix"
+      ];
 
       microvm = {
         hypervisor = "qemu";
@@ -718,13 +721,9 @@ rec {
 
         inherit (agentSandbox) credentialFiles;
 
+        # no host store share: microvm.nix then builds an erofs image of the
+        # guest's closure, and the guest cannot read the whole host store
         shares = [
-          {
-            source = "/nix/store";
-            mountPoint = "/nix/.ro-store";
-            tag = "ro-store";
-            proto = "virtiofs";
-          }
           {
             # every agent keeps its state under /var/lib, so share the whole
             # tree rather than making each one declare a directory
@@ -785,6 +784,8 @@ rec {
         useDHCP = false;
         useNetworkd = true;
         firewall.enable = true;
+        # the iptables backend drags perl in through libpcap and rdma-core
+        nftables.enable = true;
       };
 
       # virtio gives unpredictable enp0sN names, so match the mac we assigned.

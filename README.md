@@ -42,7 +42,7 @@ update independently of the host (`flakelets.default`).
 - explicit pinholes for the destinations you name; optional open internet
   still blocks every private range
 - host↔guest port forwards over vsock, socket-activated, no TCP exposure
-- persistent `/var/lib` per instance; read-only nix store share
+- persistent `/var/lib` per instance; the guest's own closure on a read-only store image
 - memory ceiling with balloon, hard cap on the unit, CPU quota
 
 ## Quickstart
