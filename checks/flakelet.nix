@@ -136,6 +136,7 @@ assert lib.assertMsg (lib.all (
 assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
     "bridge"
+    "cid"
     "dns"
     "expose"
     "hostForwards"
@@ -150,7 +151,6 @@ assert lib.assertMsg (
     "sshKeys"
     "tap"
     "vcpu"
-    "vsockCid"
   ]
 ) "core check: guest contract drifted";
 assert lib.assertMsg (

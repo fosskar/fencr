@@ -346,12 +346,9 @@ rec {
 
   egressProxyServiceConfig =
     pkgs: port: domains:
-    hardened
+    proxyHardening
     // {
       ExecStart = "${pkgs.tinyproxy}/bin/tinyproxy -d -c ${tinyproxyConfig pkgs port domains}";
-      Restart = "always";
-      RestartSec = 5;
-      DynamicUser = true;
       IPAddressAllow = [
         "0.0.0.0/0"
         "::/0"
@@ -427,21 +424,28 @@ rec {
     }@args:
     let
       options = defaults // args.options;
-      proxy = proxyOf options;
-      expose = map parseExpose options.expose;
-      declaredHostForwards = options.hostForwards;
-      hostForwards = hostForwardsOf options;
-      bridge = options.bridge or (bridgeOf name);
-      hostIp = options.hostIp or (hostIpOf options);
-      ip = options.ip or (ipOf options);
-      prefixLength = options.prefixLength or 24;
-      tap = tapOf name;
-      mac = macOf options;
-      vsockCid = cidOf options;
-      allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       invalidSecretNames = lib.filter (secretName: builtins.match "[A-Za-z0-9_.-]+" secretName == null) (
         lib.attrNames options.secrets
       );
+      guest = {
+        inherit name sshKeys;
+        inherit (options)
+          vcpu
+          mem
+          dns
+          prefixLength
+          ;
+        tap = tapOf name;
+        bridge = bridgeOf name;
+        mac = macOf options;
+        cid = cidOf options;
+        hostIp = hostIpOf options;
+        ip = ipOf options;
+        proxy = proxyOf options;
+        expose = map parseExpose options.expose;
+        hostForwards = hostForwardsOf options;
+        secretNames = lib.attrNames options.secrets;
+      };
       errors =
         lib.optional (options.id < 0 || options.id > 8) "${name}: id must be between 0 and 8"
         ++ map (
@@ -449,68 +453,33 @@ rec {
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
         ) invalidSecretNames
         ++ lib.optional (
-          lib.stringLength tap > 15
-        ) "vm name \"${name}\" is too long: \"${tap}\" exceeds IFNAMSIZ"
-        ++ lib.optional (lib.stringLength bridge > 15) "${name}: bridge name \"${bridge}\" exceeds IFNAMSIZ"
+          lib.stringLength guest.tap > 15
+        ) "vm name \"${name}\" is too long: \"${guest.tap}\" exceeds IFNAMSIZ"
         ++ lib.optional (
           options.allowedDomains != [ ] && options.egress != "closed"
         ) "${name}: allowedDomains requires egress = \"closed\""
         ++ map (error: "${name}: invalid allowedDomains ${error}") (
           domainPatternErrors options.allowedDomains
         );
-      guest = {
-        inherit
-          name
-          sshKeys
-          tap
-          mac
-          vsockCid
-          bridge
-          ip
-          hostIp
-          prefixLength
-          proxy
-          hostForwards
-          ;
-        inherit (options) vcpu mem dns;
-        inherit expose;
-        secretNames = lib.attrNames options.secrets;
-      };
     in
-    {
-      inherit
-        name
-        bridge
-        tap
-        mac
-        ip
-        hostIp
-        prefixLength
-        proxy
-        expose
-        hostForwards
-        declaredHostForwards
-        allowedTCPDestinations
-        errors
-        guest
-        ;
+    guest
+    // {
+      inherit guest errors;
       inherit (options)
         id
-        vcpu
-        mem
         memoryMax
         cpuQuota
-        dns
         egress
         allowedDomains
         hostPorts
         secrets
         ;
-      cid = vsockCid;
-      brokeredForwards = lib.filter (forward: forward.broker != null) declaredHostForwards;
+      allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
+      declaredHostForwards = options.hostForwards;
+      brokeredForwards = lib.filter (forward: forward.broker != null) options.hostForwards;
       forwardEndpoints =
-        map (forward: "tcp:${forward.listenAddress}:${toString forward.listenPort}") expose
-        ++ map (forward: "vsock:${toString forward.vsockPort}") hostForwards;
+        map (forward: "tcp:${forward.listenAddress}:${toString forward.listenPort}") guest.expose
+        ++ map (forward: "vsock:${toString forward.vsockPort}") guest.hostForwards;
     };
 
   fleetErrors =
@@ -706,6 +675,24 @@ rec {
       pkgs,
       ...
     }:
+    let
+      # with a domain allowlist the proxy is the only road out, so every
+      # process learns about it; tools that ignore the variables just hit
+      # the closed firewall
+      proxyEnvironment = lib.mkIf (agentSandbox.proxy != null) (
+        let
+          url = "http://127.0.0.1:${toString agentSandbox.proxy.port}";
+        in
+        {
+          http_proxy = url;
+          https_proxy = url;
+          HTTP_PROXY = url;
+          HTTPS_PROXY = url;
+          no_proxy = "127.0.0.1,localhost";
+          NO_PROXY = "127.0.0.1,localhost";
+        }
+      );
+    in
     {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
 
@@ -714,7 +701,7 @@ rec {
         inherit (agentSandbox) vcpu mem;
         balloon = true;
         deflateOnOOM = true;
-        vsock.cid = agentSandbox.vsockCid;
+        vsock.cid = agentSandbox.cid;
 
         interfaces = [
           {
@@ -838,32 +825,8 @@ rec {
 
       users.users.root.openssh.authorizedKeys.keys = agentSandbox.sshKeys;
 
-      # with a domain allowlist the proxy is the only road out, so every
-      # process learns about it; tools that ignore the variables just hit
-      # the closed firewall
-      environment.variables = lib.mkIf (agentSandbox.proxy != null) (
-        let
-          url = "http://127.0.0.1:${toString agentSandbox.proxy.port}";
-        in
-        {
-          http_proxy = url;
-          https_proxy = url;
-          HTTP_PROXY = url;
-          HTTPS_PROXY = url;
-          no_proxy = "127.0.0.1,localhost";
-          NO_PROXY = "127.0.0.1,localhost";
-        }
-      );
-      systemd.globalEnvironment = lib.mkIf (agentSandbox.proxy != null) (
-        let
-          url = "http://127.0.0.1:${toString agentSandbox.proxy.port}";
-        in
-        {
-          HTTP_PROXY = url;
-          HTTPS_PROXY = url;
-          NO_PROXY = "127.0.0.1,localhost";
-        }
-      );
+      environment.variables = proxyEnvironment;
+      systemd.globalEnvironment = proxyEnvironment;
 
       documentation.enable = false;
       environment.defaultPackages = lib.mkForce [ ];

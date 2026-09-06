@@ -78,181 +78,161 @@ in
     default = { };
     description = "sealed agent microvms, keyed by vm name.";
     type = lib.types.attrsOf (
-      lib.types.submodule (
-        { name, config, ... }:
-        {
-          options = {
-            id = lib.mkOption {
-              type = lib.types.ints.between 0 8;
-              description = "unique instance index; derives bridge, subnet, tap, mac and vsock cid.";
-            };
-
-            services = lib.mkOption {
-              type = lib.types.listOf lib.types.raw;
-              default = [ ];
-              description = "nixos modules to run inside the vm.";
-            };
-
-            authorizedKeys = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-              description = ''
-                public keys authorized as root in this vm — the owner tier.
-                a vm belongs to whoever holds these keys; no host account
-                needed. without adminKeys and authorizedKeys the vm has no
-                ssh door at all.
-              '';
-            };
-
-            specialArgs = lib.mkOption {
-              type = lib.types.attrsOf lib.types.raw;
-              default = { };
-              description = "extra specialArgs handed to the guest's module system.";
-            };
-
-            vcpu = lib.mkOption {
-              type = lib.types.int;
-              default = core.defaults.vcpu;
-            };
-            mem = lib.mkOption {
-              type = lib.types.int;
-              default = core.defaults.mem;
-              description = "guest memory ceiling; free page reporting returns unused memory to the host.";
-            };
-            memoryMax = lib.mkOption {
-              type = lib.types.str;
-              default = core.defaults.memoryMax;
-              description = "hard cap on the whole vm unit, enforced by the host; guest ceiling plus hypervisor overhead.";
-            };
-            cpuQuota = lib.mkOption {
-              type = lib.types.str;
-              default = core.defaults.cpuQuota;
-            };
-            secrets = lib.mkOption {
-              type = lib.types.attrsOf lib.types.path;
-              default = { };
-              description = ''
-                host files passed through qemu fw_cfg and materialized in the
-                vm's volatile /run/agent-secrets. guest root can read these raw
-                values; use a brokered hostForward when the value must remain
-                outside the vm.
-              '';
-            };
-
-            egress = lib.mkOption {
-              type = lib.types.enum [
-                "open"
-                "closed"
-              ];
-              default = core.defaults.egress;
-              description = ''
-                "open": internet and dns reachable, private ranges sealed.
-                "closed": nothing reachable beyond allowedTCPDestinations,
-                dns included. this is the default.
-              '';
-            };
-
-            allowedDomains = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-              example = lib.literalExpression ''[ "github.com" "*.github.com" ]'';
-              description = ''
-                domains reachable through the egress proxy; fnmatch patterns,
-                so "*.github.com" does not match the bare "github.com" — list
-                both. implies egress = "closed": the proxy becomes the only
-                road out, enforced on the CONNECT hostname without
-                interception.
-              '';
-            };
-
-            allowedTCPDestinations = lib.mkOption {
-              type = lib.types.listOf destinationType;
-              default = [ ];
-              description = ''
-                IPv4 TCP destinations reachable from the vm, as
-                "<address>:<port>" or { address; port; }. each entry is an
-                explicit exception to the default closed egress policy.
-              '';
-            };
-
-            expose = lib.mkOption {
-              type = lib.types.listOf exposeType;
-              default = [ ];
-              example = lib.literalExpression ''[ "33627" ]'';
-              description = ''
-                guest loopback ports exposed on host endpoints over vsock.
-                listenAddress narrows tcp clients only: vsock connect needs no
-                privilege, so every host account can also reach the guest
-                port directly through the vm's cid.
-              '';
-            };
-
-            hostForwards = lib.mkOption {
-              type = lib.types.listOf (
-                lib.types.submodule {
-                  options = {
-                    vsockPort = lib.mkOption { type = lib.types.port; };
-                    targetPort = lib.mkOption { type = lib.types.port; };
-                    broker = lib.mkOption {
-                      type = lib.types.nullOr (
-                        lib.types.submodule {
-                          options = {
-                            header = lib.mkOption {
-                              type = lib.types.str;
-                              default = "Authorization";
-                            };
-                            secretFile = lib.mkOption {
-                              type = lib.types.path;
-                              description = "file with the raw header value; never enters the vm.";
-                            };
-                          };
-                        }
-                      );
-                      default = null;
-                      description = ''
-                        credential broker for this forward: the guest speaks
-                        plain http, the broker injects the header on the host
-                        side of the vsock hop.
-                      '';
-                    };
-                  };
-                }
-              );
-              default = [ ];
-              description = "guest loopback ports forwarded to host ports over vsock.";
-            };
-
-            hostPorts = lib.mkOption {
-              type = lib.types.listOf lib.types.port;
-              default = [ ];
-              description = "host TCP ports reachable from the vm over the bridge.";
-            };
-
-            bridge = lib.mkOption {
-              type = lib.types.str;
-              default = core.bridgeOf name;
-            };
-            hostIp = lib.mkOption {
-              type = lib.types.str;
-              default = core.hostIpOf config;
-              description = "the host's address on the bridge, and the vm's gateway.";
-            };
-            ip = lib.mkOption {
-              type = lib.types.str;
-              default = core.ipOf config;
-            };
-            prefixLength = lib.mkOption {
-              type = lib.types.int;
-              default = core.defaults.prefixLength;
-            };
-            dns = lib.mkOption {
-              type = lib.types.str;
-              default = builtins.head hostConfig.networking.nameservers;
-              defaultText = "the host's first resolver";
-            };
+      lib.types.submodule {
+        options = {
+          id = lib.mkOption {
+            type = lib.types.ints.between 0 8;
+            description = "unique instance index; derives bridge, subnet, tap, mac and vsock cid.";
           };
-        }
-      )
+
+          services = lib.mkOption {
+            type = lib.types.listOf lib.types.raw;
+            default = [ ];
+            description = "nixos modules to run inside the vm.";
+          };
+
+          authorizedKeys = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = ''
+              public keys authorized as root in this vm — the owner tier.
+              a vm belongs to whoever holds these keys; no host account
+              needed. without adminKeys and authorizedKeys the vm has no
+              ssh door at all.
+            '';
+          };
+
+          specialArgs = lib.mkOption {
+            type = lib.types.attrsOf lib.types.raw;
+            default = { };
+            description = "extra specialArgs handed to the guest's module system.";
+          };
+
+          vcpu = lib.mkOption {
+            type = lib.types.int;
+            default = core.defaults.vcpu;
+          };
+          mem = lib.mkOption {
+            type = lib.types.int;
+            default = core.defaults.mem;
+            description = "guest memory ceiling; free page reporting returns unused memory to the host.";
+          };
+          memoryMax = lib.mkOption {
+            type = lib.types.str;
+            default = core.defaults.memoryMax;
+            description = "hard cap on the whole vm unit, enforced by the host; guest ceiling plus hypervisor overhead.";
+          };
+          cpuQuota = lib.mkOption {
+            type = lib.types.str;
+            default = core.defaults.cpuQuota;
+          };
+          secrets = lib.mkOption {
+            type = lib.types.attrsOf lib.types.path;
+            default = { };
+            description = ''
+              host files passed through qemu fw_cfg and materialized in the
+              vm's volatile /run/agent-secrets. guest root can read these raw
+              values; use a brokered hostForward when the value must remain
+              outside the vm.
+            '';
+          };
+
+          egress = lib.mkOption {
+            type = lib.types.enum [
+              "open"
+              "closed"
+            ];
+            default = core.defaults.egress;
+            description = ''
+              "open": internet and dns reachable, private ranges sealed.
+              "closed": nothing reachable beyond allowedTCPDestinations,
+              dns included. this is the default.
+            '';
+          };
+
+          allowedDomains = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            example = lib.literalExpression ''[ "github.com" "*.github.com" ]'';
+            description = ''
+              domains reachable through the egress proxy; fnmatch patterns,
+              so "*.github.com" does not match the bare "github.com" — list
+              both. implies egress = "closed": the proxy becomes the only
+              road out, enforced on the CONNECT hostname without
+              interception.
+            '';
+          };
+
+          allowedTCPDestinations = lib.mkOption {
+            type = lib.types.listOf destinationType;
+            default = [ ];
+            description = ''
+              IPv4 TCP destinations reachable from the vm, as
+              "<address>:<port>" or { address; port; }. each entry is an
+              explicit exception to the default closed egress policy.
+            '';
+          };
+
+          expose = lib.mkOption {
+            type = lib.types.listOf exposeType;
+            default = [ ];
+            example = lib.literalExpression ''[ "33627" ]'';
+            description = ''
+              guest loopback ports exposed on host endpoints over vsock.
+              listenAddress narrows tcp clients only: vsock connect needs no
+              privilege, so every host account can also reach the guest
+              port directly through the vm's cid.
+            '';
+          };
+
+          hostForwards = lib.mkOption {
+            type = lib.types.listOf (
+              lib.types.submodule {
+                options = {
+                  vsockPort = lib.mkOption { type = lib.types.port; };
+                  targetPort = lib.mkOption { type = lib.types.port; };
+                  broker = lib.mkOption {
+                    type = lib.types.nullOr (
+                      lib.types.submodule {
+                        options = {
+                          header = lib.mkOption {
+                            type = lib.types.str;
+                            default = "Authorization";
+                          };
+                          secretFile = lib.mkOption {
+                            type = lib.types.path;
+                            description = "file with the raw header value; never enters the vm.";
+                          };
+                        };
+                      }
+                    );
+                    default = null;
+                    description = ''
+                      credential broker for this forward: the guest speaks
+                      plain http, the broker injects the header on the host
+                      side of the vsock hop.
+                    '';
+                  };
+                };
+              }
+            );
+            default = [ ];
+            description = "guest loopback ports forwarded to host ports over vsock.";
+          };
+
+          hostPorts = lib.mkOption {
+            type = lib.types.listOf lib.types.port;
+            default = [ ];
+            description = "host TCP ports reachable from the vm over the bridge.";
+          };
+
+          dns = lib.mkOption {
+            type = lib.types.str;
+            default = builtins.head hostConfig.networking.nameservers;
+            defaultText = "the host's first resolver";
+          };
+        };
+      }
     );
   };
 
