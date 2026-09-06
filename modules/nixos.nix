@@ -128,7 +128,7 @@ in
           };
           secrets = lib.mkOption {
             type = lib.types.attrsOf lib.types.path;
-            default = { };
+            default = core.defaults.secrets;
             description = ''
               host files passed through fw_cfg and materialized in the
               vm's volatile /run/agent-secrets. guest root can read these raw
@@ -152,7 +152,7 @@ in
 
           allowedDomains = lib.mkOption {
             type = lib.types.listOf lib.types.str;
-            default = [ ];
+            default = core.defaults.allowedDomains;
             example = lib.literalExpression ''[ "github.com" "*.github.com" ]'';
             description = ''
               domains reachable through the egress proxy; fnmatch patterns,
@@ -165,7 +165,7 @@ in
 
           allowedTCPDestinations = lib.mkOption {
             type = lib.types.listOf destinationType;
-            default = [ ];
+            default = core.defaults.allowedTCPDestinations;
             description = ''
               IPv4 TCP destinations reachable from the vm, as
               "<address>:<port>" or { address; port; }. each entry is an
@@ -175,7 +175,7 @@ in
 
           expose = lib.mkOption {
             type = lib.types.listOf exposeType;
-            default = [ ];
+            default = core.defaults.expose;
             example = lib.literalExpression ''[ "33627" ]'';
             description = ''
               guest loopback ports exposed on host endpoints over vsock.
@@ -216,13 +216,13 @@ in
                 };
               }
             );
-            default = [ ];
+            default = core.defaults.hostForwards;
             description = "guest loopback ports forwarded to host ports over vsock.";
           };
 
           hostPorts = lib.mkOption {
             type = lib.types.listOf lib.types.port;
-            default = [ ];
+            default = core.defaults.hostPorts;
             description = "host TCP ports reachable from the vm over the bridge.";
           };
 

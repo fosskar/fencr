@@ -31,11 +31,8 @@ let
       vcpu = 1;
       mem = 768;
       dns = "9.9.9.9";
-      egress = "closed";
-      allowedDomains = [ ];
       authorizedKeys = [ snakeOilEd25519PublicKey ];
       secrets.raw = "${rawSecret}";
-      allowedTCPDestinations = [ ];
       expose = [
         {
           listenAddress = "127.0.0.1";
@@ -43,8 +40,6 @@ let
           guestPort = 9119;
         }
       ];
-      hostForwards = [ ];
-      hostPorts = [ ];
       guestModules = [ "${ingressModule}" ];
     };
     inputs = {

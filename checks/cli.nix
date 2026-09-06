@@ -4,12 +4,10 @@ let
   core = import ../modules/core.nix { inherit lib; };
   instance = core.resolveInstance {
     name = "sbx";
-    sshKeys = [ ];
     options = {
       id = 0;
       dns = "9.9.9.9";
       allowedDomains = [ "github.com" ];
-      allowedTCPDestinations = [ ];
       expose = [ "33627" ];
       hostForwards = [
         {
@@ -21,8 +19,6 @@ let
           };
         }
       ];
-      hostPorts = [ ];
-      secrets = { };
     };
   };
   units = core.hostUnits pkgs instance {

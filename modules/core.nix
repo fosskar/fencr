@@ -13,6 +13,12 @@ rec {
     cpuQuota = "400%";
     egress = "closed";
     prefixLength = 24;
+    allowedDomains = [ ];
+    allowedTCPDestinations = [ ];
+    expose = [ ];
+    hostForwards = [ ];
+    hostPorts = [ ];
+    secrets = { };
   };
 
   tapOf = name: "tap-${name}";
@@ -476,7 +482,7 @@ rec {
   resolveInstance =
     {
       name,
-      sshKeys,
+      sshKeys ? [ ],
       ...
     }@args:
     let

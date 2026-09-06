@@ -70,7 +70,7 @@ in
     };
     secrets = {
       type = types.attrsOf types.string;
-      default = { };
+      default = core.defaults.secrets;
       description = "host files passed through fw_cfg and materialized in volatile guest /run/agent-secrets; guest root can read them.";
     };
     egress = {
@@ -83,27 +83,27 @@ in
     };
     allowedDomains = {
       type = types.listOf types.string;
-      default = [ ];
+      default = core.defaults.allowedDomains;
       description = "domains reachable through the egress proxy (fnmatch patterns); requires egress = closed.";
     };
     allowedTCPDestinations = {
       type = types.listOf destinationType;
-      default = [ ];
+      default = core.defaults.allowedTCPDestinations;
       description = "private IPv4 TCP destinations reachable from the vm, as address:port strings or attrsets.";
     };
     expose = {
       type = types.listOf exposeType;
-      default = [ ];
+      default = core.defaults.expose;
       description = "guest loopback ports exposed on host endpoints over vsock; every host account can also reach the guest port directly through the vm's cid.";
     };
     hostForwards = {
       type = types.listOf hostForwardType;
-      default = [ ];
+      default = core.defaults.hostForwards;
       description = "guest loopback ports forwarded to host ports over vsock.";
     };
     hostPorts = {
       type = types.listOf types.int;
-      default = [ ];
+      default = core.defaults.hostPorts;
       description = "host TCP ports reachable from the vm over the bridge.";
     };
     guestModules = {

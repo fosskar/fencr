@@ -15,7 +15,6 @@ let
       vcpu = 2;
       mem = 1024;
       dns = "9.9.9.9";
-      egress = "closed";
       allowedDomains = [
         "github.com"
         "*.github.com"
@@ -56,39 +55,25 @@ let
       };
     };
   };
-  resolved = core.resolveInstance {
-    name = "sbx";
-    options = {
-      id = 0;
-      vcpu = 2;
-      mem = 1024;
-      dns = "9.9.9.9";
-      egress = "closed";
-      allowedDomains = [ "github.com" ];
-      allowedTCPDestinations = [ "192.168.1.50:8123" ];
-      expose = [ "33627" ];
-      hostForwards = [ ];
-      hostPorts = [ 443 ];
-      secrets = { };
+  resolve =
+    name: options:
+    core.resolveInstance {
+      inherit name;
+      options = {
+        dns = "9.9.9.9";
+      }
+      // options;
     };
-    sshKeys = [ ];
+  resolved = resolve "sbx" {
+    id = 0;
+    allowedDomains = [ "github.com" ];
+    allowedTCPDestinations = [ "192.168.1.50:8123" ];
+    expose = [ "33627" ];
+    hostPorts = [ 443 ];
   };
-  longName = core.resolveInstance {
-    name = "coding-agent-1";
-    options = {
-      id = 1;
-      vcpu = 1;
-      mem = 512;
-      dns = "9.9.9.9";
-      egress = "open";
-      allowedDomains = [ ];
-      allowedTCPDestinations = [ ];
-      expose = [ ];
-      hostForwards = [ ];
-      hostPorts = [ ];
-      secrets = { };
-    };
-    sshKeys = [ ];
+  longName = resolve "coding-agent-1" {
+    id = 1;
+    egress = "open";
   };
   expectedUnits = [
     "sbx"
