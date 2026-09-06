@@ -726,10 +726,7 @@ rec {
       );
     in
     {
-      imports = [
-        "${modulesPath}/profiles/minimal.nix"
-        "${modulesPath}/profiles/perlless.nix"
-      ];
+      imports = [ "${modulesPath}/profiles/minimal.nix" ];
 
       microvm = {
         hypervisor = "qemu";
@@ -775,6 +772,10 @@ rec {
       };
 
       system.switch.enable = false;
+      # perl-free activation, as the perlless profile sets it; the profile's
+      # ban on perl in the closure is not taken, payloads may need it
+      system.etc.overlay.enable = true;
+      services.userborn.enable = true;
 
       # the guest ends of the forwards; the host ends live beside them in
       # exposeUnits and hostForwardUnits
