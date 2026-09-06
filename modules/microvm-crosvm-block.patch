@@ -1,5 +1,14 @@
 --- a/lib/runners/crosvm.nix
 +++ b/lib/runners/crosvm.nix
+@@ -23,7 +23,7 @@
+   '';
+ 
+   kernelPath = {
+-    x86_64-linux = "${vmlinux}/vmlinux";
++    x86_64-linux = "${kernel}/${linuxTarget}";
+     aarch64-linux = "${kernel.out}/${linuxTarget}";
+   }.${system};
+ 
 @@ -80,7 +80,7 @@
        )
        ++
