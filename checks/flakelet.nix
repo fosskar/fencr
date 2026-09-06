@@ -75,6 +75,48 @@ let
     id = 1;
     egress = "open";
   };
+  # a forward's port names its units on both frontends, so a repeated port
+  # would silently keep only the first entry
+  sameListenPort = resolve "sbx" {
+    id = 0;
+    expose = [
+      "127.0.0.1:22100:9119"
+      "127.0.0.2:22100:9120"
+    ];
+  };
+  sameGuestPort = resolve "sbx" {
+    id = 0;
+    expose = [
+      "127.0.0.1:22100:9119"
+      "127.0.0.1:22101:9119"
+    ];
+  };
+  sameTargetPort = resolve "sbx" {
+    id = 0;
+    hostForwards = [
+      {
+        vsockPort = 18764;
+        targetPort = 8764;
+        broker = null;
+      }
+      {
+        vsockPort = 18765;
+        targetPort = 8764;
+        broker = null;
+      }
+    ];
+  };
+  onProxyPort = resolve "sbx" {
+    id = 0;
+    allowedDomains = [ "github.com" ];
+    hostForwards = [
+      {
+        vsockPort = 13128;
+        targetPort = 8764;
+        broker = null;
+      }
+    ];
+  };
   expectedUnits = [
     "sbx"
     "sbx-setup"
@@ -113,6 +155,16 @@ assert lib.assertMsg (
 ) "core check: expose was not resolved";
 assert lib.assertMsg (resolved.proxy.port == 13128) "core check: proxy was not resolved";
 assert lib.assertMsg (longName.errors != [ ]) "core check: long interface name accepted";
+assert lib.assertMsg (
+  sameListenPort.errors == [ "sbx: expose port 22100 declared twice" ]
+) "core check: repeated expose port accepted";
+assert lib.assertMsg (sameGuestPort.errors == [ ]) "core check: shared guest port rejected";
+assert lib.assertMsg (
+  sameTargetPort.errors == [ "sbx: hostForward target port 8764 declared twice" ]
+) "core check: repeated hostForward target port accepted";
+assert lib.assertMsg (
+  onProxyPort.errors == [ "sbx: hostForward vsock port 13128 declared twice" ]
+) "core check: hostForward on the egress proxy port accepted";
 assert lib.assertMsg (lib.all (
   net: lib.hasInfix net (core.firewallOf longName).standalone
 ) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";

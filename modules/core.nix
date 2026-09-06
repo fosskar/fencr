@@ -479,6 +479,9 @@ rec {
       ];
     };
 
+  duplicates =
+    values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
+
   resolveInstance =
     {
       name,
@@ -524,6 +527,15 @@ rec {
         ) "${name}: allowedDomains requires egress = \"closed\""
         ++ map (error: "${name}: invalid allowedDomains ${error}") (
           domainPatternErrors options.allowedDomains
+        )
+        ++ map (port: "${name}: expose port ${toString port} declared twice") (
+          duplicates (map (forward: forward.listenPort) guest.expose)
+        )
+        ++ map (port: "${name}: hostForward vsock port ${toString port} declared twice") (
+          duplicates (map (forward: forward.vsockPort) guest.hostForwards)
+        )
+        ++ map (port: "${name}: hostForward target port ${toString port} declared twice") (
+          duplicates (map (forward: forward.targetPort) guest.hostForwards)
         );
     in
     guest
@@ -540,8 +552,10 @@ rec {
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       brokeredForwards = lib.filter (forward: forward.broker != null) options.hostForwards;
+      # the ports also name the socket units on both frontends; the listen
+      # address is no separator, a second bind on the port fails either way
       forwardEndpoints =
-        map (forward: "tcp:${forward.listenAddress}:${toString forward.listenPort}") guest.expose
+        map (forward: "tcp:${toString forward.listenPort}") guest.expose
         ++ map (forward: "vsock:${toString forward.vsockPort}") guest.hostForwards;
     };
 
@@ -549,12 +563,11 @@ rec {
     instances:
     let
       values = lib.attrValues instances;
-      duplicate = values: lib.length values != lib.length (lib.unique values);
     in
-    lib.optional (duplicate (map (instance: instance.id) values)) "instance ids must be unique"
-    ++ lib.optional (duplicate (
-      lib.concatMap (instance: instance.forwardEndpoints) values
-    )) "host listen endpoints must be unique across instances";
+    lib.optional (duplicates (map (instance: instance.id) values) != [ ]) "instance ids must be unique"
+    ++ lib.optional (
+      duplicates (lib.concatMap (instance: instance.forwardEndpoints) values) != [ ]
+    ) "host listen endpoints must be unique across instances";
 
   hostUnits =
     pkgs: instance: frontend:
