@@ -63,6 +63,8 @@
         flakelet-boot = import ./checks/flakelet-boot.nix self pkgs;
 
         ingress = import ./checks/ingress.nix self pkgs;
+
+        crosvm-credentials = import ./checks/crosvm-credentials.nix self pkgs;
       });
 
       devShells = forAllSystems (pkgs: {
