@@ -12,10 +12,10 @@ ssh <vm-name>
 ```
 
 The module writes a `Host <vm-name>` alias into the system ssh
-configuration whose `ProxyCommand` crosses vsock. vsock connect is
-unprivileged, so this works from any host account — authentication is
-your own ssh key against the vm's authorized list, not your host
-privileges.
+configuration whose `ProxyCommand` opens the vm's ssh socket,
+`/run/fencr-ssh-<vm-name>`, which every host account may open; a relay
+carries the bytes into the guest's vsock port 22. Authentication is your
+own ssh key against the vm's authorized list, not your host privileges.
 
 ## from another machine (vm runs on a server)
 
@@ -50,7 +50,7 @@ Host myvm
 (or `ProxyCommand fencr -H server proxy <vm-name>` with a local fencr.)
 
 The `fencr` command ships with the module on every fencr host; `proxy`
-resolves the vm name to its vsock address server-side. Your ssh
+resolves the vm name to its ssh socket server-side. Your ssh
 authenticates directly against the vm; the server only shuttles bytes
 and never sees your agent.
 
@@ -68,7 +68,7 @@ configuration and running `nixos-rebuild`.
 ## host root, stated plainly
 
 For host root, ssh is a convenience, not the boundary: it owns the vm's
-state directory, staged secrets, console and the hypervisor process.
+state image, console and the hypervisor process.
 `adminKeys` gives that fact an auditable ssh-shaped form. For every
 other host account, the key check is the real gate.
 

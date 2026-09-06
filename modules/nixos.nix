@@ -176,17 +176,6 @@ in
             type = lib.types.str;
             default = core.defaults.cpuQuota;
           };
-          secrets = lib.mkOption {
-            type = lib.types.attrsOf lib.types.path;
-            default = core.defaults.secrets;
-            description = ''
-              host files passed through fw_cfg and materialized in the
-              vm's volatile /run/agent-secrets. guest root can read these raw
-              values; grant a credential instead when the value must remain
-              outside the vm.
-            '';
-          };
-
           egress = lib.mkOption {
             type = lib.types.enum [
               "open"
@@ -230,9 +219,9 @@ in
             example = lib.literalExpression ''[ "33627" ]'';
             description = ''
               guest loopback ports exposed on host endpoints over vsock.
-              listenAddress narrows tcp clients only: vsock connect needs no
-              privilege, so every host account can also reach the guest
-              port directly through the vm's cid.
+              listenAddress narrows tcp clients only: members of group kvm
+              can also reach the guest port directly through the vm's
+              vsock socket.
             '';
           };
 
@@ -281,8 +270,6 @@ in
   config = {
     fencr.guestSystems = guestSystems;
 
-    boot.kernelModules = lib.mkIf (instances != { }) [ "vhost_vsock" ];
-
     # the seal is written in nftables; the iptables firewall cannot host it
     networking.nftables.enable = lib.mkIf (instances != { }) true;
 
@@ -298,10 +285,6 @@ in
         )
       ++ [
         {
-          assertion = instances == { } || (config.boot.kernel.sysctl."user.max_user_namespaces" or 1) != 0;
-          message = "fencr.vms: crosvm jails every device in a user namespace; unprivileged user namespaces must stay enabled on this host.";
-        }
-        {
           assertion = instances == { } || config.systemd.network.enable;
           message = "fencr.vms: the bridge and tap are configured through systemd-networkd; set networking.useNetworkd = true (or systemd.network.enable = true) on this host.";
         }
@@ -315,16 +298,17 @@ in
       })
     ];
 
-    # `ssh <vm-name>` reaches the guest's vsock sshd; vsock connect is
-    # unprivileged, so any host user holding an authorized key gets in
-    # with their own identity. no bridge ip, no network listener anywhere
+    # `ssh <vm-name>` reaches the guest's vsock sshd through the vm's ssh
+    # socket, which every host account may open, so any host user holding
+    # an authorized key gets in with their own identity. no bridge ip, no
+    # network listener anywhere
     programs.ssh.extraConfig = lib.concatStrings (
       lib.mapAttrsToList (
         name: cfg:
         lib.optionalString (cfg.guest.sshKeys != [ ]) ''
           Host ${name}
             User root
-            ProxyCommand ${pkgs.socat}/bin/socat - VSOCK-CONNECT:${toString cfg.cid}:22
+            ProxyCommand ${pkgs.socat}/bin/socat - UNIX-CONNECT:${core.sshSocketOf name}
             StrictHostKeyChecking accept-new
         ''
       ) resolvedInstances
@@ -339,11 +323,14 @@ in
       }
     );
 
-    # the parent keeps host users outside group kvm away from every image
+    # the parent keeps host users outside group kvm away from every image;
+    # the runtime directory holds the vm's vsock sockets and admits the
+    # relays, group kvm, and nobody else
     systemd.tmpfiles.rules = [
       "d /var/lib/fencr-vms 0710 root kvm -"
     ]
-    ++ map (name: "d ${core.stateDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances);
+    ++ map (name: "d ${core.stateDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances)
+    ++ map (name: "d ${core.runDirOf name} 0750 ${core.userOf name} kvm -") (lib.attrNames instances);
 
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
@@ -377,7 +364,7 @@ in
       )
     );
 
-    # crosvm attaches the tap by name with a virtio header and one queue, so
+    # firecracker attaches the tap by name with a virtio header and one queue, so
     # it is persistent and its flags match; group kvm lets the vm unit open it
     systemd.network = forEachInstance (
       _name: cfg: {

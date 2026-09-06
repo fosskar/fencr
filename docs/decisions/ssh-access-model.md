@@ -8,9 +8,10 @@ Two tiers, both plain ssh public keys:
 
 The guest authorizes the union. The vsock sshd (socket-activated, vsock
 port 22) exists only when the union is non-empty — no keys, no door. The
-host writes an `ssh <vm-name>` alias whose `ProxyCommand` crosses vsock;
-vsock connect is unprivileged, so any host user holding an authorized key
-logs in with their own identity.
+host writes an `ssh <vm-name>` alias whose `ProxyCommand` opens the vm's
+ssh socket, `/run/fencr-ssh-<vm-name>`, which every host account may open;
+a relay carries the connection into the guest's vsock port 22, so any host
+user holding an authorized key logs in with their own identity.
 
 ## why keys are the user model
 
@@ -30,8 +31,7 @@ entire filesystem, network and lifecycle already belong to its owner.
 ## stated plainly
 
 Host root always reaches every vm regardless of any of this: it owns the
-hypervisor process, the state image, the staged secrets and the
-serial console. adminKeys does not grant host root anything new; it only
+hypervisor process, the state image and the serial console. adminKeys does not grant host root anything new; it only
 gives that fact an ssh-shaped, auditable form.
 
 ## earlier shape, removed

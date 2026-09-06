@@ -31,7 +31,6 @@ Each further line is one permission or one limit:
   allowedDomains = [ "github.com" "*.github.com" ];  # out: only these sites
   allowedTCPDestinations = [ "192.168.1.50:8123" ];  # out: one address
   egress = "open";                                    # out: public internet
-  secrets."agent.env" = "/run/secrets/agent.env";     # file at /run/agent-secrets/
   credentials = [ "anthropic" ];                      # api key the vm uses, never sees
   vcpu = 8; mem = 8192;                               # bigger box
 ```

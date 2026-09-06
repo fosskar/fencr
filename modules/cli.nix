@@ -378,7 +378,7 @@ pkgs.writers.writeRustBin "fencr"
             Some("ssh") => {
                 let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
                 let vm = find(name);
-                let proxy = format!("ProxyCommand={SOCAT} - VSOCK-CONNECT:{}:22", vm.2);
+                let proxy = format!("ProxyCommand={SOCAT} - UNIX-CONNECT:/run/fencr-ssh-{name}");
                 fail(Command::new(SSH)
                     .arg("-o").arg(proxy)
                     .arg("-o").arg("StrictHostKeyChecking=accept-new")
@@ -388,10 +388,10 @@ pkgs.writers.writeRustBin "fencr"
             }
             Some("proxy") => {
                 let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-                let vm = find(name);
+                find(name);
                 fail(Command::new(SOCAT)
                     .arg("-")
-                    .arg(format!("VSOCK-CONNECT:{}:22", vm.2))
+                    .arg(format!("UNIX-CONNECT:/run/fencr-ssh-{name}"))
                     .exec());
             }
             Some("status") => {

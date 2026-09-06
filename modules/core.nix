@@ -19,7 +19,6 @@ rec {
     expose = [ ];
     hostForwards = [ ];
     hostPorts = [ ];
-    secrets = { };
   };
 
   tapOf = name: "tap-${name}";
@@ -34,6 +33,18 @@ rec {
   stateImageOf = name: "${stateDirOf name}/state.img";
   userOf = name: "fencr-${name}";
   vmUnitOf = name: "fencr-${name}.service";
+  # firecracker's vsock on the host: one unix socket for connections into
+  # the guest, and one per port, "<vsock>_<port>", for connections out of
+  # it. the directory admits the vm's user and group kvm, which is what the
+  # relays run with; nobody else on the host reaches a vm this way
+  runDirOf = name: "/run/fencr-${name}";
+  vsockOf = name: "${runDirOf name}/vsock";
+  # the ssh door for every host account, a socket the relays open into the
+  # guest's vsock port 22
+  sshSocketOf = name: "/run/fencr-ssh-${name}";
+  # the power button: a guest listener on this vsock port powers off on any
+  # connection, and only the vm's user and group kvm can open the vsock
+  powerPort = 4;
 
   # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
   # runtime resolution and stay unsupported until name-based egress exists.
@@ -117,24 +128,26 @@ rec {
   # bug in it shares nothing with the hypervisor process
   forwardHardening = hardened // {
     DynamicUser = true;
+    SupplementaryGroups = [ "kvm" ];
     StandardInput = "socket";
     StandardError = "journal";
     RestrictAddressFamilies = [
       "AF_INET"
-      "AF_VSOCK"
+      "AF_UNIX"
     ];
   };
 
   # the hypervisor unit: the microvm.nix runner under the vm's own system
-  # user in group kvm, so two vms' crosvm processes share no host identity
-  # and the state image has a stable owner. AF_INET is for the tap ioctls
-  # only. crosvm's jails remount /proc, so those two knobs of the shared
-  # set stay off. the runner creates the state image on first start; a
-  # larger stateSize grows it here and the guest grows the filesystem
+  # user in group kvm, so two vms' firecracker processes share no host
+  # identity and the state image has a stable owner. AF_INET is for the tap
+  # ioctls only. the umask lets group kvm, the relays, open the vsock
+  # socket firecracker creates. the runner creates the state image on
+  # first start; a larger stateSize grows it here and the guest grows the
+  # filesystem
   vmService =
     pkgs: instance: runner:
     let
-      runDir = "/run/fencr-${instance.name}";
+      runDir = runDirOf instance.name;
       image = stateImageOf instance.name;
     in
     {
@@ -148,30 +161,32 @@ rec {
           "ProtectProc"
         ]
         // {
-          ExecStartPre = pkgs.writeShellScript "fencr-${instance.name}-grow" ''
+          # firecracker leaves its vsock socket behind and refuses to bind
+          # over it
+          ExecStartPre = pkgs.writeShellScript "fencr-${instance.name}-prepare" ''
             set -eu
+            ${pkgs.coreutils}/bin/rm -f ${vsockOf instance.name}
             if [ -e ${image} ] && [ "$(${pkgs.coreutils}/bin/stat -c %s ${image})" -lt $((${toString instance.stateSize} * 1048576)) ]; then
               ${pkgs.coreutils}/bin/truncate -s ${toString instance.stateSize}M ${image}
             fi
           '';
           ExecStart = "${runner}/bin/microvm-run";
-          # microvm-shutdown only presses the power button; waiting for
-          # crosvm to exit is what lets the guest unmount its state
+          # press the power button, then wait for firecracker to exit so the
+          # guest gets to unmount its state; a guest that never answers is
+          # killed at the stop timeout
           ExecStop = pkgs.writeShellScript "fencr-${instance.name}-stop" ''
-            ${runner}/bin/microvm-shutdown
+            ${vsockForwardBin pkgs}/bin/fencr-vsock-forward connect ${vsockOf instance.name} ${toString powerPort} </dev/null || true
             while [ -d /proc/$MAINPID ]; do sleep 0.5; done
           '';
+          TimeoutStopSec = 60;
           User = userOf instance.name;
-          RuntimeDirectory = "fencr-${instance.name}";
+          UMask = "0007";
           WorkingDirectory = runDir;
           Restart = "on-failure";
           RestartSec = 5;
           MemoryMax = instance.memoryMax;
           CPUQuota = instance.cpuQuota;
           CPUWeight = 20;
-          LoadCredential = lib.mapAttrsToList (
-            secretName: source: "${secretName}:${source}"
-          ) instance.secrets;
           ReadWritePaths = [
             runDir
             (stateDirOf instance.name)
@@ -180,46 +195,14 @@ rec {
           DeviceAllow = [
             "/dev/kvm rw"
             "/dev/net/tun rw"
-            "/dev/vhost-vsock rw"
           ];
           RestrictAddressFamilies = [
             "AF_UNIX"
             "AF_INET"
           ];
           IPAddressDeny = "any";
-          RestrictNamespaces = "user mnt pid net";
         };
     };
-
-  # crosvm's fw_cfg device carries the systemd credentials but has no acpi
-  # node; this is the node qemu's own dsdt declares for it, at the same port
-  fwCfgTable =
-    pkgs:
-    pkgs.runCommand "fencr-fw-cfg-ssdt" { nativeBuildInputs = [ pkgs.acpica-tools ]; } ''
-      cat > fwcfg.dsl <<'EOF'
-      DefinitionBlock ("", "SSDT", 2, "FENCR", "FWCFG", 1)
-      {
-          Scope (\_SB)
-          {
-              Device (FWCF)
-              {
-                  Name (_HID, "QEMU0002")
-                  Name (_STA, 0x0B)
-                  Name (_CRS, ResourceTemplate ()
-                  {
-                      IO (Decode16, 0x0510, 0x0510, 0x01, 0x0C)
-                  })
-              }
-          }
-      }
-      EOF
-      iasl -p out fwcfg.dsl
-      cp out.aml $out
-    '';
-
-  credentialFilesOf =
-    vmUnit: secretNames:
-    lib.genAttrs secretNames (secretName: "/run/credentials/${vmUnit}/${secretName}");
 
   proxyHardening = hardened // {
     Restart = "always";
@@ -270,9 +253,9 @@ rec {
   # host to guest ("expose"), both ends in one place: the host socket unit and
   # the per-connection relay that splice an accepted tcp connection to the
   # guest's vsock port, and the guest listener that hands it to loopback.
-  # the guest end cannot tell host clients apart: vsock connect needs no
-  # privilege, so every host account reaches the guest port directly, and
-  # listenAddress only narrows the tcp side
+  # the guest end cannot tell host clients apart: group kvm reaches the
+  # guest port directly through the vm's vsock socket, and listenAddress
+  # only narrows the tcp side
   exposeUnits = {
     socket = instance: forward: {
       description = "forward to ${instance.name} guest port ${toString forward.guestPort}";
@@ -290,7 +273,7 @@ rec {
       partOf = [ vmUnit ];
       unitConfig.CollectMode = "inactive-or-failed";
       serviceConfig = forwardHardening // {
-        ExecStart = "${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString instance.cid}:${toString forward.guestPort}";
+        ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward connect ${vsockOf instance.name} ${toString forward.guestPort}";
       };
     };
     guest = pkgs: forward: {
@@ -306,15 +289,19 @@ rec {
   };
 
   # guest to host, the mirror image: a guest loopback listener relayed to the
-  # host's cid, the host's vsock socket unit, and a cid-checked relay that
-  # splices the connection to a host loopback port or, for a granted
-  # credential, to its proxy's unix socket
+  # host's cid, the host's socket unit on the path firecracker opens for that
+  # port, and a relay that splices the connection to a host loopback port or,
+  # for a granted credential, to its proxy's unix socket. the socket belongs
+  # to the vm's user with no group or other access, so only that vm's
+  # firecracker can open it: the path is the identity
   hostForwardUnits = {
     socket = instance: forward: {
       description = "host forward for ${instance.name} vsock port ${toString forward.vsockPort}";
       wantedBy = [ "sockets.target" ];
       socketConfig = {
-        ListenStream = "vsock::${toString forward.vsockPort}";
+        ListenStream = "${vsockOf instance.name}_${toString forward.vsockPort}";
+        SocketUser = userOf instance.name;
+        SocketMode = "0600";
         Accept = true;
         MaxConnections = 64;
         TriggerLimitIntervalSec = 0;
@@ -335,19 +322,9 @@ rec {
         requisite = [ vmUnit ];
         partOf = [ vmUnit ];
         unitConfig.CollectMode = "inactive-or-failed";
-        serviceConfig =
-          forwardHardening
-          // {
-            ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward ${toString instance.cid} ${target}";
-          }
-          // lib.optionalAttrs (forward.credential != null) {
-            SupplementaryGroups = [ "kvm" ];
-            RestrictAddressFamilies = [
-              "AF_INET"
-              "AF_VSOCK"
-              "AF_UNIX"
-            ];
-          };
+        serviceConfig = forwardHardening // {
+          ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward serve ${target}";
+        };
       };
     guest = pkgs: forward: {
       name = "fencr-vsock-host-proxy-${toString forward.targetPort}";
@@ -443,7 +420,7 @@ rec {
   # a credential proxy: the guest talks plain http through the vsock
   # forward; this proxy holds the secret and injects the header on the host
   # side, so the value never exists inside the vm. it listens on a unix
-  # socket in its own runtime directory, group kvm, so only the cid-checked
+  # socket in its own runtime directory, group kvm, so only the vm's own
   # relay reaches it: no host loopback port, nothing for another host
   # process to borrow the credential through. the upstream may be https;
   # caddy originates that tls on the host, the guest never sees a cert
@@ -517,9 +494,6 @@ rec {
     }@args:
     let
       options = defaults // args.options;
-      invalidSecretNames = lib.filter (secretName: builtins.match "[A-Za-z0-9_.-]+" secretName == null) (
-        lib.attrNames options.secrets
-      );
       guest = {
         inherit name sshKeys;
         inherit (options)
@@ -541,14 +515,9 @@ rec {
         credentials = lib.genAttrs options.credentials (credential: {
           port = (credentialPortsOf credentials).${credential};
         });
-        secretNames = lib.attrNames options.secrets;
       };
       errors =
         lib.optional (options.id < 0 || options.id > 8) "${name}: id must be between 0 and 8"
-        ++ map (
-          secretName:
-          "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
-        ) invalidSecretNames
         ++ lib.optional (
           lib.stringLength guest.tap > 15
         ) "vm name \"${name}\" is too long: \"${guest.tap}\" exceeds IFNAMSIZ"
@@ -581,7 +550,6 @@ rec {
         egress
         allowedDomains
         hostPorts
-        secrets
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       proxy = proxyOf options;
@@ -636,10 +604,36 @@ rec {
         name = hostForwardName forward;
         value = hostForwardUnits.socket instance forward;
       }) instance.hostForwards;
+      # the ssh door: a socket every host account may open, relayed into
+      # the guest's vsock port 22; the key check happens in the guest
+      sshName = "${instance.name}-ssh";
+      sshUnits = lib.optionalAttrs (instance.sshKeys != [ ]) {
+        socket.${sshName} = {
+          description = "ssh into ${instance.name}";
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            ListenStream = sshSocketOf instance.name;
+            SocketMode = "0666";
+            Accept = true;
+            MaxConnections = 16;
+          };
+        };
+        service."${sshName}@" = {
+          description = "ssh into ${instance.name}";
+          after = [ vmUnit ];
+          requisite = [ vmUnit ];
+          partOf = [ vmUnit ];
+          unitConfig.CollectMode = "inactive-or-failed";
+          serviceConfig = forwardHardening // {
+            ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward connect ${vsockOf instance.name} 22";
+          };
+        };
+      };
     in
     {
       services =
         lib.listToAttrs (forwardServices ++ hostForwardServices ++ credentialServices)
+        // sshUnits.service or { }
         // lib.optionalAttrs instance.proxy {
           ${proxyName} = {
             description = "domain-allowlist egress proxy for ${instance.name}";
@@ -648,12 +642,9 @@ rec {
             serviceConfig = egressProxyServiceConfig pkgs instance;
           };
         };
-      sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets);
-      # what the guest system is built against: the resolved contract plus
-      # where the vm unit stages each secret for fw_cfg
-      guest = instance.guest // {
-        credentialFiles = credentialFilesOf vmUnit instance.guest.secretNames;
-      };
+      sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets) // sshUnits.socket or { };
+      # what the guest system is built against
+      inherit (instance) guest;
       unitNames = {
         vm = vmUnit;
         sockets =
@@ -664,7 +655,11 @@ rec {
           ++ map (forward: {
             unit = "${hostForwardName forward}.socket";
             label = "guest -> host: vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
-          }) instance.hostForwards;
+          }) instance.hostForwards
+          ++ lib.optional (instance.sshKeys != [ ]) {
+            unit = "${sshName}.socket";
+            label = "host -> guest: ssh";
+          };
         proxy = lib.optional instance.proxy "${proxyName}.service";
         credentials = map (forward: "${credentialName forward}.service") instance.credentialForwards;
       };
@@ -770,44 +765,59 @@ rec {
   # the environment itself: hardware shape, network posture, and a /var/lib
   # that survives reboots so whatever is installed inside keeps its state.
   guestBase =
-    microvmSrc:
+    _microvmSrc:
     {
       agentSandbox,
-      config,
       lib,
       modulesPath,
       pkgs,
       ...
     }:
-    let
-      # microvm.nix's crosvm runner uses the deprecated -r, whose root=/dev/vda
-      # breaks the systemd initrd, and boots the 380 MiB unstripped vmlinux
-      patchedMicrovm = pkgs.applyPatches {
-        name = "microvm.nix";
-        src = microvmSrc;
-        patches = [ ./microvm-crosvm-block.patch ];
-      };
-    in
     {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
 
       networking.hostName = lib.mkDefault agentSandbox.name;
 
       microvm = {
-        hypervisor = "crosvm";
-        runner.crosvm = lib.mkForce (
-          import "${patchedMicrovm}/lib/runner.nix" {
-            inherit pkgs;
-            microvmConfig = config.microvm // {
-              inherit (config.networking) hostName;
-              hypervisor = "crosvm";
-            };
-            inherit (config.system.build) toplevel;
+        hypervisor = "firecracker";
+        inherit (agentSandbox) vcpu mem;
+        vsock.cid = agentSandbox.cid;
+        # the runner's own vsock path lives in the working directory and is
+        # wiped on every start; the forwards' sockets must not be
+        firecracker.extraConfig.vsock.uds_path = vsockOf agentSandbox.name;
+        # the guest must not see the host's virtualization extensions: vmx
+        # is cpuid leaf 1 ecx bit 5, svm leaf 0x80000001 ecx bit 2
+        firecracker.cpu = lib.mkIf pkgs.stdenv.hostPlatform.isx86_64 (
+          let
+            clearBit = bit: "0b" + lib.concatStrings (lib.genList (i: if 31 - i == bit then "0" else "x") 32);
+          in
+          {
+            cpuid_modifiers = [
+              {
+                leaf = "0x1";
+                subleaf = "0x0";
+                flags = 0;
+                modifiers = [
+                  {
+                    register = "ecx";
+                    bitmap = clearBit 5;
+                  }
+                ];
+              }
+              {
+                leaf = "0x80000001";
+                subleaf = "0x0";
+                flags = 0;
+                modifiers = [
+                  {
+                    register = "ecx";
+                    bitmap = clearBit 2;
+                  }
+                ];
+              }
+            ];
           }
         );
-        inherit (agentSandbox) vcpu mem;
-        balloon = true;
-        vsock.cid = agentSandbox.cid;
 
         interfaces = [
           {
@@ -829,29 +839,9 @@ rec {
           }
         ];
 
-        # credentials go through fw_cfg, which microvm.nix's runner refuses
-        crosvm.extraArgs = lib.optionals pkgs.stdenv.hostPlatform.isx86_64 (
-          [
-            "--nested"
-            "mode=off"
-            "--acpi-table"
-            "${fwCfgTable pkgs}"
-          ]
-          ++ lib.concatMap (secretName: [
-            "--fw-cfg"
-            "name=opt/io.systemd.credentials/${secretName},path=${agentSandbox.credentialFiles.${secretName}}"
-          ]) agentSandbox.secretNames
-        );
       };
 
       fileSystems."/var/lib".autoResize = true;
-      boot.initrd.kernelModules = lib.optional pkgs.stdenv.hostPlatform.isx86_64 "qemu_fw_cfg";
-      assertions = [
-        {
-          assertion = pkgs.stdenv.hostPlatform.isx86_64 || agentSandbox.secretNames == [ ];
-          message = "fencr: secrets reach a crosvm guest through fw_cfg, which only x86_64 gets";
-        }
-      ];
 
       system.switch.enable = false;
       # perl-free activation, as the perlless profile sets it; the profile's
@@ -863,28 +853,15 @@ rec {
       # the guest ends of the forwards; the host ends live beside them in
       # exposeUnits and hostForwardUnits
       systemd.services = lib.mkMerge [
-        (lib.mkIf (agentSandbox.secretNames != [ ]) {
-          fencr-secrets = {
-            description = "Materialize fencr credentials in volatile guest storage";
-            wantedBy = [ "sysinit.target" ];
-            before = [ "sysinit.target" ];
-            after = [ "local-fs.target" ];
-            requires = [ "local-fs.target" ];
-            unitConfig.DefaultDependencies = false;
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              ImportCredential = agentSandbox.secretNames;
-            };
-            script = ''
-              install -d -m 0700 /run/agent-secrets
-              ${lib.concatMapStringsSep "\n" (
-                secretName:
-                "install -m 0400 \"$CREDENTIALS_DIRECTORY/${secretName}\" /run/agent-secrets/${secretName}"
-              ) agentSandbox.secretNames}
-            '';
+        {
+          # firecracker exits on cpu reset; a power-off only halts the cpu
+          # and leaves the process running
+          fencr-power = {
+            description = "power button on fencr vsock";
+            wantedBy = [ "multi-user.target" ];
+            serviceConfig.ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString powerPort},fork EXEC:'${pkgs.systemd}/bin/systemctl reboot'";
           };
-        })
+        }
         (lib.mkIf (agentSandbox.sshKeys != [ ]) {
           sshd.wantedBy = lib.mkForce [ ];
           "fencr-sshd-vsock@" = {

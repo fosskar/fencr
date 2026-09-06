@@ -121,7 +121,6 @@ assert lib.assertMsg (
     "mem"
     "name"
     "prefixLength"
-    "secretNames"
     "sshKeys"
     "stateSize"
     "tap"
@@ -161,8 +160,16 @@ assert lib.assertMsg (
     "sbx-host-forward-18764"
   ]
   && units.sockets."sbx-forward-33627".socketConfig.ListenStream == "127.0.0.1:33627"
+  && units.sockets."sbx-host-forward-18764".socketConfig.ListenStream == "/run/fencr-sbx/vsock_18764"
+  && units.sockets."sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
+  && units.sockets."sbx-host-forward-18764".socketConfig.SocketMode == "0600"
   && units.sockets."sbx-host-forward-18764".socketConfig.TriggerLimitIntervalSec == 0
 ) "unit check: host sockets drifted";
+assert lib.assertMsg (
+  lib.hasSuffix "connect /run/fencr-sbx/vsock 33627"
+    units.services."sbx-forward-33627@".serviceConfig.ExecStart
+  && lib.hasSuffix "serve 8764" units.services."sbx-host-forward-18764@".serviceConfig.ExecStart
+) "unit check: relays do not use the vm's vsock socket";
 assert lib.assertMsg (
   units.services."sbx-forward-33627@".after == [ "fencr-sbx.service" ]
   && units.services."sbx-forward-33627@".requisite == [ "fencr-sbx.service" ]
