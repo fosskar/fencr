@@ -52,6 +52,21 @@ in
       assertion = guestConfig.microvm.credentialFiles.raw == "/run/credentials/microvm@sbx.service/raw";
       message = "nixos module check: raw secret is not transported as a systemd credential";
     }
+    {
+      assertion =
+        config.systemd.services."microvm@sbx".serviceConfig.ExecStartPost == [ "" ]
+        && config.systemd.services."microvm@sbx".serviceConfig.ExecStopPost == [ "" ];
+      message = "nixos module check: microvm.nix root post hooks are not cleared";
+    }
+    {
+      assertion = config.systemd.services."microvm-virtiofsd@sbx".serviceConfig.ProtectSystem == "strict";
+      message = "nixos module check: virtiofsd is not confined";
+    }
+    {
+      assertion =
+        !config.hardware.ksm.enable && config.environment.etc."qemu/bridge.conf".text == "deny all";
+      message = "nixos module check: microvm.nix host defaults are not overridden";
+    }
   ];
 
   networking.useNetworkd = true;

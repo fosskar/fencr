@@ -114,12 +114,12 @@ rec {
     ];
   };
 
-  # the hypervisor process: resource caps, the secrets it carries into the
-  # vm, and confinement to the three devices it needs. writablePaths is the
-  # frontend's working directory for the runner (qmp and virtiofs sockets)
+  # qemu needs nothing beyond three device nodes and unix sockets to qmp and
+  # virtiofsd, which live in the runner's working directory (writablePaths)
   vmServiceConfig =
     { instance, writablePaths }:
-    {
+    removeAttrs hardened [ "PrivateDevices" ]
+    // {
       MemoryMax = instance.memoryMax;
       CPUQuota = instance.cpuQuota;
       CPUWeight = 20;
@@ -127,28 +127,55 @@ rec {
         secretName: source: "${secretName}:${source}"
       ) instance.secrets;
       ReadWritePaths = writablePaths;
-      CapabilityBoundingSet = "";
       DevicePolicy = "closed";
       DeviceAllow = [
         "/dev/kvm rw"
         "/dev/net/tun rw"
         "/dev/vhost-vsock rw"
       ];
-      LockPersonality = true;
-      NoNewPrivileges = true;
-      PrivateTmp = true;
-      ProtectClock = true;
-      ProtectControlGroups = true;
-      ProtectHome = true;
-      ProtectHostname = true;
-      ProtectKernelLogs = true;
-      ProtectKernelModules = true;
-      ProtectKernelTunables = true;
-      ProtectSystem = "strict";
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      SystemCallArchitectures = "native";
-      UMask = "0077";
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+    };
+
+  # the guest writes this tree through a root virtiofsd that keeps mknod and
+  # setfcap, so it is mounted nosuid,nodev,noexec before export. a unit of
+  # its own: a mount from the virtiofsd unit's ExecStartPre stays in that
+  # unit's mount namespace, "+" prefix or not
+  stateService = pkgs: name: {
+    description = "state tree for fencr sandbox ${name}";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "fencr-${name}-state" ''
+        set -eu
+        ${pkgs.coreutils}/bin/install -d -o root -g root -m 0700 ${stateDirOf name}
+        ${pkgs.util-linux}/bin/mountpoint -q ${stateDirOf name} \
+          || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${stateDirOf name} ${stateDirOf name}
+      '';
+    };
+  };
+
+  # virtiofsd refuses to start with less than its file capability set plus
+  # CAP_SYS_ADMIN and CAP_SETPCAP for its sandbox; PrivateDevices strips
+  # CAP_MKNOD, ProcSubset hides the fs/nr_open it reads, umask and suid
+  # bits are the guest's
+  virtiofsdServiceConfig =
+    instance: workDir:
+    removeAttrs hardened [
+      "PrivateDevices"
+      "ProcSubset"
+      "RestrictSUIDSGID"
+      "UMask"
+    ]
+    // {
+      MemoryMax = instance.memoryMax;
+      CapabilityBoundingSet = "CAP_SYS_ADMIN CAP_SETPCAP CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_SETGID CAP_SETUID CAP_MKNOD CAP_SETFCAP";
+      RestrictNamespaces = "mnt pid net";
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      PrivateNetwork = true;
+      ReadWritePaths = [
+        workDir
+        (stateDirOf instance.name)
+      ];
+      LimitNOFILE = 1048576;
     };
 
   credentialFilesOf =
@@ -732,6 +759,18 @@ rec {
             tag = "state";
             proto = "virtiofs";
           }
+        ];
+
+        # a second -sandbox stacks a stricter seccomp filter on microvm.nix's
+        # "-sandbox on"; the last -cpu wins and hides nested virtualization
+        # (CVE-2021-3653, CVE-2021-3656)
+        qemu.extraArgs = [
+          "-sandbox"
+          "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny"
+        ]
+        ++ lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
+          "-cpu"
+          "host,+x2apic,-sgx,-svm,-vmx"
         ];
       };
 

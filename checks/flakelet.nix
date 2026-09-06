@@ -95,6 +95,7 @@ let
   expectedUnits = [
     "sbx"
     "sbx-virtiofsd"
+    "sbx-state"
     "fwd-33627@"
     "fwd-33628@"
     "hfwd-18764@"
@@ -178,7 +179,20 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   result.services.sbx.serviceConfig.CapabilityBoundingSet == ""
   && result.services.sbx.serviceConfig.DevicePolicy == "closed"
+  && result.services.sbx.serviceConfig.RestrictAddressFamilies == [ "AF_UNIX" ]
 ) "unit check: flakelet vm confinement drifted";
+assert lib.assertMsg (
+  result.services.sbx-virtiofsd.serviceConfig.ProtectSystem == "strict"
+  && result.services.sbx-virtiofsd.requires == [ "sbx-state.service" ]
+) "unit check: flakelet virtiofsd confinement drifted";
+assert lib.assertMsg (
+  let
+    seal = (core.firewallOf resolved).standalone;
+    occurrences = needle: lib.length (lib.splitString needle seal) - 1;
+  in
+  occurrences "priority filter - 1;" == 2
+  && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
+) "core check: seal chain priority or v6 drop drifted";
 assert lib.assertMsg (
   result.sockets."fwd-33627".socketConfig.ListenStream == "127.0.0.1:33627"
 ) "unit check: listen endpoint drifted";

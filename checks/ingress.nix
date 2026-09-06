@@ -131,6 +131,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.wait_until_succeeds(f"{ssh} 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=300)
       host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
 
+      host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
+      # the test host exposes svm and vmx; the guest must not see either
+      host.fail(f"{ssh} 'grep -qwE \"svm|vmx\" /proc/cpuinfo'", timeout=60)
+      host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
+      host.succeed("findmnt -n -o OPTIONS /var/lib/fencr-vms/sbx | grep nosuid | grep nodev | grep -q noexec")
+      host.succeed(f"{ssh} 'cp /run/current-system/sw/bin/true /var/lib/fencr-probe && chmod 4755 /var/lib/fencr-probe'", timeout=60)
+      host.succeed("test -u /var/lib/fencr-vms/sbx/fencr-probe")
+      host.fail("/var/lib/fencr-vms/sbx/fencr-probe")
+
       # the seal, probed with real packets from inside the vm. every probe
       # carries a timeout: a hang here means the seal swallowed the reply
       # and the test should say so rather than wait

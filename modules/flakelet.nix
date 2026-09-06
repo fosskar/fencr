@@ -184,13 +184,16 @@ in
     in
     {
       services = {
-        # the virtiofs daemons the runner dials for its store and state
-        # shares; microvm.nix's host module runs the same script as root
+        # the virtiofs daemon the runner dials for its state share;
+        # microvm.nix's host module runs the same script as root
+        "${name}-state" = core.stateService hostPkgs name;
         "${name}-virtiofsd" = {
           description = "virtiofs daemons for fencr sandbox ${name}";
           before = [ "${name}.service" ];
           partOf = [ "${name}.service" ];
-          serviceConfig = {
+          requires = [ "${name}-state.service" ];
+          after = [ "${name}-state.service" ];
+          serviceConfig = core.virtiofsdServiceConfig instance runDir // {
             ExecStart = "${runner}/bin/virtiofsd-run";
             Type = "notify";
             NotifyAccess = "all";
@@ -199,13 +202,6 @@ in
             RuntimeDirectory = "fencr-${name}";
             RuntimeDirectoryMode = "0770";
             WorkingDirectory = runDir;
-            # virtiofsd exports this tree and starts before the vm unit, so it
-            # owns creating it; the vm's ExecStartPre would be too late and
-            # the state share would fail to connect on a first boot
-            StateDirectory = "fencr-vms/${name}";
-            StateDirectoryMode = "0700";
-            LimitNOFILE = 1048576;
-            PrivateTmp = true;
             Restart = "always";
             RestartSec = 5;
           };

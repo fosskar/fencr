@@ -288,24 +288,23 @@ in
         { "microvm-set-booted@".enableStrictShellChecks = false; }
       ]
       ++ lib.mapAttrsToList (name: instance: {
-        "${name}-vm-state" = {
-          description = "state dir for the ${name} vm";
-          wantedBy = [ "microvm@${name}.service" ];
-          before = [ "microvm@${name}.service" ];
-          serviceConfig = {
-            Type = "oneshot";
-            RemainAfterExit = false;
+        # microvm.nix's root-privileged post hooks run a script out of the
+        # working directory the qemu user owns; they only serve
+        # registerWithMachined
+        "microvm@${name}".serviceConfig =
+          core.vmServiceConfig {
+            inherit instance;
+            writablePaths = [ "${config.microvm.stateDir}/${name}" ];
+          }
+          // {
+            ExecStartPost = [ "" ];
+            ExecStopPost = [ "" ];
           };
-          script = ''
-            install -d -m 0700 ${core.stateDirOf name}
-          '';
-        };
-
-        # microvm.nix owns the unit's user and working directory; the caps,
-        # secrets and confinement come from core like on the flakelet surface
-        "microvm@${name}".serviceConfig = core.vmServiceConfig {
-          inherit instance;
-          writablePaths = [ "${config.microvm.stateDir}/${name}" ];
+        "${name}-state" = core.stateService pkgs name;
+        "microvm-virtiofsd@${name}" = {
+          requires = [ "${name}-state.service" ];
+          after = [ "${name}-state.service" ];
+          serviceConfig = core.virtiofsdServiceConfig instance "${config.microvm.stateDir}/${name}";
         };
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
@@ -328,6 +327,11 @@ in
     # masquerade by the vm's source address instead of networking.nat, so
     # the module needs no knowledge of the host's uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkDefault true;
+
+    # same-page merging lets a guest probe memory across vms; the setcap
+    # bridge helper would let any host user attach to a vm's bridge
+    hardware.ksm.enable = false;
+    environment.etc."qemu/bridge.conf".text = "deny all";
 
     # the seal tables stand beside the main firewall rather than inside it, so
     # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs

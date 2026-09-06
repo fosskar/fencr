@@ -110,6 +110,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # the state share is writable and lands on the host's tree
         host.succeed(f"{ssh} 'touch /var/lib/fencr-state-survives'", timeout=60)
         host.succeed("test -e /var/lib/fencr-vms/sbx/fencr-state-survives")
+        host.succeed("findmnt -n -o OPTIONS /var/lib/fencr-vms/sbx | grep nosuid | grep nodev | grep -q noexec")
+        host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
 
         # the payload module ran inside the vm and its port reaches the host
         # through the whole chain: host socket, relay, vsock, guest proxy
