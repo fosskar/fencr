@@ -4,7 +4,7 @@ self: system:
 # host forwards and the credential broker.
 { config, lib, ... }:
 let
-  guestConfig = config.microvm.vms.sbx.config.config;
+  guestConfig = config.fencr.guestSystems.sbx.config;
   expectedHostSockets = [
     "sbx-forward-33627"
     "sbx-forward-33628"
@@ -49,27 +49,20 @@ in
       message = "nixos module check: egress is not closed by default";
     }
     {
-      assertion = builtins.elem "name=opt/io.systemd.credentials/raw,path=/run/credentials/microvm@sbx.service/raw" guestConfig.microvm.crosvm.extraArgs;
+      assertion = builtins.elem "name=opt/io.systemd.credentials/raw,path=/run/credentials/sbx.service/raw" guestConfig.microvm.crosvm.extraArgs;
       message = "nixos module check: raw secret is not transported as a systemd credential";
     }
     {
       assertion =
-        config.systemd.services."microvm@sbx".serviceConfig.ExecStartPost == [ "" ]
-        && config.systemd.services."microvm@sbx".serviceConfig.ExecStopPost == [ "" ];
-      message = "nixos module check: microvm.nix root post hooks are not cleared";
-    }
-    {
-      assertion =
         guestConfig.microvm.hypervisor == "crosvm"
-        &&
-          config.systemd.services."microvm@sbx".serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
-        && config.systemd.services."microvm@sbx".requires == [ "sbx-setup.service" ];
+        && config.systemd.services.sbx.serviceConfig.DynamicUser
+        && config.systemd.services.sbx.serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
+        && config.systemd.services.sbx.requires == [ "sbx-setup.service" ];
       message = "nixos module check: hypervisor unit drifted";
     }
     {
-      assertion =
-        !config.hardware.ksm.enable && config.environment.etc."qemu/bridge.conf".text == "deny all";
-      message = "nixos module check: microvm.nix host defaults are not overridden";
+      assertion = !config.hardware.ksm.enable;
+      message = "nixos module check: same-page merging is on";
     }
   ];
 

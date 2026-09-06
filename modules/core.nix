@@ -121,51 +121,81 @@ rec {
     ];
   };
 
-  # AF_INET is for the tap ioctls only, the two capabilities for the uid map
-  # only. crosvm's jails remount /proc and its file device applies the
-  # guest's modes, so those four knobs of the shared set stay off
-  vmServiceConfig =
-    { instance, writablePaths }:
-    removeAttrs hardened [
-      "PrivateDevices"
-      "ProcSubset"
-      "ProtectProc"
-      "RestrictSUIDSGID"
-      "UMask"
-    ]
-    // {
-      MemoryMax = instance.memoryMax;
-      CPUQuota = instance.cpuQuota;
-      CPUWeight = 20;
-      LoadCredential = lib.mapAttrsToList (
-        secretName: source: "${secretName}:${source}"
-      ) instance.secrets;
-      ReadWritePaths = writablePaths ++ [ (stateDirOf instance.name) ];
-      DevicePolicy = "closed";
-      DeviceAllow = [
-        "/dev/kvm rw"
-        "/dev/net/tun rw"
-        "/dev/vhost-vsock rw"
+  # the hypervisor unit, the same on both frontends: the microvm.nix runner
+  # under a throwaway uid in group kvm, so two vms' crosvm processes share
+  # no host identity. DynamicUser forces RestrictSUIDSGID, so the guest
+  # cannot set setuid bits on its state tree. AF_INET is for the tap ioctls
+  # only, the two capabilities for the uid map only. crosvm's jails remount
+  # /proc and its file device applies the guest's modes, so those three
+  # knobs of the shared set stay off
+  vmService =
+    instance: runner:
+    let
+      runDir = "/run/fencr-${instance.name}";
+    in
+    {
+      description = "fencr sandbox ${instance.name}";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "network.target"
+        "${instance.name}-setup.service"
       ];
-      RestrictAddressFamilies = [
-        "AF_UNIX"
-        "AF_INET"
-      ];
-      IPAddressDeny = "any";
-      RestrictNamespaces = "user mnt pid net";
-      CapabilityBoundingSet = "CAP_SETUID CAP_SETGID";
-      AmbientCapabilities = "CAP_SETUID CAP_SETGID";
+      requires = [ "${instance.name}-setup.service" ];
+      serviceConfig =
+        removeAttrs hardened [
+          "PrivateDevices"
+          "ProcSubset"
+          "ProtectProc"
+          "UMask"
+        ]
+        // {
+          ExecStart = "${runner}/bin/microvm-run";
+          ExecStop = "${runner}/bin/microvm-shutdown";
+          DynamicUser = true;
+          SupplementaryGroups = [ "kvm" ];
+          RuntimeDirectory = "fencr-${instance.name}";
+          WorkingDirectory = runDir;
+          Restart = "on-failure";
+          RestartSec = 5;
+          MemoryMax = instance.memoryMax;
+          CPUQuota = instance.cpuQuota;
+          CPUWeight = 20;
+          LoadCredential = lib.mapAttrsToList (
+            secretName: source: "${secretName}:${source}"
+          ) instance.secrets;
+          ReadWritePaths = [
+            runDir
+            (stateDirOf instance.name)
+          ];
+          DevicePolicy = "closed";
+          DeviceAllow = [
+            "/dev/kvm rw"
+            "/dev/net/tun rw"
+            "/dev/vhost-vsock rw"
+          ];
+          RestrictAddressFamilies = [
+            "AF_UNIX"
+            "AF_INET"
+          ];
+          IPAddressDeny = "any";
+          RestrictNamespaces = "user mnt pid net";
+          CapabilityBoundingSet = "CAP_SETUID CAP_SETGID";
+          AmbientCapabilities = "CAP_SETUID CAP_SETGID";
+        };
     };
 
   # the vm unit's DeviceAllow resolves nodes when it starts, so the modules
   # load here. the guest sets its tree root's mode itself, so the parent is
   # what keeps host users outside group kvm out. a unit of its own: a mount
-  # from the vm unit's ExecStartPre stays in that unit's namespace
+  # from the vm unit's ExecStartPre stays in that unit's namespace.
+  # crosvm attaches the tap by name with a virtio header and one queue, so
+  # it is persistent and its flags match; group kvm lets the vm unit open it
   setupService =
     pkgs: instance:
     let
       dir = stateDirOf instance.name;
       base = toString instance.uidBase;
+      ip = "${pkgs.iproute2}/bin/ip";
     in
     {
       description = "setup for fencr sandbox ${instance.name}";
@@ -184,6 +214,8 @@ rec {
           ${pkgs.coreutils}/bin/install -d -o ${base} -g ${base} -m 0700 ${dir}
           ${pkgs.util-linux}/bin/mountpoint -q ${dir} \
             || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${dir} ${dir}
+          ${ip} link show ${instance.tap} >/dev/null 2>&1 \
+            || ${ip} tuntap add ${instance.tap} mode tap group kvm vnet_hdr
         '';
       };
     };
@@ -782,6 +814,8 @@ rec {
     in
     {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
+
+      networking.hostName = lib.mkDefault agentSandbox.name;
 
       microvm = {
         hypervisor = "crosvm";

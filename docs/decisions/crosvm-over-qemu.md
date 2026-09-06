@@ -39,12 +39,17 @@ unchanged.
 
 ## what the hypervisor unit gives up
 
-Four knobs of the shared hardening set are off for crosvm, each because the
+Three knobs of the shared hardening set are off for crosvm, each because the
 tests failed with it on: `ProcSubset` and `ProtectProc` (the device jails
-remount /proc in their namespaces), `RestrictSUIDSGID` and `UMask` (the file
-device applies the guest's modes; a setuid bit on a file owned by an
-unprivileged uid is harmless on the host). `AF_INET` is allowed for the tap
-ioctls; crosvm opens no network socket.
+remount /proc in their namespaces) and `UMask` (the file device applies the
+guest's modes). `AF_INET` is allowed for the tap ioctls; crosvm opens no
+network socket.
+
+The unit runs under `DynamicUser`, one throwaway uid per vm, because the
+flakelet surface cannot declare users and both surfaces share one unit.
+`DynamicUser` forces `RestrictSUIDSGID` on, so the guest cannot set setuid or
+setgid bits on files in its state tree; NixOS guests keep their setuid
+wrappers in `/run/wrappers` and do not notice.
 
 ## cost
 

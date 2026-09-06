@@ -32,7 +32,7 @@ let
   unitSets = lib.mapAttrs (
     name: instance:
     core.hostUnits pkgs instance {
-      vmUnit = "microvm@${name}.service";
+      vmUnit = "${name}.service";
       forwardName = forward: "${name}-forward-${toString forward.listenPort}";
       hostForwardName = forward: "${name}-host-forward-${toString forward.vsockPort}";
       proxyName = "${name}-egress-proxy";
@@ -60,9 +60,30 @@ let
     }
   );
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
+  # the guest evaluates against the host's nixpkgs, as a microvm.nix host
+  # module would do it
+  guestSystems = lib.mapAttrs (
+    name: cfg:
+    import "${pkgs.path}/nixos/lib/eval-config.nix" {
+      inherit pkgs;
+      system = pkgs.stdenv.hostPlatform.system;
+      specialArgs = cfg.specialArgs // {
+        agentSandbox = unitSets.${name}.guest;
+      };
+      modules = [
+        inputs.microvm.nixosModules.microvm
+        (core.guestBase inputs.microvm)
+      ]
+      ++ cfg.services;
+    }
+  ) instances;
 in
 {
-  imports = [ inputs.microvm.nixosModules.host ];
+  options.fencr.guestSystems = lib.mkOption {
+    type = lib.types.attrsOf lib.types.raw;
+    readOnly = true;
+    description = "the evaluated guest system of every vm, keyed by vm name.";
+  };
 
   options.fencr.adminKeys = lib.mkOption {
     type = lib.types.listOf lib.types.str;
@@ -237,6 +258,8 @@ in
   };
 
   config = {
+    fencr.guestSystems = guestSystems;
+
     boot.kernelModules = lib.mkIf (instances != { }) [ "vhost_vsock" ];
 
     # the seal is written in nftables; the iptables firewall cannot host it
@@ -287,27 +310,8 @@ in
     );
 
     systemd.services = lib.mkMerge (
-      [
-        # microvm.nix upstream script trips SC2046
-        { "microvm-set-booted@".enableStrictShellChecks = false; }
-      ]
-      ++ lib.mapAttrsToList (name: instance: {
-        # microvm.nix's root-privileged post hooks run a script out of the
-        # working directory the vm user owns; they only serve
-        # registerWithMachined
-        "microvm@${name}" = {
-          requires = [ "${name}-setup.service" ];
-          after = [ "${name}-setup.service" ];
-          serviceConfig =
-            core.vmServiceConfig {
-              inherit instance;
-              writablePaths = [ "${config.microvm.stateDir}/${name}" ];
-            }
-            // {
-              ExecStartPost = [ "" ];
-              ExecStopPost = [ "" ];
-            };
-        };
+      lib.mapAttrsToList (name: instance: {
+        ${name} = core.vmService instance guestSystems.${name}.config.microvm.declaredRunner;
         "${name}-setup" = core.setupService pkgs instance;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
@@ -315,26 +319,12 @@ in
 
     systemd.sockets = lib.mkMerge (map (units: units.sockets) (lib.attrValues unitSets));
 
-    microvm.vms = lib.mapAttrs (name: cfg: {
-      autostart = true;
-      specialArgs = cfg.specialArgs // {
-        agentSandbox = unitSets.${name}.guest;
-      };
-      config =
-        { ... }:
-        {
-          imports = [ (core.guestBase inputs.microvm) ] ++ cfg.services;
-        };
-    }) instances;
-
     # masquerade by the vm's source address instead of networking.nat, so
     # the module needs no knowledge of the host's uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkDefault true;
 
-    # same-page merging lets a guest probe memory across vms; the setcap
-    # bridge helper would let any host user attach to a vm's bridge
+    # same-page merging lets a guest probe memory across vms
     hardware.ksm.enable = false;
-    environment.etc."qemu/bridge.conf".text = "deny all";
 
     # the seal tables stand beside the main firewall rather than inside it, so
     # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs

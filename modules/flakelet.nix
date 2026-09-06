@@ -143,8 +143,6 @@ in
         destroy table ip fencr-${name}-nat
         ${(core.firewallOf instance).standalone}
       '';
-      runDir = "/run/fencr-${name}";
-
       # crosvm jails every device in a user namespace, and marks all guest
       # memory mergeable: the host must allow the former and not run ksm
       setupScript = hostPkgs.writeShellScript "fencr-${name}-setup" ''
@@ -156,9 +154,6 @@ in
         $ip link show ${instance.bridge} >/dev/null 2>&1 || $ip link add ${instance.bridge} type bridge
         $ip addr replace ${instance.hostIp}/${toString instance.prefixLength} dev ${instance.bridge}
         $ip link set ${instance.bridge} up
-        # crosvm attaches with a virtio header and one queue; a persistent
-        # tap's flags must match
-        $ip link show ${instance.tap} >/dev/null 2>&1 || $ip tuntap add ${instance.tap} mode tap group kvm vnet_hdr
         $ip link set ${instance.tap} master ${instance.bridge}
         $ip link set ${instance.tap} up
         ${hostPkgs.nftables}/bin/nft -f ${ruleset}
@@ -186,31 +181,11 @@ in
     {
       services = {
         "${name}-setup" = core.setupService hostPkgs instance;
-        ${name} = {
-          description = "fencr sandbox ${name}";
-          wantedBy = [ "multi-user.target" ];
-          after = [
-            "network.target"
-            "${name}-setup.service"
-          ];
-          requires = [ "${name}-setup.service" ];
-          serviceConfig =
-            core.vmServiceConfig {
-              inherit instance;
-              writablePaths = [ runDir ];
-            }
-            // {
-              ExecStartPre = "+${setupScript}";
-              ExecStart = "${runner}/bin/microvm-run";
-              ExecStop = "${runner}/bin/microvm-shutdown";
-              ExecStopPost = "+${teardownScript}";
-              DynamicUser = true;
-              SupplementaryGroups = [ "kvm" ];
-              RuntimeDirectory = "fencr-${name}";
-              WorkingDirectory = runDir;
-              Restart = "on-failure";
-              RestartSec = 5;
-            };
+        ${name} = lib.recursiveUpdate (core.vmService instance runner) {
+          serviceConfig = {
+            ExecStartPre = "+${setupScript}";
+            ExecStopPost = "+${teardownScript}";
+          };
         };
       }
       // units.services;
