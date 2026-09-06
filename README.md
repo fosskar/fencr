@@ -1,5 +1,7 @@
 # fencr
 
+Pronounced **fencer** /ˈfɛnsər/ — “fence” + “er”.
+
 fencr is a NixOS module for running AI agents in microVMs with explicit
 network permissions, persistent storage and resource limits. It uses
 [Firecracker](https://firecracker-microvm.github.io/) through

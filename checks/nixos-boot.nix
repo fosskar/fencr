@@ -92,7 +92,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # server and resolver does; the egress proxy must live beside them
       systemd.services.host-squatter = {
         wantedBy = [ "multi-user.target" ];
-        before = [ "sbx-egress-proxy.service" ];
+        before = [ "fencr-sbx-egress-proxy.service" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${squatter}";
       };
       systemd.services.upstream-8765 = {
@@ -145,7 +145,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       ];
       # the test network is a private range the proxy unit denies; allow
       # the one target, which is the "internet" here
-      systemd.services.sbx-egress-proxy.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
+      systemd.services.fencr-sbx-egress-proxy.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
 
       system.stateVersion = "25.11";
     };
@@ -179,7 +179,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       target.wait_for_unit("target-8123.service")
       target.wait_for_unit("target-80.service")
       host.wait_for_unit("fencr-sbx.service", timeout=1200)
-      host.wait_for_unit("sbx-forward-22100.socket")
+      host.wait_for_unit("fencr-sbx-forward-22100.socket")
       host.wait_until_succeeds("curl --fail --silent http://127.0.0.1:22100 | grep -Fx 'fencr ingress'", timeout=120)
       host.fail("nc -z -w 2 10.30.1.2 22")
 
@@ -225,26 +225,26 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # passed through to the real site, the other is refused by name, and a
       # raw address on 443 hits the closed forward chain
       target.wait_for_unit("target-443.service")
-      host.wait_for_unit("sbx-egress-proxy.service")
+      host.wait_for_unit("fencr-sbx-egress-proxy.service")
       host.succeed(f"{ssh} 'getent hosts denied.test' | grep -q '^10.30.1.1 '", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://allowed.test/' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://denied.test/'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
-      host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
-      host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
 
       # the credential, end to end: the guest calls the domain over https
       # and trusts the host's authority without being told to, whatever it
       # sent as a header is replaced, the upstream called directly sees
       # none, and the proxy has no tcp port
       host.wait_for_unit("upstream-8765.service")
-      host.wait_for_unit("sbx-credentials.service")
+      host.wait_for_unit("fencr-sbx-credentials.service")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/root.key)\" = root:600")
       host.succeed("test -S /run/fencr-credentials-sbx/credentials.sock")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
       host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/fencr-ca.crt'", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
-      host.succeed("journalctl -u sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
     '';
 

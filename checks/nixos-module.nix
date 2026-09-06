@@ -6,9 +6,9 @@ self: system:
 let
   guestConfig = config.fencr.guestSystems.sbx.config;
   expectedHostSockets = [
-    "sbx-forward-33627"
-    "sbx-forward-33628"
-    "sbx-host-forward-18764"
+    "fencr-sbx-forward-33627"
+    "fencr-sbx-forward-33628"
+    "fencr-sbx-host-forward-18764"
   ];
   missingHostSockets = lib.filter (name: !(config.systemd.sockets ? ${name})) expectedHostSockets;
 in
@@ -46,7 +46,7 @@ in
     }
     {
       assertion =
-        config.systemd.services."sbx-credentials".serviceConfig.LoadCredential == [
+        config.systemd.services."fencr-sbx-credentials".serviceConfig.LoadCredential == [
           "anthropic:/run/secrets/anthropic"
           "ca.crt:/var/lib/fencr/ca/root.crt"
           "ca.key:/var/lib/fencr/ca/root.key"
@@ -61,7 +61,7 @@ in
       assertion =
         config.fencr.guestSystems.sealed.config.systemd.network.networks."10-lan".networkConfig.DNS
         == "10.30.2.1"
-        && config.systemd.services ? "sealed-egress-proxy"
+        && config.systemd.services ? "fencr-sealed-egress-proxy"
         && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 33053 ]
         && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ];
       message = "nixos module check: allowedDomains did not make the egress proxy the resolver";
@@ -72,18 +72,18 @@ in
     }
     {
       assertion =
-        config.systemd.sockets."sbx-ssh".socketConfig.ListenStream == "/run/fencr-ssh-sbx"
-        && config.systemd.sockets."sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
+        config.systemd.sockets."fencr-sbx-ssh".socketConfig.ListenStream == "/run/fencr-ssh-sbx"
+        && config.systemd.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
         &&
-          config.systemd.services."sbx-secrets@".serviceConfig.LoadCredential == [
+          config.systemd.services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [
             "raw:/run/secrets/raw"
             "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
           ]
         && guestConfig.systemd.services ? fencr-secrets
         &&
-          config.systemd.sockets."sbx-host-forward-18764".socketConfig.ListenStream
+          config.systemd.sockets."fencr-sbx-host-forward-18764".socketConfig.ListenStream
           == "/run/fencr-sbx/vsock_18764"
-        && config.systemd.sockets."sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
+        && config.systemd.sockets."fencr-sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
       message = "nixos module check: the vsock sockets are not the vm's own";
     }

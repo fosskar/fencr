@@ -22,10 +22,10 @@ in
     pkgs: instance:
     let
       vmUnit = vmUnitOf instance.name;
-      forwardName = forward: "${instance.name}-forward-${toString forward.listenPort}";
-      hostForwardName = forward: "${instance.name}-host-forward-${toString forward.vsockPort}";
-      proxyName = "${instance.name}-egress-proxy";
-      credentialsName = "${instance.name}-credentials";
+      forwardName = forward: "fencr-${instance.name}-forward-${toString forward.listenPort}";
+      hostForwardName = forward: "fencr-${instance.name}-host-forward-${toString forward.vsockPort}";
+      proxyName = "fencr-${instance.name}-egress-proxy";
+      credentialsName = "fencr-${instance.name}-credentials";
       credentialUnits = lib.optional (instance.credentials != [ ]) "${credentialsName}.service";
       forwardServices = map (forward: {
         name = "${forwardName forward}@";
@@ -55,7 +55,7 @@ in
       }) instance.hostForwards;
       # the ssh door: a socket every host account may open, relayed into
       # the guest's vsock port 22; the key check happens in the guest
-      sshName = "${instance.name}-ssh";
+      sshName = "fencr-${instance.name}-ssh";
       sshUnits = lib.optionalAttrs (instance.sshKeys != [ ]) {
         socket.${sshName} = {
           description = "ssh into ${instance.name}";
@@ -81,7 +81,7 @@ in
       # raw secrets, served once per boot as a tar stream of the unit's
       # credentials directory into a connection the guest opened; the
       # host's ca certificate rides along for a vm with a credential
-      secretsName = "${instance.name}-secrets";
+      secretsName = "fencr-${instance.name}-secrets";
       secretsUnits = lib.optionalAttrs (instance.secrets != { } || instance.credentials != [ ]) {
         socket.${secretsName} = {
           description = "raw secrets for ${instance.name}";

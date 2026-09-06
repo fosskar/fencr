@@ -67,9 +67,9 @@ pkgs.runCommand "fencr-cli-check" { } ''
   diff -u expected actual
   cat > expected-queries <<'EOF'
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent
-  show sbx-forward-33627.socket --property=LoadState,ActiveState,NAccepted,NConnections
-  show sbx-egress-proxy.service --property=LoadState,ActiveState
-  show sbx-credentials.service --property=LoadState,ActiveState
+  show fencr-sbx-forward-33627.socket --property=LoadState,ActiveState,NAccepted,NConnections
+  show fencr-sbx-egress-proxy.service --property=LoadState,ActiveState
+  show fencr-sbx-credentials.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
   for state in failed inactive missing unavailable; do

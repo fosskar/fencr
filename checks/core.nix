@@ -155,12 +155,12 @@ assert lib.assertMsg (lib.all (
   )
 ) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";
 assert lib.assertMsg (
-  !(units.services."sbx-egress-proxy".serviceConfig ? AmbientCapabilities)
+  !(units.services."fencr-sbx-egress-proxy".serviceConfig ? AmbientCapabilities)
   &&
     lib.hasPrefix "${core.egressProxyBin pkgs}/bin/fencr-egress-proxy 10.30.1.1:33053 10.30.1.1:33443 "
-      units.services."sbx-egress-proxy".serviceConfig.ExecStart
+      units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart
   && lib.hasInfix "10.30.1.0/24" (
-    toString units.services."sbx-egress-proxy".serviceConfig.IPAddressAllow
+    toString units.services."fencr-sbx-egress-proxy".serviceConfig.IPAddressAllow
   )
   && occurrences "ip daddr 10.30.1.1 udp dport 53 redirect to :33053" == 1
   && occurrences "ip daddr 10.30.1.1 tcp dport 443 redirect to :33443" == 1
@@ -189,11 +189,11 @@ assert lib.assertMsg (
   keyed.proxy
   && !keyed.dnsProxy
   && keyed.guest.dns == "9.9.9.9"
-  && keyedUnits.services ? "keyed-egress-proxy"
-  && keyedUnits.services."keyed-egress-proxy".wants == [ "keyed-credentials.service" ]
-  && keyedUnits.sockets ? "keyed-secrets"
+  && keyedUnits.services ? "fencr-keyed-egress-proxy"
+  && keyedUnits.services."fencr-keyed-egress-proxy".wants == [ "fencr-keyed-credentials.service" ]
+  && keyedUnits.sockets ? "fencr-keyed-secrets"
   &&
-    keyedUnits.services."keyed-secrets@".serviceConfig.LoadCredential == [
+    keyedUnits.services."fencr-keyed-secrets@".serviceConfig.LoadCredential == [
       "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
     ]
   &&
@@ -205,42 +205,44 @@ assert lib.assertMsg (
 ) "core check: a credential alone does not bring the interception path";
 assert lib.assertMsg (
   builtins.attrNames units.sockets == [
-    "sbx-forward-33627"
-    "sbx-host-forward-18764"
-    "sbx-secrets"
+    "fencr-sbx-forward-33627"
+    "fencr-sbx-host-forward-18764"
+    "fencr-sbx-secrets"
   ]
-  && units.sockets."sbx-forward-33627".socketConfig.ListenStream == "127.0.0.1:33627"
-  && units.sockets."sbx-host-forward-18764".socketConfig.ListenStream == "/run/fencr-sbx/vsock_18764"
-  && units.sockets."sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
-  && units.sockets."sbx-host-forward-18764".socketConfig.SocketMode == "0600"
-  && units.sockets."sbx-host-forward-18764".socketConfig.TriggerLimitIntervalSec == 0
+  && units.sockets."fencr-sbx-forward-33627".socketConfig.ListenStream == "127.0.0.1:33627"
+  &&
+    units.sockets."fencr-sbx-host-forward-18764".socketConfig.ListenStream
+    == "/run/fencr-sbx/vsock_18764"
+  && units.sockets."fencr-sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
+  && units.sockets."fencr-sbx-host-forward-18764".socketConfig.SocketMode == "0600"
+  && units.sockets."fencr-sbx-host-forward-18764".socketConfig.TriggerLimitIntervalSec == 0
 ) "unit check: host sockets drifted";
 assert lib.assertMsg (
   lib.hasSuffix "connect /run/fencr-sbx/vsock 33627"
-    units.services."sbx-forward-33627@".serviceConfig.ExecStart
-  && lib.hasSuffix "serve 8764" units.services."sbx-host-forward-18764@".serviceConfig.ExecStart
+    units.services."fencr-sbx-forward-33627@".serviceConfig.ExecStart
+  && lib.hasSuffix "serve 8764" units.services."fencr-sbx-host-forward-18764@".serviceConfig.ExecStart
 ) "unit check: relays do not use the vm's vsock socket";
 assert lib.assertMsg (
-  units.services."sbx-forward-33627@".after == [ "fencr-sbx.service" ]
-  && units.services."sbx-forward-33627@".requisite == [ "fencr-sbx.service" ]
-  && units.services."sbx-host-forward-18764@".partOf == [ "fencr-sbx.service" ]
-  && !(units.services."sbx-forward-33627@" ? requires)
-  && units.services."sbx-forward-33627@".serviceConfig.DynamicUser
+  units.services."fencr-sbx-forward-33627@".after == [ "fencr-sbx.service" ]
+  && units.services."fencr-sbx-forward-33627@".requisite == [ "fencr-sbx.service" ]
+  && units.services."fencr-sbx-host-forward-18764@".partOf == [ "fencr-sbx.service" ]
+  && !(units.services."fencr-sbx-forward-33627@" ? requires)
+  && units.services."fencr-sbx-forward-33627@".serviceConfig.DynamicUser
 ) "unit check: forward relay drifted";
 assert lib.assertMsg (
-  units.services."sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-credentials-sbx"
-  && units.services."sbx-credentials".serviceConfig.Group == "kvm"
-  && units.services."sbx-credentials".requires == [ "fencr-ca.service" ]
+  units.services."fencr-sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-credentials-sbx"
+  && units.services."fencr-sbx-credentials".serviceConfig.Group == "kvm"
+  && units.services."fencr-sbx-credentials".requires == [ "fencr-ca.service" ]
   &&
-    units.services."sbx-credentials".serviceConfig.LoadCredential == [
+    units.services."fencr-sbx-credentials".serviceConfig.LoadCredential == [
       "api:/run/secrets/api-token"
       "ca.crt:/var/lib/fencr/ca/root.crt"
       "ca.key:/var/lib/fencr/ca/root.key"
     ]
-  && units.services."sbx-egress-proxy".serviceConfig.Group == "kvm"
+  && units.services."fencr-sbx-egress-proxy".serviceConfig.Group == "kvm"
   && lib.hasInfix "api.example.com /run/fencr-credentials-sbx/credentials.sock" (
     builtins.readFile (
-      lib.last (lib.splitString " " units.services."sbx-egress-proxy".serviceConfig.ExecStart)
+      lib.last (lib.splitString " " units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart)
     )
   )
 ) "unit check: credential proxy is not behind the egress proxy on its unix socket";

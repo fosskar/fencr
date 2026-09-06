@@ -63,7 +63,7 @@ client hello and hands the connection to the vm's caddy on its unix
 socket, which holds a certificate for each granted domain from a per-host
 authority, ends the tls, replaces the header and sends the request on.
 
-- one caddy per vm, `<vm>-credentials.service`, holding every credential
+- one caddy per vm, `fencr-<vm>-credentials.service`, holding every credential
   granted to that vm. It began as one unit per vm and credential, so a
   bug in one proxy would expose one secret; dropped the same day, since
   the vm can use every credential granted to it anyway and the extra
