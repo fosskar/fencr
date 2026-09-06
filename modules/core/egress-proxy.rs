@@ -1,10 +1,13 @@
 //! the road out for a vm with allowedDomains or credentials: on the bridge
-//! address it answers every dns name with itself and, on 443, reads the
-//! server name from the tls client hello. a credential's domain goes to
-//! that credential's proxy on its unix socket, which holds the certificate;
-//! an allowed name is spliced to the real host unread; the rest is refused.
+//! address it answers every dns name with itself and, on the port the seal
+//! redirects 443 to, reads the server name from the tls client hello. a
+//! credential's domain goes to that credential's proxy on its unix socket,
+//! which holds the certificate; an allowed name is spliced to the real host
+//! unread; the rest is refused.
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{
+    Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
+};
 use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -240,17 +243,23 @@ fn lines(path: &str) -> io::Result<Vec<String>> {
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
-    let (Some(address), Some(allowlist), Some(interceptlist)) =
-        (args.next(), args.next(), args.next())
+    let (Some(dns_address), Some(tls_address), Some(allowlist), Some(interceptlist)) =
+        (args.next(), args.next(), args.next(), args.next())
     else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: fencr-egress-proxy <bridge address> <allowlist file> <intercept file>",
+            "usage: fencr-egress-proxy <dns address:port> <tls address:port> <allowlist file> <intercept file>",
         ));
     };
-    let answer: Ipv4Addr = address
-        .parse()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bridge address must be ipv4"))?;
+    let invalid = |what: &str| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{what} must be an ipv4 address:port"),
+        )
+    };
+    let dns_address: SocketAddrV4 = dns_address.parse().map_err(|_| invalid("dns address"))?;
+    let tls_address: SocketAddrV4 = tls_address.parse().map_err(|_| invalid("tls address"))?;
+    let answer = *dns_address.ip();
     let patterns: Arc<Vec<String>> = Arc::new(lines(&allowlist)?);
     // "<domain> <unix socket>" per line
     let intercepts: Arc<Vec<(String, String)>> = Arc::new(
@@ -267,7 +276,7 @@ fn run() -> io::Result<()> {
     );
     // the bridge gets its address from networkd; be there when it does
     let dns = loop {
-        match UdpSocket::bind((IpAddr::V4(answer), 53)) {
+        match UdpSocket::bind(dns_address) {
             Ok(socket) => break socket,
             Err(error) if error.raw_os_error() == Some(99) => {
                 thread::sleep(Duration::from_millis(500))
@@ -280,7 +289,7 @@ fn run() -> io::Result<()> {
             eprintln!("dns: {error}");
         }
     });
-    let listener = TcpListener::bind((IpAddr::V4(answer), 443))?;
+    let listener = TcpListener::bind(tls_address)?;
     for client in listener.incoming() {
         let client = client?;
         let patterns = Arc::clone(&patterns);

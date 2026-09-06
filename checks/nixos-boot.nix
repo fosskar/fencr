@@ -25,6 +25,17 @@ let
 
     HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
   '';
+  squatter = pkgs.writeText "fencr-test-squatter.py" ''
+    import socket, time
+
+    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp.bind(("0.0.0.0", 443))
+    tcp.listen()
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("0.0.0.0", 53))
+    while True:
+        time.sleep(3600)
+  '';
   tlsCert = pkgs.runCommand "fencr-test-cert" { nativeBuildInputs = [ pkgs.openssl ]; } ''
     mkdir $out
     openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=allowed.test \
@@ -76,6 +87,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       systemd.services.host-80 = {
         wantedBy = [ "multi-user.target" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 80 --bind 0.0.0.0 --directory ${targetRoot}";
+      };
+      # a host that already serves *:443 and *:53, as one with its own web
+      # server and resolver does; the egress proxy must live beside them
+      systemd.services.host-squatter = {
+        wantedBy = [ "multi-user.target" ];
+        before = [ "sbx-egress-proxy.service" ];
+        serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${squatter}";
       };
       systemd.services.upstream-8765 = {
         wantedBy = [ "multi-user.target" ];

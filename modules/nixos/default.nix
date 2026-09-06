@@ -190,8 +190,8 @@ in
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
         ${cfg.bridge} = {
-          allowedTCPPorts = cfg.hostPorts ++ lib.optional cfg.proxy 443;
-          allowedUDPPorts = lib.optional cfg.dnsProxy 53;
+          allowedTCPPorts = cfg.hostPorts ++ lib.optional cfg.proxy core.proxyTlsPort;
+          allowedUDPPorts = lib.optional cfg.dnsProxy core.proxyDnsPort;
         };
       }
     );

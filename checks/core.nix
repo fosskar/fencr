@@ -155,14 +155,21 @@ assert lib.assertMsg (lib.all (
   )
 ) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";
 assert lib.assertMsg (
-  units.services."sbx-egress-proxy".serviceConfig.AmbientCapabilities == "CAP_NET_BIND_SERVICE"
+  !(units.services."sbx-egress-proxy".serviceConfig ? AmbientCapabilities)
+  &&
+    lib.hasPrefix "${core.egressProxyBin pkgs}/bin/fencr-egress-proxy 10.30.1.1:33053 10.30.1.1:33443 "
+      units.services."sbx-egress-proxy".serviceConfig.ExecStart
   && lib.hasInfix "10.30.1.0/24" (
     toString units.services."sbx-egress-proxy".serviceConfig.IPAddressAllow
   )
+  && occurrences "ip daddr 10.30.1.1 udp dport 53 redirect to :33053" == 1
+  && occurrences "ip daddr 10.30.1.1 tcp dport 443 redirect to :33443" == 1
   &&
-    occurrences ''ip daddr 10.30.1.1 udp dport 53 counter accept comment "fencr:sbx:egress-dns"'' == 1
+    occurrences ''ip daddr 10.30.1.1 udp dport 33053 counter accept comment "fencr:sbx:egress-dns"''
+    == 1
   &&
-    occurrences ''ip daddr 10.30.1.1 tcp dport 443 counter accept comment "fencr:sbx:egress-tls"'' == 1
+    occurrences ''ip daddr 10.30.1.1 tcp dport 33443 counter accept comment "fencr:sbx:egress-tls"''
+    == 1
 ) "unit check: egress proxy is not the vm's road out";
 assert lib.assertMsg (
   occurrences "priority filter - 1;" == 2
@@ -190,10 +197,11 @@ assert lib.assertMsg (
       "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
     ]
   &&
-    lib.hasInfix ''ip daddr 10.30.3.1 tcp dport 443 counter accept comment "fencr:keyed:egress-tls"''
+    lib.hasInfix ''ip daddr 10.30.3.1 tcp dport 33443 counter accept comment "fencr:keyed:egress-tls"''
       (core.firewallOf keyed)."fencr-keyed".content
-  && !lib.hasInfix "udp dport 53 counter accept comment \"fencr:keyed:egress-dns\""
-    (core.firewallOf keyed)."fencr-keyed".content
+  && !lib.hasInfix "egress-dns" (core.firewallOf keyed)."fencr-keyed".content
+  && lib.hasInfix "tcp dport 443 redirect to :33443" (core.firewallOf keyed)."fencr-keyed-nat".content
+  && !lib.hasInfix "udp dport 53 redirect" (core.firewallOf keyed)."fencr-keyed-nat".content
 ) "core check: a credential alone does not bring the interception path";
 assert lib.assertMsg (
   builtins.attrNames units.sockets == [

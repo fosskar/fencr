@@ -8,6 +8,9 @@ let
     credentialSocketOf
     forwardFilterFragment
     natRuleFragment
+    proxyRedirectFragment
+    proxyDnsPort
+    proxyTlsPort
     sealInputFragment
     ;
 in
@@ -23,6 +26,13 @@ in
   # /etc/hosts points at the bridge: by server name the proxy hands the
   # connection to that credential's caddy, which holds the certificate
   proxyOf = cfg: cfg.allowedDomains != [ ] || cfg.credentials != [ ];
+
+  # the guest talks to 53 and 443 on the bridge address; the seal's nat
+  # table redirects both to ports the proxy binds on that address alone,
+  # so a host service on *:443 or *:53 is no conflict and the proxy needs
+  # no capability to bind
+  proxyDnsPort = 33053;
+  proxyTlsPort = 33443;
 
   # a pattern is a hostname, optionally with a leading "*." label. anything
   # else is rejected: "*github.com" also matches evilgithub.com, and stray
@@ -56,7 +66,7 @@ in
     pkgs: instance:
     proxyHardening
     // {
-      ExecStart = "${egressProxyBin pkgs}/bin/fencr-egress-proxy ${instance.hostIp} ${
+      ExecStart = "${egressProxyBin pkgs}/bin/fencr-egress-proxy ${instance.hostIp}:${toString proxyDnsPort} ${instance.hostIp}:${toString proxyTlsPort} ${
         pkgs.writeText "fencr-egress-domains" (
           lib.concatMapStrings (domain: "${domain}\n") instance.allowedDomains
         )
@@ -68,8 +78,6 @@ in
         )
       }";
       Group = "kvm";
-      CapabilityBoundingSet = "CAP_NET_BIND_SERVICE";
-      AmbientCapabilities = "CAP_NET_BIND_SERVICE";
       # resolving on the host goes through resolved, over its unix socket
       # or its stub on 127.0.0.53
       IPAddressAllow = [
@@ -131,6 +139,15 @@ in
     ip saddr ${cfg.ip} oifname != "${cfg.bridge}" masquerade
   '';
 
+  proxyRedirectFragment =
+    cfg:
+    lib.optionalString cfg.dnsProxy ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 redirect to :${toString proxyDnsPort}
+    ''
+    + lib.optionalString cfg.proxy ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 redirect to :${toString proxyTlsPort}
+    '';
+
   # input-chain fragment sealing the vms' host access to the declared ports;
   # v6 dropped first like on forward: the host's own link-local multicast
   # reflects off the bridge
@@ -146,10 +163,10 @@ in
       } } counter accept comment "fencr:${cfg.name}:host"
     ''
     + lib.optionalString cfg.dnsProxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 counter accept comment "fencr:${cfg.name}:egress-dns"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString proxyDnsPort} counter accept comment "fencr:${cfg.name}:egress-dns"
     ''
     + lib.optionalString cfg.proxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 counter accept comment "fencr:${cfg.name}:egress-tls"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString proxyTlsPort} counter accept comment "fencr:${cfg.name}:egress-tls"
     ''
     + ''
       iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-host-blocked: "
@@ -163,6 +180,10 @@ in
     "fencr-${cfg.name}-nat" = {
       family = "ip";
       content = ''
+        chain prerouting {
+          type nat hook prerouting priority dstnat; policy accept;
+          ${proxyRedirectFragment cfg}
+        }
         chain postrouting {
           type nat hook postrouting priority srcnat; policy accept;
           ${natRuleFragment cfg}

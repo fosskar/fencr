@@ -78,8 +78,10 @@ authority, ends the tls, replaces the header and sends the request on.
 - the egress proxy runs for every vm with a credential. With
   `allowedDomains` it was already the guest's resolver and the road out;
   with a credential alone the guest keeps its own resolver and only the
-  443 listener on the bridge opens, in the seal and in the host firewall.
-  The seal's dns pinhole stays tied to `allowedDomains`
+  tls listener opens, in the seal and in the host firewall. The seal's
+  dns pinhole stays tied to `allowedDomains`. Both listeners sit on high
+  ports of the bridge address that the seal redirects 53 and 443 to, so
+  a host serving `*:443` itself, as nixbox does, is no conflict
 - the vsock forwards for credentials, the guest ports, the relay's unix
   target and `agentSandbox.credentials` went away. The guest contract
   carries `credentialDomains` instead
