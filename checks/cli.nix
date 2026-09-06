@@ -21,13 +21,7 @@ let
       ];
     };
   };
-  units = core.hostUnits pkgs instance {
-    vmUnit = "fencr-sbx.service";
-    forwardName = forward: "sbx-forward-${toString forward.listenPort}";
-    hostForwardName = forward: "sbx-host-forward-${toString forward.vsockPort}";
-    proxyName = "sbx-egress-proxy";
-    brokerName = forward: "sbx-broker-${toString forward.vsockPort}";
-  };
+  units = core.hostUnits pkgs instance;
   systemctl = pkgs.writeShellScriptBin "systemctl" ''
     set -eu
     printf '%s\n' "$*" >> "$TEST_LOG"

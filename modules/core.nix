@@ -1,11 +1,10 @@
-# the shared core of both frontends (nixos module and flakelet): instance
-# derivation, firewall rule text, forward transports, the credential broker
-# and the guest system. both frontends must consume these builders so the
-# seal semantics cannot drift between them.
+# the builders behind the nixos module: instance derivation, firewall rule
+# text, forward transports, the credential broker and the guest system. pure
+# functions of an instance, so checks/core.nix probes them without a host.
 { lib }:
 rec {
-  # option defaults shared by both frontends' schemas and applied again in
-  # resolveInstance, so a frontend that omits an option still gets the same vm
+  # applied again in resolveInstance, so a check that omits an option still
+  # gets the same vm the module would build
   defaults = {
     vcpu = 4;
     mem = 4096;
@@ -30,6 +29,8 @@ rec {
   ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
 
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
+  userOf = name: "fencr-${name}";
+  vmUnitOf = name: "fencr-${name}.service";
 
   # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
   # runtime resolution and stay unsupported until name-based egress exists.
@@ -121,13 +122,11 @@ rec {
     ];
   };
 
-  # the hypervisor unit, the same on both frontends: the microvm.nix runner
-  # under a throwaway uid in group kvm, so two vms' crosvm processes share
-  # no host identity. DynamicUser forces RestrictSUIDSGID, so the guest
-  # cannot set setuid bits on its state tree. AF_INET is for the tap ioctls
-  # only, the two capabilities for the uid map only. crosvm's jails remount
-  # /proc and its file device applies the guest's modes, so those three
-  # knobs of the shared set stay off
+  # the hypervisor unit: the microvm.nix runner under the vm's own system
+  # user in group kvm, so two vms' crosvm processes share no host identity.
+  # AF_INET is for the tap ioctls only, the two capabilities for the uid map
+  # only. crosvm's jails remount /proc and its file device applies the
+  # guest's modes, so those four knobs of the shared set stay off
   vmService =
     instance: runner:
     let
@@ -146,13 +145,13 @@ rec {
           "PrivateDevices"
           "ProcSubset"
           "ProtectProc"
+          "RestrictSUIDSGID"
           "UMask"
         ]
         // {
           ExecStart = "${runner}/bin/microvm-run";
           ExecStop = "${runner}/bin/microvm-shutdown";
-          DynamicUser = true;
-          SupplementaryGroups = [ "kvm" ];
+          User = userOf instance.name;
           RuntimeDirectory = "fencr-${instance.name}";
           WorkingDirectory = runDir;
           Restart = "on-failure";
@@ -184,38 +183,27 @@ rec {
         };
     };
 
-  # the vm unit's DeviceAllow resolves nodes when it starts, so the modules
-  # load here. the guest sets its tree root's mode itself, so the parent is
-  # what keeps host users outside group kvm out. a unit of its own: a mount
-  # from the vm unit's ExecStartPre stays in that unit's namespace.
-  # crosvm attaches the tap by name with a virtio header and one queue, so
-  # it is persistent and its flags match; group kvm lets the vm unit open it
+  # the state tree: the guest sets its root's mode itself, so the parent is
+  # what keeps host users outside group kvm out. a unit of its own because a
+  # mount from the vm unit's ExecStartPre stays in that unit's namespace, and
+  # it stays active so a restarting vm does not start it again each time
   setupService =
     pkgs: instance:
     let
       dir = stateDirOf instance.name;
       base = toString instance.uidBase;
-      ip = "${pkgs.iproute2}/bin/ip";
     in
     {
-      description = "setup for fencr sandbox ${instance.name}";
+      description = "state tree for fencr sandbox ${instance.name}";
       serviceConfig = {
         Type = "oneshot";
+        RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "fencr-${instance.name}-setup" ''
           set -eu
-          ${pkgs.kmod}/bin/modprobe -a tun vhost_vsock
-          if ${pkgs.gnugrep}/bin/grep -qw vmx /proc/cpuinfo; then
-            ${pkgs.kmod}/bin/modprobe kvm_intel
-          else
-            ${pkgs.kmod}/bin/modprobe kvm_amd
-          fi
-          ${pkgs.systemd}/bin/udevadm wait --timeout=30 /dev/kvm
           ${pkgs.coreutils}/bin/install -d -g kvm -m 0710 ${builtins.dirOf dir}
           ${pkgs.coreutils}/bin/install -d -o ${base} -g ${base} -m 0700 ${dir}
           ${pkgs.util-linux}/bin/mountpoint -q ${dir} \
             || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${dir} ${dir}
-          ${ip} link show ${instance.tap} >/dev/null 2>&1 \
-            || ${ip} tuntap add ${instance.tap} mode tap group kvm vnet_hdr
         '';
       };
     };
@@ -584,8 +572,8 @@ rec {
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       brokeredForwards = lib.filter (forward: forward.broker != null) options.hostForwards;
-      # the ports also name the socket units on both frontends; the listen
-      # address is no separator, a second bind on the port fails either way
+      # the ports also name the socket units; the listen address is no
+      # separator, a second bind on the port fails either way
       forwardEndpoints =
         map (forward: "tcp:${toString forward.listenPort}") guest.expose
         ++ map (forward: "vsock:${toString forward.vsockPort}") guest.hostForwards;
@@ -602,19 +590,20 @@ rec {
     ) "host listen endpoints must be unique across instances";
 
   hostUnits =
-    pkgs: instance: frontend:
+    pkgs: instance:
     let
-      inherit (frontend) forwardName;
-      inherit (frontend) hostForwardName;
-      inherit (frontend) proxyName;
-      inherit (frontend) brokerName;
+      vmUnit = vmUnitOf instance.name;
+      forwardName = forward: "${instance.name}-forward-${toString forward.listenPort}";
+      hostForwardName = forward: "${instance.name}-host-forward-${toString forward.vsockPort}";
+      proxyName = "${instance.name}-egress-proxy";
+      brokerName = forward: "${instance.name}-broker-${toString forward.vsockPort}";
       forwardServices = map (forward: {
         name = "${forwardName forward}@";
-        value = exposeUnits.service pkgs instance frontend.vmUnit forward;
+        value = exposeUnits.service pkgs instance vmUnit forward;
       }) instance.expose;
       hostForwardServices = map (forward: {
         name = "${hostForwardName forward}@";
-        value = hostForwardUnits.service pkgs instance frontend.vmUnit forward;
+        value = hostForwardUnits.service pkgs instance vmUnit forward;
       }) instance.hostForwards;
       brokerServices = map (forward: {
         name = brokerName forward;
@@ -645,12 +634,12 @@ rec {
         };
       sockets = lib.listToAttrs (forwardSockets ++ hostForwardSockets);
       # what the guest system is built against: the resolved contract plus
-      # where the frontend's vm unit stages each secret for fw_cfg
+      # where the vm unit stages each secret for fw_cfg
       guest = instance.guest // {
-        credentialFiles = credentialFilesOf frontend.vmUnit instance.guest.secretNames;
+        credentialFiles = credentialFilesOf vmUnit instance.guest.secretNames;
       };
       unitNames = {
-        vm = frontend.vmUnit;
+        vm = vmUnit;
         sockets =
           map (forward: {
             unit = "${forwardName forward}.socket";
@@ -729,51 +718,34 @@ rec {
       iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
     '';
 
-  # the seal as complete nftables tables. both frontends install exactly this
-  # text: the nixos module as networking.nftables.tables, the flakelet unit
-  # with nft -f. the tables stand on their own so no frontend chain runs
-  # ahead of them, and so the same text can be loaded and probed in a test.
-  # both chains sit one below filter: a host chain at the same priority
-  # would tie
-  firewallOf =
-    cfg:
-    let
-      tables = {
-        "fencr-${cfg.name}-nat" = {
-          family = "ip";
-          content = ''
-            chain postrouting {
-              type nat hook postrouting priority srcnat; policy accept;
-              ${natRuleFragment cfg}
-            }
-          '';
-        };
-        "fencr-${cfg.name}" = {
-          family = "inet";
-          content = ''
-            chain forward {
-              type filter hook forward priority filter - 1; policy accept;
-              ${forwardFilterFragment cfg}
-              oifname "${cfg.bridge}" drop
-            }
-            chain input {
-              type filter hook input priority filter - 1; policy accept;
-              ${sealInputFragment cfg cfg.hostPorts}
-            }
-          '';
-        };
-      };
-    in
-    {
-      inherit tables;
-      standalone = lib.concatStrings (
-        lib.mapAttrsToList (name: table: ''
-          table ${table.family} ${name} {
-            ${table.content}
-          }
-        '') tables
-      );
+  # the seal as complete nftables tables for networking.nftables.tables. they
+  # stand on their own so no host chain runs ahead of them; both chains sit
+  # one below filter, since a host chain at the same priority would tie
+  firewallOf = cfg: {
+    "fencr-${cfg.name}-nat" = {
+      family = "ip";
+      content = ''
+        chain postrouting {
+          type nat hook postrouting priority srcnat; policy accept;
+          ${natRuleFragment cfg}
+        }
+      '';
     };
+    "fencr-${cfg.name}" = {
+      family = "inet";
+      content = ''
+        chain forward {
+          type filter hook forward priority filter - 1; policy accept;
+          ${forwardFilterFragment cfg}
+          oifname "${cfg.bridge}" drop
+        }
+        chain input {
+          type filter hook input priority filter - 1; policy accept;
+          ${sealInputFragment cfg cfg.hostPorts}
+        }
+      '';
+    };
+  };
 
   # the environment itself: hardware shape, network posture, and a /var/lib
   # that survives reboots so whatever is installed inside keeps its state.

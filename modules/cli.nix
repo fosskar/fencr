@@ -1,7 +1,6 @@
 # the fencr command: read-only convenience over the declared instances.
-# mutation stays with the real control planes (nixos-rebuild, flakelet
-# update). the instance table is baked at eval, so the binary needs no
-# manifest and no daemon.
+# mutation stays with nixos-rebuild. the instance table is baked at eval,
+# so the binary needs no manifest and no daemon.
 {
   lib,
   pkgs,
@@ -92,7 +91,6 @@ pkgs.writers.writeRustBin "fencr"
         eprintln!("  proxy <vm>       stdio splice to the vm's vsock sshd, for ProxyCommand");
         eprintln!("  status [vm]      vm health and traffic [--watch]; --full for systemctl");
         eprintln!("  dashboard        alias for status --watch [--once]");
-        eprintln!("  update <vm>      delegate to flakelet update (errors on a declarative install)");
         eprintln!();
         eprintln!("  -H <host>        run the command on <host> over ssh (fencr must be installed there)");
         exit(1)
@@ -363,13 +361,6 @@ pkgs.writers.writeRustBin "fencr"
         }
     }
 
-    fn flakelet_path() -> Option<String> {
-        let path = env::var("PATH").ok()?;
-        path.split(':')
-            .map(|dir| format!("{dir}/flakelet"))
-            .find(|candidate| std::path::Path::new(candidate).is_file())
-    }
-
     fn main() {
         let args: Vec<String> = env::args().skip(1).collect();
         if args.first().map(String::as_str) == Some("-H") {
@@ -422,19 +413,6 @@ pkgs.writers.writeRustBin "fencr"
                         .exec());
                 }
                 show(name, args.iter().any(|a| a == "--watch"));
-            }
-            Some("update") => {
-                // flakelet owns its namespace, so the name passes through
-                // unchecked against the baked table
-                let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-                match flakelet_path() {
-                    Some(flakelet) => fail(Command::new(flakelet).arg("update").arg(name).exec()),
-                    None => {
-                        eprintln!("fencr: no flakelet on this host; the sandbox is part of the");
-                        eprintln!("system configuration. change it there and run nixos-rebuild.");
-                        exit(1)
-                    }
-                }
             }
             _ => usage(),
         }

@@ -40,8 +40,6 @@
         default = self.nixosModules.fencr;
       };
 
-      flakelets.default = import ./modules/flakelet.nix { inherit inputs; };
-
       # nixbot scheduled effects: flake input updates.
       herculesCI = import ./effects.nix {
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
@@ -56,14 +54,11 @@
             modules = [ (import ./checks/nixos-module.nix self pkgs.stdenv.hostPlatform.system) ];
           }).config.system.build.toplevel;
 
+        core = import ./checks/core.nix self pkgs;
+
         cli = import ./checks/cli.nix self pkgs;
 
-        flakelet = import ./checks/flakelet.nix self pkgs;
-
-        flakelet-boot = import ./checks/flakelet-boot.nix self pkgs;
-
         nixos-boot = import ./checks/nixos-boot.nix self pkgs;
-
       });
 
       devShells = forAllSystems (pkgs: {

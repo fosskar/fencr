@@ -49,5 +49,3 @@ Day-two reading, when a need appears and not before:
 - [access.md](access.md) — ssh from other machines, the fencr command
 - [decisions/credential-brokering.md](decisions/credential-brokering.md)
   — using an api without the key ever entering the vm
-- [decisions/flakelet-module.md](decisions/flakelet-module.md) — updating
-  the sandbox independently of the host

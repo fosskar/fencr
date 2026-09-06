@@ -62,11 +62,8 @@ fencr ssh sbx     # shell in the vm
 fencr status sbx  # the vm unit plus its forward/proxy/broker units
 ```
 
-`fencr update <vm>` delegates to `flakelet update <vm>` when flakelet
-manages this host's sandboxes; on a declarative install it errors and
-points at the system configuration — there, `nixos-rebuild` is the
-control plane. That delegation is the only write-shaped command, and
-the write belongs to flakelet.
+Every command is a read; changing a vm means changing the system
+configuration and running `nixos-rebuild`.
 
 ## host root, stated plainly
 

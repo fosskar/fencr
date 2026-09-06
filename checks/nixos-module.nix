@@ -55,7 +55,8 @@ in
     {
       assertion =
         guestConfig.microvm.hypervisor == "crosvm"
-        && config.systemd.services."fencr-sbx".serviceConfig.DynamicUser
+        && config.systemd.services."fencr-sbx".serviceConfig.User == "fencr-sbx"
+        && config.users.users."fencr-sbx".group == "kvm"
         && config.systemd.services."fencr-sbx".serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
         && config.systemd.services."fencr-sbx".requires == [ "sbx-setup.service" ];
       message = "nixos module check: hypervisor unit drifted";

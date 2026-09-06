@@ -31,9 +31,7 @@ fencr.vms.myagent = {
 };
 ```
 
-No daemon, no API server, no YAML. `nixos-rebuild` is the control plane —
-or [flakelet](https://github.com/Mic92/flakelet), if the sandbox should
-update independently of the host (`flakelets.default`).
+No daemon, no API server, no YAML. `nixos-rebuild` is the control plane.
 
 ## What you get
 

@@ -139,11 +139,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'grep -qwE \"svm|vmx\" /proc/cpuinfo'", timeout=60)
       host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
       host.succeed("findmnt -n -o OPTIONS /var/lib/fencr-vms/sbx | grep nosuid | grep nodev | grep -q noexec")
-      host.succeed(f"{ssh} 'cp /run/current-system/sw/bin/true /var/lib/fencr-probe'", timeout=60)
+      host.succeed(f"{ssh} 'cp /run/current-system/sw/bin/true /var/lib/fencr-probe && chmod 4755 /var/lib/fencr-probe'", timeout=60)
+      host.succeed("test -u /var/lib/fencr-vms/sbx/fencr-probe")
       host.fail("/var/lib/fencr-vms/sbx/fencr-probe")
       host.succeed("test \"$(stat -c %u /var/lib/fencr-vms/sbx/fencr-probe)\" = 1000000")
-      # the vm unit's throwaway uid forbids setuid bits on the state tree
-      host.fail(f"{ssh} 'chmod u+s /var/lib/fencr-probe'", timeout=60)
       host.succeed(f"{ssh} 'install -d -o nobody -g nogroup /var/lib/fencr-user && su nobody -s /bin/sh -c \"touch /var/lib/fencr-user/file\"'", timeout=60)
       host.succeed("test \"$(stat -c %u /var/lib/fencr-vms/sbx/fencr-user/file)\" = $((1000000 + 65534))")
 

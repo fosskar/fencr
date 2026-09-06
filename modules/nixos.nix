@@ -29,16 +29,7 @@ let
       sshKeys = sshKeysOf options;
     }
   ) instances;
-  unitSets = lib.mapAttrs (
-    name: instance:
-    core.hostUnits pkgs instance {
-      vmUnit = "fencr-${name}.service";
-      forwardName = forward: "${name}-forward-${toString forward.listenPort}";
-      hostForwardName = forward: "${name}-host-forward-${toString forward.vsockPort}";
-      proxyName = "${name}-egress-proxy";
-      brokerName = forward: "${name}-broker-${toString forward.vsockPort}";
-    }
-  ) resolvedInstances;
+  unitSets = lib.mapAttrs (_: core.hostUnits pkgs) resolvedInstances;
   exposeType = lib.types.coercedTo lib.types.str core.parseExpose (
     lib.types.submodule {
       options = {
@@ -60,8 +51,7 @@ let
     }
   );
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
-  # the guest evaluates against the host's nixpkgs, as a microvm.nix host
-  # module would do it
+  # the guest evaluates against the host's nixpkgs
   guestSystems = lib.mapAttrs (
     name: cfg:
     import "${pkgs.path}/nixos/lib/eval-config.nix" {
@@ -309,6 +299,15 @@ in
       ) resolvedInstances
     );
 
+    users.users = forEachInstance (
+      name: _: {
+        ${core.userOf name} = {
+          isSystemUser = true;
+          group = "kvm";
+        };
+      }
+    );
+
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
         "fencr-${name}" = core.vmService instance guestSystems.${name}.config.microvm.declaredRunner;
@@ -334,19 +333,31 @@ in
     # runs first and admits only the bridge's declared allowedTCPPorts
     networking.nftables.tables = forEachInstance (
       _: cfg:
-      (core.firewallOf (
+      core.firewallOf (
         cfg
         // {
           hostPorts = lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts;
         }
-      )).tables
+      )
     );
 
+    # crosvm attaches the tap by name with a virtio header and one queue, so
+    # it is persistent and its flags match; group kvm lets the vm unit open it
     systemd.network = forEachInstance (
       _name: cfg: {
         netdevs."10-${cfg.bridge}".netdevConfig = {
           Name = cfg.bridge;
           Kind = "bridge";
+        };
+        netdevs."11-${cfg.tap}" = {
+          netdevConfig = {
+            Name = cfg.tap;
+            Kind = "tap";
+          };
+          tapConfig = {
+            Group = "kvm";
+            VNetHeader = true;
+          };
         };
         networks."10-${cfg.bridge}" = {
           matchConfig.Name = cfg.bridge;
