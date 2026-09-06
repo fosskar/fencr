@@ -124,7 +124,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       target.wait_for_unit("target-8123.service")
       target.wait_for_unit("target-80.service")
-      host.wait_for_unit("sbx.service", timeout=1200)
+      host.wait_for_unit("fencr-sbx.service", timeout=1200)
       host.wait_for_unit("sbx-forward-22100.socket")
       host.wait_until_succeeds("curl --fail --silent http://127.0.0.1:22100 | grep -Fx 'fencr ingress'", timeout=120)
       host.fail("nc -z -w 2 10.30.1.2 22")

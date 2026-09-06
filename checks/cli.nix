@@ -22,7 +22,7 @@ let
     };
   };
   units = core.hostUnits pkgs instance {
-    vmUnit = "sbx.service";
+    vmUnit = "fencr-sbx.service";
     forwardName = forward: "sbx-forward-${toString forward.listenPort}";
     hostForwardName = forward: "sbx-host-forward-${toString forward.vsockPort}";
     proxyName = "sbx-egress-proxy";
@@ -78,7 +78,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   EOF
   diff -u expected actual
   cat > expected-queries <<'EOF'
-  show sbx.service --property=LoadState,ActiveState,MemoryCurrent
+  show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent
   show sbx-forward-33627.socket --property=LoadState,ActiveState,NAccepted,NConnections
   show sbx-host-forward-18764.socket --property=LoadState,ActiveState,NAccepted,NConnections
   show sbx-host-forward-13128.socket --property=LoadState,ActiveState,NAccepted,NConnections

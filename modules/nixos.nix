@@ -32,7 +32,7 @@ let
   unitSets = lib.mapAttrs (
     name: instance:
     core.hostUnits pkgs instance {
-      vmUnit = "${name}.service";
+      vmUnit = "fencr-${name}.service";
       forwardName = forward: "${name}-forward-${toString forward.listenPort}";
       hostForwardName = forward: "${name}-host-forward-${toString forward.vsockPort}";
       proxyName = "${name}-egress-proxy";
@@ -311,7 +311,7 @@ in
 
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
-        ${name} = core.vmService instance guestSystems.${name}.config.microvm.declaredRunner;
+        "fencr-${name}" = core.vmService instance guestSystems.${name}.config.microvm.declaredRunner;
         "${name}-setup" = core.setupService pkgs instance;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)

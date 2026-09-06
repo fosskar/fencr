@@ -49,15 +49,15 @@ in
       message = "nixos module check: egress is not closed by default";
     }
     {
-      assertion = builtins.elem "name=opt/io.systemd.credentials/raw,path=/run/credentials/sbx.service/raw" guestConfig.microvm.crosvm.extraArgs;
+      assertion = builtins.elem "name=opt/io.systemd.credentials/raw,path=/run/credentials/fencr-sbx.service/raw" guestConfig.microvm.crosvm.extraArgs;
       message = "nixos module check: raw secret is not transported as a systemd credential";
     }
     {
       assertion =
         guestConfig.microvm.hypervisor == "crosvm"
-        && config.systemd.services.sbx.serviceConfig.DynamicUser
-        && config.systemd.services.sbx.serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
-        && config.systemd.services.sbx.requires == [ "sbx-setup.service" ];
+        && config.systemd.services."fencr-sbx".serviceConfig.DynamicUser
+        && config.systemd.services."fencr-sbx".serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
+        && config.systemd.services."fencr-sbx".requires == [ "sbx-setup.service" ];
       message = "nixos module check: hypervisor unit drifted";
     }
     {

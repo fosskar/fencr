@@ -118,7 +118,7 @@ let
     ];
   };
   expectedUnits = [
-    "sbx"
+    "fencr-sbx"
     "sbx-setup"
     "fwd-33627@"
     "fwd-33628@"
@@ -198,28 +198,28 @@ assert lib.assertMsg (
   ) == 2
 ) "core check: duplicate fleet resources accepted";
 assert lib.assertMsg (
-  result.services."fwd-33627@".after == [ "sbx.service" ]
+  result.services."fwd-33627@".after == [ "fencr-sbx.service" ]
 ) "unit check: vm dependency drifted";
 assert lib.assertMsg result.services."fwd-33627@".serviceConfig.DynamicUser
   "unit check: flakelet forward identity drifted";
-assert lib.assertMsg result.services.sbx.serviceConfig.DynamicUser
+assert lib.assertMsg result.services."fencr-sbx".serviceConfig.DynamicUser
   "unit check: flakelet vm runs as root";
 assert lib.assertMsg (
-  result.services.sbx.serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
+  result.services."fencr-sbx".serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
 ) "unit check: flakelet credential transport drifted";
 assert lib.assertMsg (
-  result.services.sbx.serviceConfig.MemoryMax == core.defaults.memoryMax
-  && result.services.sbx.serviceConfig.CPUQuota == core.defaults.cpuQuota
+  result.services."fencr-sbx".serviceConfig.MemoryMax == core.defaults.memoryMax
+  && result.services."fencr-sbx".serviceConfig.CPUQuota == core.defaults.cpuQuota
 ) "unit check: flakelet vm has no resource cap";
 assert lib.assertMsg (
-  result.services.sbx.serviceConfig.CapabilityBoundingSet == "CAP_SETUID CAP_SETGID"
-  && result.services.sbx.serviceConfig.DevicePolicy == "closed"
+  result.services."fencr-sbx".serviceConfig.CapabilityBoundingSet == "CAP_SETUID CAP_SETGID"
+  && result.services."fencr-sbx".serviceConfig.DevicePolicy == "closed"
   &&
-    result.services.sbx.serviceConfig.RestrictAddressFamilies == [
+    result.services."fencr-sbx".serviceConfig.RestrictAddressFamilies == [
       "AF_UNIX"
       "AF_INET"
     ]
-  && result.services.sbx.requires == [ "sbx-setup.service" ]
+  && result.services."fencr-sbx".requires == [ "sbx-setup.service" ]
 ) "unit check: flakelet vm confinement drifted";
 assert lib.assertMsg (resolved.uidBase == 1000000) "core check: wrong uid base";
 assert lib.assertMsg (

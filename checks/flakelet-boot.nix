@@ -88,9 +88,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       testScript = ''
         ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - VSOCK-CONNECT:3:22' root@sbx"
 
-        host.wait_for_unit("sbx.service", timeout=1200)
+        host.wait_for_unit("fencr-sbx.service", timeout=1200)
         # the vm unit must come up once, not survive on a restart
-        host.succeed("test \"$(systemctl show sbx.service -p NRestarts --value)\" = 0")
+        host.succeed("test \"$(systemctl show fencr-sbx.service -p NRestarts --value)\" = 0")
 
         # the vsock door first: it belongs to the guest base, so it proves the
         # transport before anything the payload provides
@@ -112,7 +112,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         host.wait_until_succeeds("curl --fail --silent http://127.0.0.1:22100 | grep -Fx 'fencr ingress'", timeout=120)
 
         host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
-        host.succeed("systemctl show sbx.service -p MemoryMax --value | grep -qv infinity")
+        host.succeed("systemctl show fencr-sbx.service -p MemoryMax --value | grep -qv infinity")
       '';
 
       meta.timeout = 1800;

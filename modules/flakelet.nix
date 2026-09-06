@@ -131,7 +131,7 @@ in
         else
           throw "fencr: ${lib.concatStringsSep "; " resolved.errors}";
       units = core.hostUnits hostPkgs instance {
-        vmUnit = "${name}.service";
+        vmUnit = "fencr-${name}.service";
         forwardName = forward: "fwd-${toString forward.listenPort}";
         hostForwardName = forward: "hfwd-${toString forward.vsockPort}";
         proxyName = "egress-proxy";
@@ -181,7 +181,7 @@ in
     {
       services = {
         "${name}-setup" = core.setupService hostPkgs instance;
-        ${name} = lib.recursiveUpdate (core.vmService instance runner) {
+        "fencr-${name}" = lib.recursiveUpdate (core.vmService instance runner) {
           serviceConfig = {
             ExecStartPre = "+${setupScript}";
             ExecStopPost = "+${teardownScript}";
