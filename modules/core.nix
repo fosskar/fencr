@@ -115,10 +115,9 @@ rec {
     ];
   };
 
-  # crosvm needs three device nodes, unix sockets, AF_INET for the tap ioctls
-  # only, and CAP_SETUID/CAP_SETGID only to map guest uids onto the vm's
-  # range. its jails remount /proc, and its file device applies the guest's
-  # modes and umask, so those four knobs of the shared set stay off
+  # AF_INET is for the tap ioctls only, the two capabilities for the uid map
+  # only. crosvm's jails remount /proc and its file device applies the
+  # guest's modes, so those four knobs of the shared set stay off
   vmServiceConfig =
     { instance, writablePaths }:
     removeAttrs hardened [
@@ -152,13 +151,10 @@ rec {
       AmbientCapabilities = "CAP_SETUID CAP_SETGID";
     };
 
-  # what must exist before the vm unit starts: the device nodes its
-  # DeviceAllow resolves at start, and the state tree. guest root is an
-  # unprivileged host uid and no two vms share an owner. the guest sets the
-  # tree's own mode through the file device, so the parent is what keeps
-  # host users outside group kvm out (the vm user needs to traverse it). a
-  # unit of its own, because a mount from the vm unit's ExecStartPre stays
-  # in that unit's namespace
+  # the vm unit's DeviceAllow resolves nodes when it starts, so the modules
+  # load here. the guest sets its tree root's mode itself, so the parent is
+  # what keeps host users outside group kvm out. a unit of its own: a mount
+  # from the vm unit's ExecStartPre stays in that unit's namespace
   setupService =
     pkgs: instance:
     let
@@ -741,9 +737,8 @@ rec {
       ...
     }:
     let
-      # microvm.nix's crosvm runner attaches the store image with the
-      # deprecated -r, which makes crosvm add root=/dev/vda to the kernel
-      # command line and the systemd initrd fails on two root mounts
+      # microvm.nix's crosvm runner uses the deprecated -r, whose root=/dev/vda
+      # breaks the systemd initrd, and boots the 380 MiB unstripped vmlinux
       patchedMicrovm = pkgs.applyPatches {
         name = "microvm.nix";
         src = microvmSrc;
