@@ -62,7 +62,7 @@
 
         flakelet-boot = import ./checks/flakelet-boot.nix self pkgs;
 
-        ingress = import ./checks/ingress.nix self pkgs;
+        nixos-boot = import ./checks/nixos-boot.nix self pkgs;
 
         crosvm-credentials = import ./checks/crosvm-credentials.nix self pkgs;
       });

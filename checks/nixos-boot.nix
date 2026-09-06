@@ -1,4 +1,8 @@
 self: pkgs:
+
+# Boots the nixos surface end to end: a fencr vm on a nixos host beside a
+# second machine on a test lan, then real traffic through the forward, ssh
+# over vsock, the secret, the seal, the broker and the state tree.
 let
   inherit (import (pkgs.path + "/nixos/tests/ssh-keys.nix") pkgs)
     snakeOilEd25519PrivateKey
@@ -25,7 +29,7 @@ let
 in
 import (pkgs.path + "/nixos/tests/make-test-python.nix")
   ({ pkgs, ... }: {
-    name = "fencr-ingress";
+    name = "fencr-nixos-boot";
 
     nodes.host = {
       imports = [ self.nixosModules.fencr ];
