@@ -1,7 +1,7 @@
-# crosvm over qemu (proposed)
+# crosvm over qemu
 
-Status: proposed, tracked in the crosvm pull request. `qemu` stays until the
-port has run on a real host.
+Accepted 2026-09-06 after a run on a real host (nixbox, one agent vm with
+three services and a migrated state tree).
 
 fencr moves its microvms from qemu to crosvm. The reason that kept qemu over
 cloud-hypervisor does not apply: crosvm on Linux uses the kernel's vhost-vsock,
@@ -53,6 +53,8 @@ ioctls; crosvm opens no network socket.
   `crosvm.extraArgs`
 - microvm.nix's crosvm runner attaches the store image with the deprecated
   `-r`, which makes crosvm add `root=/dev/vda` to the kernel command line and
-  the systemd initrd fails on two root mounts. fencr applies a one-line patch
-  to the runner at evaluation time (`modules/microvm-crosvm-block.patch`,
-  import from derivation); it goes away once upstream takes `--block`
+  the systemd initrd fails on two root mounts; it also boots the unstripped
+  `vmlinux`, 380 MiB per guest, where crosvm takes the bzImage. fencr applies
+  a two-line patch to the runner at evaluation time
+  (`modules/microvm-crosvm-block.patch`, import from derivation); it goes
+  away once upstream takes both
