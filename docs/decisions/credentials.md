@@ -1,26 +1,22 @@
 # credentials
 
-Secrets reach a vm in one of two ways, and only one of them exposes the
-value:
+A secret reaches a vm in exactly one way, and the value never enters it.
+`fencr.credentials.<name>` declares the credential once on the host: an
+`upstream` such as `https://api.anthropic.com`, the `header` it travels in,
+and the `secretFile` holding the raw header value. `fencr.vms.<vm>.credentials`
+grants it to a vm by name. Inside that vm the credential is one loopback
+port, `agentSandbox.credentials.<name>.port`; a payload module points its
+client there, for example `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`. The
+request crosses vsock, and a host-side proxy (caddy) injects the header and
+sends it on. The agent can use the credential but cannot read, log or
+exfiltrate it.
 
-1. `secrets` passes host files through `fw_cfg` as systemd credentials. An
-   early guest service materializes mode-0400 copies in the volatile
-   `/run/agent-secrets`. The agent reads the real value. A prompt-injected
-   agent can print it. The values never occupy persistent guest storage.
-1. `fencr.credentials.<name>` never lets the value into the vm. The host
-   declares the credential once: an `upstream` such as
-   `https://api.anthropic.com`, the `header` it travels in, and the
-   `secretFile` holding the raw header value. `fencr.vms.<vm>.credentials`
-   grants it to a vm by name. Inside that vm the credential is one loopback
-   port, `agentSandbox.credentials.<name>.port`; a payload module points
-   its client there, for example
-   `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`. The request crosses vsock,
-   and a host-side proxy (caddy) injects the header and sends it on. The
-   agent can use the credential but cannot read, log or exfiltrate it.
-
-Prefer a granted credential for anything http. Use raw `secrets` only where
-the payload needs the value itself (non-http protocols, client libraries
-that insist on a key file).
+There is no second way. `secrets`, which copied host files into the vm's
+volatile `/run/agent-secrets`, was removed on 2026-09-06: a prompt-injected
+agent could print those files, and a sandbox with an escape hatch for the
+one thing it exists to hold is not a sandbox. A program that needs a secret
+value itself gets one made inside the vm, a session token for its own
+dashboard for example, which is worth nothing outside it.
 
 ## what a granted credential protects, stated plainly
 

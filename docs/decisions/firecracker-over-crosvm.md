@@ -1,9 +1,9 @@
-# firecracker over crosvm (proposed)
+# firecracker over crosvm
 
-Status: proposed 2026-09-06, tracked in the firecracker pull request. crosvm
-stays until a port has passed `checks.nixos-boot` and run on a real host.
-Three changes come first and do not depend on the hypervisor; the decision
-is taken after them, on a test result.
+Accepted 2026-09-06: the port passed `checks.nixos-boot` with the check's
+assertions unchanged, under nested kvm. The three prerequisites below had
+landed first. What the port found on the way is under "what the port
+changes"; what it costs is at the end.
 
 ## what changed since crosvm-over-qemu.md
 
@@ -24,9 +24,8 @@ assumed:
   vm's own runtime directory, owned by the vm's user, the path is the
   identity. Host-to-guest needs a `CONNECT <port>` handshake, which the
   relay can do.
-- fw_cfg is only needed for raw `secrets`. systemd also reads
-  `systemd.set_credential=` from the kernel command line, and firecracker's
-  boot arguments live in its configuration, not in host argv.
+- fw_cfg was only needed for raw `secrets`, and those are gone
+  (`credentials.md`), so no credential transport is needed at all.
 
 ## facts
 
@@ -50,44 +49,60 @@ Sources: firecracker `README.md`, `CREDITS.md`, `docs/design.md`,
   throws on virtio-fs shares and on `credentialFiles`. After the
   prerequisites below neither is used, so the runner needs no patch
 
-## prerequisites, hypervisor-independent
+## prerequisites, hypervisor-independent, all landed first
 
-1. block image for the state tree. Removes virtio-fs, the uid range,
+1. block image for the state tree. Removed virtio-fs, the uid range,
    `CAP_SETUID`/`CAP_SETGID` on the vm unit, the bind mount and the setup
    unit, on crosvm as well
-1. credential gateway (issue 6). Raw `secrets` become the escape hatch and
-   the only user of a hypervisor credential transport
+1. credentials declared once and granted by name, and raw `secrets`
+   removed with them
 1. transparent SNI proxy for `allowedDomains`. Not required for the port;
-   listed because it replaces tinyproxy and the guest proxy environment
-   and so belongs in the same sequence
+   it replaced tinyproxy and the guest proxy environment in the same
+   sequence
 
 ## what the port changes
 
-- `fencr-vsock-forward` and `fencr proxy` learn the handshake; the
-  `ssh <vm>` alias uses `fencr proxy`
-- host forward sockets become `ListenStream=/run/fencr-<name>/v.sock_<port>`
-  in the vm's runtime directory; the relay's cid check becomes the socket's
-  owner and mode
-- raw `secrets` ride `systemd.set_credential_binary=` on the kernel command
-  line; the fw_cfg ssdt and the microvm.nix patch go away
-- `--nested mode=off` has no equivalent; the boot check already asserts the
-  guest sees neither `svm` nor `vmx` and decides this
+- firecracker's vsock on the host is a unix socket, `/run/fencr-<vm>/vsock`,
+  created by firecracker as the vm's user; the vm unit's umask lets group
+  kvm, the relays, open it. The runner's own path for it lives in the
+  working directory and is wiped on every start, so fencr names its own
+- guest-to-host forwards are socket units on `/run/fencr-<vm>/vsock_<port>`,
+  owned by the vm's user with mode 0600: the path is the identity, only that
+  vm's firecracker can open it. The relay's cid check and its unsafe
+  `getpeername` went away
+- host-to-guest relays and the ssh door speak firecracker's `CONNECT <port>`
+  handshake through `fencr-vsock-forward connect`. The ssh door is a socket
+  every host account may open, `/run/fencr-ssh-<vm>`, so the access model
+  (`ssh-access-model.md`) holds unchanged
+- the guest must not see the host's virtualization flags. crosvm had
+  `--nested mode=off`; firecracker takes a cpu template that clears two
+  cpuid bits, generated from the bit numbers
+- firecracker's only shutdown signal is an emulated keyboard's
+  ctrl-alt-del, and the nixos kernel's `i8042` driver fails to probe that
+  keyboard. fencr does not use it: the guest runs a power button on vsock
+  port 4 that reboots on any connection, which is how a firecracker guest
+  ends, since firecracker exits on cpu reset and a power-off only halts.
+  The stop script presses it and waits for firecracker to exit. Only the
+  vm's user and the relays can open the vsock. The boot check fails on a
+  stop timeout
+- firecracker leaves its vsock socket behind; the unit removes it before
+  each start
+- the microvm.nix patch, the fw_cfg ssdt, the user-namespace assertion, the
+  vhost-vsock device and the `vhost_vsock` module go away
 
-## decide by
+## cost
 
-A branch where `checks.nixos-boot` passes under firecracker, unchanged in
-what it asserts, plus:
+- no memory balloon: microvm.nix's firecracker runner refuses it, so a vm
+  keeps its `MemoryMax` cap but does not return unused memory to the host
+- the runner boots the unstripped `vmlinux` from the kernel's `dev` output;
+  larger closure per guest than crosvm's bzImage
+- the boot check's host needs `-cpu host`: firecracker requires
+  `KVM_CAP_XCRS`, which the synthetic `kvm64` model does not offer a nested
+  hypervisor. A real host offers it
+- a policy crosvm expressed as one flag is thirty lines of cpu template
 
-- the check runs under nested kvm, as it does today
-- balloon returns memory to the host; `MemoryMax` holds
-- boot time and resident memory of the vm unit, beside crosvm's
+## why it is still the better trade
 
-If it passes, firecracker is the simpler system: fewer devices, versioned,
-no patches, the hypervisor the field settled on. If it fails on something
-structural, this record is closed with the reason and crosvm stays.
-
-## cost of not switching
-
-crosvm is a rolling main with no releases; fencr carries a two-line patch
-to microvm.nix's runner and an ssdt for fw_cfg, and turns KSM off because
-crosvm marks all guest memory mergeable.
+Fewer devices, one process, versioned releases, no patch to carry, and the
+hypervisor the field settled on. Against `main` the port removed more lines
+than it added.

@@ -66,12 +66,18 @@ in
       message = "nixos module check: egress is not closed by default";
     }
     {
-      assertion = builtins.elem "name=opt/io.systemd.credentials/raw,path=/run/credentials/fencr-sbx.service/raw" guestConfig.microvm.crosvm.extraArgs;
-      message = "nixos module check: raw secret is not transported as a systemd credential";
+      assertion =
+        config.systemd.sockets."sbx-ssh".socketConfig.ListenStream == "/run/fencr-ssh-sbx"
+        &&
+          config.systemd.sockets."sbx-host-forward-18764".socketConfig.ListenStream
+          == "/run/fencr-sbx/vsock_18764"
+        && config.systemd.sockets."sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
+        && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
+      message = "nixos module check: the vsock sockets are not the vm's own";
     }
     {
       assertion =
-        guestConfig.microvm.hypervisor == "crosvm"
+        guestConfig.microvm.hypervisor == "firecracker"
         && config.systemd.services."fencr-sbx".serviceConfig.User == "fencr-sbx"
         && config.users.users."fencr-sbx".group == "kvm"
         && config.systemd.services."fencr-sbx".serviceConfig.CapabilityBoundingSet == ""
@@ -105,7 +111,6 @@ in
     vcpu = 2;
     mem = 1024;
     dns = "9.9.9.9";
-    secrets.raw = "/run/secrets/raw";
     hostPorts = [ 443 ];
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [

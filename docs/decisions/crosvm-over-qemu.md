@@ -1,5 +1,8 @@
 # crosvm over qemu
 
+Superseded the same day by `firecracker-over-crosvm.md`; kept for the
+reasoning that still holds, the rejection of qemu and cloud-hypervisor.
+
 Accepted 2026-09-06 after a run on a real host (nixbox, one agent vm with
 three services and a migrated state tree).
 

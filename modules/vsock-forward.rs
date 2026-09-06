@@ -1,159 +1,138 @@
-use std::io::{self, Read, Write};
+//! the host end of a forward on firecracker's unix-socket vsock.
+//! `serve <target>` takes a connection the guest opened, accepted by systemd
+//! on `<uds>_<port>` and handed over as stdin, and splices it to a host
+//! loopback port or a unix socket path. `connect <uds> <port>` splices stdio
+//! to a guest port through firecracker's CONNECT handshake.
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 use std::thread;
 
-const AF_VSOCK: u16 = 40;
-
-#[repr(C)]
-struct SockaddrVm {
-    family: u16,
-    reserved: u16,
-    port: u32,
-    cid: u32,
-    zero: [u8; 4],
-}
-
-unsafe extern "C" {
-    fn getpeername(fd: RawFd, address: *mut SockaddrVm, length: *mut u32) -> i32;
-}
-
-fn peer_cid(fd: RawFd) -> io::Result<u32> {
-    let mut address = SockaddrVm {
-        family: 0,
-        reserved: 0,
-        port: 0,
-        cid: 0,
-        zero: [0; 4],
-    };
-    let mut length = std::mem::size_of::<SockaddrVm>() as u32;
-    let result = unsafe { getpeername(fd, &mut address, &mut length) };
-    if result != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if address.family != AF_VSOCK || length < std::mem::size_of::<SockaddrVm>() as u32 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "accepted socket is not a vsock connection",
-        ));
-    }
-    Ok(address.cid)
-}
-
-/// the host side of a forward: a loopback tcp port, or the credential
-/// proxy's unix socket
-enum Target {
+enum Stream {
     Tcp(TcpStream),
     Unix(UnixStream),
 }
 
-impl Target {
-    fn connect(spec: &str) -> io::Result<Target> {
+impl Stream {
+    fn connect(spec: &str) -> io::Result<Stream> {
         if let Some(path) = spec.strip_prefix("unix:") {
-            return UnixStream::connect(path).map(Target::Unix);
+            return UnixStream::connect(path).map(Stream::Unix);
         }
         let port = spec
             .parse::<u16>()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid target port"))?;
-        TcpStream::connect(("127.0.0.1", port)).map(Target::Tcp)
+        TcpStream::connect(("127.0.0.1", port)).map(Stream::Tcp)
     }
 
-    fn try_clone(&self) -> io::Result<Target> {
+    fn try_clone(&self) -> io::Result<Stream> {
         match self {
-            Target::Tcp(stream) => stream.try_clone().map(Target::Tcp),
-            Target::Unix(stream) => stream.try_clone().map(Target::Unix),
+            Stream::Tcp(stream) => stream.try_clone().map(Stream::Tcp),
+            Stream::Unix(stream) => stream.try_clone().map(Stream::Unix),
         }
     }
 
     fn shutdown_write(&self) -> io::Result<()> {
         match self {
-            Target::Tcp(stream) => stream.shutdown(Shutdown::Write),
-            Target::Unix(stream) => stream.shutdown(Shutdown::Write),
+            Stream::Tcp(stream) => stream.shutdown(Shutdown::Write),
+            Stream::Unix(stream) => stream.shutdown(Shutdown::Write),
         }
     }
 }
 
-impl Read for Target {
+impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
-            Target::Tcp(stream) => stream.read(buf),
-            Target::Unix(stream) => stream.read(buf),
+            Stream::Tcp(stream) => stream.read(buf),
+            Stream::Unix(stream) => stream.read(buf),
         }
     }
 }
 
-impl Write for Target {
+impl Write for Stream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            Target::Tcp(stream) => stream.write(buf),
-            Target::Unix(stream) => stream.write(buf),
+            Stream::Tcp(stream) => stream.write(buf),
+            Stream::Unix(stream) => stream.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            Target::Tcp(stream) => stream.flush(),
-            Target::Unix(stream) => stream.flush(),
+            Stream::Tcp(stream) => stream.flush(),
+            Stream::Unix(stream) => stream.flush(),
         }
     }
 }
 
-fn relay(mut client: TcpStream, mut target: Target) -> io::Result<()> {
+fn splice(mut client: Stream, mut target: Stream) -> io::Result<()> {
     let mut client_reader = client.try_clone()?;
     let mut target_writer = target.try_clone()?;
     let target_to_client = thread::spawn(move || {
         let result = io::copy(&mut target, &mut client);
-        let _ = client.shutdown(Shutdown::Write);
+        let _ = client.shutdown_write();
         result
     });
     let client_to_target = io::copy(&mut client_reader, &mut target_writer);
     let _ = target_writer.shutdown_write();
-    let target_to_client = target_to_client
+    target_to_client
         .join()
-        .map_err(|_| io::Error::other("vsock relay thread panicked"))?;
+        .map_err(|_| io::Error::other("relay thread panicked"))??;
     client_to_target?;
-    target_to_client?;
+    Ok(())
+}
+
+fn serve(target: &str) -> io::Result<()> {
+    let client = Stream::Unix(unsafe { UnixStream::from_raw_fd(0) });
+    splice(client, Stream::connect(target)?)
+}
+
+/// stdio is a socket systemd accepted or a pipe from ssh; the guest side
+/// closing ends the process, and stdin closing half-closes the guest side
+fn connect(uds: &str, port: u16) -> io::Result<()> {
+    let mut guest = UnixStream::connect(uds)?;
+    guest.write_all(format!("CONNECT {port}\n").as_bytes())?;
+    let mut reply = String::new();
+    BufReader::new(guest.try_clone()?).read_line(&mut reply)?;
+    if !reply.starts_with("OK ") {
+        return Err(io::Error::other(format!(
+            "guest port {port}: {}",
+            reply.trim()
+        )));
+    }
+    let mut guest_writer = guest.try_clone()?;
+    thread::spawn(move || {
+        let mut stdin = unsafe { File::from_raw_fd(0) };
+        let _ = io::copy(&mut stdin, &mut guest_writer);
+        let _ = guest_writer.shutdown(Shutdown::Write);
+    });
+    let mut stdout = unsafe { File::from_raw_fd(1) };
+    io::copy(&mut guest, &mut stdout)?;
     Ok(())
 }
 
 fn run() -> io::Result<()> {
-    let mut args = std::env::args();
-    let program = args
-        .next()
-        .unwrap_or_else(|| "agent-vsock-forward".to_owned());
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let usage = || {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("usage: {program} <peer-cid> <target-port|unix:<path>>"),
+            "usage: fencr-vsock-forward serve <target-port|unix:<path>> | connect <uds> <port>",
         )
     };
-    let expected_cid = args
-        .next()
-        .ok_or_else(usage)?
-        .parse::<u32>()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid peer cid"))?;
-    let target_spec = args.next().ok_or_else(usage)?;
-    if args.next().is_some() {
-        return Err(usage());
+    match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["serve", target] => serve(target),
+        ["connect", uds, port] => connect(uds, port.parse().map_err(|_| usage())?),
+        _ => Err(usage()),
     }
-    if peer_cid(0)? != expected_cid {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "vsock peer is not the expected guest",
-        ));
-    }
-    let client = unsafe { std::net::TcpStream::from_raw_fd(0) };
-    let target = Target::connect(&target_spec)?;
-    relay(client, target)
 }
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("agent-vsock-forward: {error}");
+            eprintln!("fencr-vsock-forward: {error}");
             ExitCode::FAILURE
         }
     }

@@ -9,7 +9,6 @@ let
     ;
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
-  rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
   credentialFile = pkgs.writeText "fencr-test-credential" "Bearer fencr-api-token\n";
   # the api behind the credential: echoes the Authorization header it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
@@ -54,7 +53,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         "-cpu"
         {
           aarch64-linux = "cortex-a72";
-          x86_64-linux = "kvm64,+svm,+vmx";
+          # firecracker needs xsave state (KVM_CAP_XCRS), which the synthetic
+          # kvm64 model does not offer a nested hypervisor
+          x86_64-linux = "host";
         }
         .${pkgs.stdenv.hostPlatform.system}
       ];
@@ -85,7 +86,6 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         vcpu = 1;
         mem = 768;
         authorizedKeys = [ snakeOilEd25519PublicKey ];
-        secrets.raw = rawSecret;
         # the seal: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
@@ -158,7 +158,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
     };
 
     testScript = ''
-      ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - VSOCK-CONNECT:3:22' root@sbx"
+      ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - UNIX-CONNECT:/run/fencr-ssh-sbx' root@sbx"
 
       target.wait_for_unit("target-8123.service")
       target.wait_for_unit("target-80.service")
@@ -170,7 +170,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
       host.wait_until_succeeds(f"{ssh} 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=300)
-      host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
+      # the vm's vsock sockets belong to its user; the ssh socket is for all
+      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:770")
+      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_14000)\" = fencr-sbx:600")
+      host.succeed("test \"$(stat -c %a /run/fencr-ssh-sbx)\" = 666")
 
       host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
       # the test host exposes svm and vmx; the guest must not see either
@@ -178,10 +181,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
       # the state tree is one image owned by the vm's user, and it outlives
       # the vm: what the guest writes is there again after a restart
-      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:660")
       host.succeed(f"{ssh} 'findmnt -n -o SOURCE /var/lib' | grep -Fx /dev/vdb", timeout=60)
       host.succeed(f"{ssh} 'echo survives > /var/lib/fencr-probe'", timeout=60)
       host.succeed("systemctl restart fencr-sbx.service")
+      # a clean stop, not a kill after the stop timeout
+      host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
       host.wait_until_succeeds(f"{ssh} 'cat /var/lib/fencr-probe' | grep -Fx survives", timeout=300)
 
       # the seal, probed with real packets from inside the vm. every probe
@@ -216,7 +221,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("test -S /run/fencr-credential-sbx-api/credential.sock")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 \"$FENCR_TEST_API/\"' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
-      host.fail(f"{ssh} 'grep -r fencr-api-token /run/agent-secrets /proc/self/environ'", timeout=60)
+      host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
     '';
 
     meta.timeout = 1800;
