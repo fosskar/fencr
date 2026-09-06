@@ -1,40 +1,47 @@
 self: system:
 
-# Evaluation smoke test: a machine with one instance exercising forwards,
-# host forwards and a credential.
+# Evaluation smoke test: a machine with one instance exercising exposed
+# ports, ssh and a credential.
 { config, lib, ... }:
 let
   guestConfig = config.fencr.guestSystems.sbx.config;
-  expectedHostSockets = [
-    "fencr-sbx-forward-33627"
-    "fencr-sbx-forward-33628"
-    "fencr-sbx-host-forward-18764"
-  ];
-  missingHostSockets = lib.filter (name: !(config.systemd.sockets ? ${name})) expectedHostSockets;
 in
 {
   imports = [ self.nixosModules.fencr ];
 
   assertions = [
     {
-      assertion = missingHostSockets == [ ];
-      message = "nixos module check: missing host sockets ${toString missingHostSockets}";
+      assertion =
+        builtins.attrNames (
+          lib.filterAttrs (name: _: lib.hasPrefix "fencr-sbx" name) config.systemd.sockets
+        ) == [
+          "fencr-sbx-secrets"
+        ];
+      message = "nixos module check: host sockets drifted";
     }
     {
-      assertion = guestConfig.systemd.sockets ? fencr-sshd-vsock;
-      message = "nixos module check: missing guest socket fencr-sshd-vsock";
+      assertion =
+        guestConfig.systemd.sockets.sshd.socketConfig.ListenStream == [ "10.30.1.2:22" ]
+        && guestConfig.systemd.sockets.sshd.socketConfig.FreeBind
+        &&
+          guestConfig.networking.firewall.allowedTCPPorts == [
+            22
+            22100
+            33627
+          ]
+        && config.fencr.vms.sbx.ip == "10.30.1.2"
+        && lib.hasInfix "HostName 10.30.1.2" config.programs.ssh.extraConfig
+        &&
+          lib.hasInfix
+            ''ip daddr 10.30.1.2 tcp dport { 22, 33627, 22100 } counter accept comment "fencr:sbx:guest"''
+            config.networking.nftables.tables."fencr-sbx".content;
+      message = "nixos module check: the guest is not reached at its bridge address";
     }
     {
-      assertion = guestConfig.systemd.services ? "fencr-sshd-vsock@";
-      message = "nixos module check: missing guest service fencr-sshd-vsock@";
-    }
-    {
-      assertion = guestConfig.systemd.services.sshd.wantedBy == [ ];
-      message = "nixos module check: tcp sshd is still enabled";
-    }
-    {
-      assertion = !(builtins.elem 22 guestConfig.networking.firewall.allowedTCPPorts);
-      message = "nixos module check: guest firewall still opens tcp ssh";
+      assertion =
+        config.fencr.guestSystems.sealed.config.systemd.sockets.sshd.socketConfig.ListenStream
+        == [ "10.30.2.2:22" ];
+      message = "nixos module check: the admin keys did not open the second vm's ssh door";
     }
     {
       assertion = !guestConfig.system.switch.enable;
@@ -72,18 +79,14 @@ in
     }
     {
       assertion =
-        config.systemd.sockets."fencr-sbx-ssh".socketConfig.ListenStream == "/run/fencr-ssh-sbx"
-        && config.systemd.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
+        config.systemd.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
         &&
           config.systemd.services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [
             "raw:/run/secrets/raw"
             "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
           ]
         && guestConfig.systemd.services ? fencr-secrets
-        &&
-          config.systemd.sockets."fencr-sbx-host-forward-18764".socketConfig.ListenStream
-          == "/run/fencr-sbx/vsock_18764"
-        && config.systemd.sockets."fencr-sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
+        && config.systemd.sockets."fencr-sbx-secrets".socketConfig.SocketUser == "fencr-sbx"
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
       message = "nixos module check: the vsock sockets are not the vm's own";
     }
@@ -127,13 +130,7 @@ in
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [
       "33627"
-      "127.0.0.1:33628:22100"
-    ];
-    hostForwards = [
-      {
-        vsockPort = 18764;
-        targetPort = 8764;
-      }
+      22100
     ];
     credentials = [ "anthropic" ];
     secrets.raw = "/run/secrets/raw";

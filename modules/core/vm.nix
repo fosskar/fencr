@@ -7,7 +7,6 @@ let
     runDirOf
     vsockOf
     powerPort
-    vsockForwardBin
     hardened
     ;
 in
@@ -51,7 +50,7 @@ in
           # guest gets to unmount its state; a guest that never answers is
           # killed at the stop timeout
           ExecStop = pkgs.writeShellScript "fencr-${instance.name}-stop" ''
-            ${vsockForwardBin pkgs}/bin/fencr-vsock-forward connect ${vsockOf instance.name} ${toString powerPort} </dev/null || true
+            printf 'CONNECT ${toString powerPort}\n' | ${pkgs.socat}/bin/socat -t 1 - UNIX-CONNECT:${vsockOf instance.name} || true
             while [ -d /proc/$MAINPID ]; do sleep 0.5; done
           '';
           TimeoutStopSec = 60;

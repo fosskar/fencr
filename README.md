@@ -56,7 +56,8 @@ default; set `fencr.vms.<name>.dns` if the host has no resolver listed there.
 By default, each VM has:
 
 - no network egress, including external DNS;
-- SSH over vsock, enabled only when authorized keys are configured;
+- SSH at the VM's address on its bridge, enabled only when authorized keys
+  are configured;
 - 4 vCPUs, 4096 MiB of guest memory, a `4608M` systemd `MemoryMax` and
   `400%` `CPUQuota`;
 - a 32768 MiB sparse disk image mounted at `/var/lib`, stored on the host at
@@ -77,8 +78,7 @@ Network permissions are configured per VM:
 | `allowedTCPDestinations = [ "192.168.1.50:8123" ];` | Allow TCP to an IPv4 address or subnet and port, including an explicitly permitted private destination. |
 | `allowedDomains = [ "github.com" "*.github.com" ];` | Allow TLS connections on port 443 by server name, without TLS interception or proxy environment variables. Requires `egress = "closed"`. |
 | `egress = "open";` | Allow public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly permitted. |
-| `expose = [ "8080" ];` | Forward host `127.0.0.1:8080` to guest `127.0.0.1:8080` over vsock. |
-| `hostForwards = [ { vsockPort = 9000; targetPort = 9000; } ];` | Forward guest `127.0.0.1:9000` to host `127.0.0.1:9000` over vsock. |
+| `expose = [ 8080 ];` | Let the host reach guest port 8080 at the VM's address, `fencr.vms.<name>.ip`. The service inside must listen on that address. Every other guest port is unreachable from the host. |
 | `hostPorts = [ 8123 ];` | Allow access to a host TCP port over the VM's bridge. |
 
 `allowedDomains` checks TLS Server Name Indication (SNI), not HTTP paths or
@@ -87,9 +87,8 @@ server name. Shared CDN infrastructure can allow a client to reach a
 different site through an allowed server name; this is not application-level
 request filtering. See [domain egress](docs/decisions/domain-egress-proxy.md).
 
-`expose` does not authenticate clients. Members of the host group `kvm` can
-also reach any guest port directly through the VM's vsock socket, regardless
-of the TCP listen address. Services on those ports must provide their own
+`expose` does not authenticate clients: any process on the host can connect
+to an exposed port. Services on those ports must provide their own
 authentication.
 
 ## Credentials and secrets
@@ -146,12 +145,14 @@ ssh myagent
 trusted: it controls the hypervisor, state images and secrets regardless of
 these key lists.
 
-For end-to-end SSH from another machine, add a local SSH configuration entry:
+For end-to-end SSH from another machine, jump through the host to the VM's
+address (`fencr list` prints it):
 
 ```sshconfig
 Host myagent
+  HostName 10.30.1.2
   User root
-  ProxyCommand ssh server fencr proxy myagent
+  ProxyJump server
 ```
 
 Replace `server` with your host's SSH alias. This requires SSH access to the

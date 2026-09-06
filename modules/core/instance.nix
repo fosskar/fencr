@@ -36,7 +36,6 @@ in
     allowedDomains = [ ];
     allowedTCPDestinations = [ ];
     expose = [ ];
-    hostForwards = [ ];
     hostPorts = [ ];
     secrets = { };
   };
@@ -59,9 +58,6 @@ in
   # relays run with; nobody else on the host reaches a vm this way
   runDirOf = name: "/run/fencr-${name}";
   vsockOf = name: "${runDirOf name}/vsock";
-  # the ssh door for every host account, a socket the relays open into the
-  # guest's vsock port 22
-  sshSocketOf = name: "/run/fencr-ssh-${name}";
   # the power button: a guest listener on this vsock port powers off on any
   # connection, and only the vm's user and group kvm can open the vsock
   powerPort = 4;
@@ -88,31 +84,16 @@ in
           port = lib.toInt (builtins.elemAt matched 1);
         };
 
-  # expose sugar: "33627" listens on host loopback 33627 and relays to guest
-  # loopback 33627; "<listenAddress>:<listenPort>:<guestPort>" spells it out
+  # an exposed port is a guest port the host may reach at the guest's
+  # address; a string is the same port spelled out
   parseExpose =
     value:
-    if builtins.isAttrs value then
+    if builtins.isInt value then
       value
+    else if builtins.match "[0-9]+" value != null then
+      lib.toInt value
     else
-      let
-        short = builtins.match "([0-9]+)" value;
-        long = builtins.match "([0-9.]+):([0-9]+):([0-9]+)" value;
-      in
-      if short != null then
-        rec {
-          listenAddress = "127.0.0.1";
-          listenPort = lib.toInt (builtins.elemAt short 0);
-          guestPort = listenPort;
-        }
-      else if long != null then
-        {
-          listenAddress = builtins.elemAt long 0;
-          listenPort = lib.toInt (builtins.elemAt long 1);
-          guestPort = lib.toInt (builtins.elemAt long 2);
-        }
-      else
-        throw "fencr: expose entry \"${value}\" is neither <port> nor <listenAddress>:<listenPort>:<guestPort>";
+      throw "fencr: expose entry \"${value}\" is not a port";
 
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
@@ -134,7 +115,6 @@ in
           mem
           stateSize
           prefixLength
-          hostForwards
           ;
         # with a domain allowlist the egress proxy is the guest's resolver
         dns = if dnsProxyOf options then hostIpOf options else options.dns;
@@ -172,15 +152,7 @@ in
         ++ map (domain: "${name}: credential domain ${domain} granted twice") (
           duplicates (map (credential: credential.domain) granted)
         )
-        ++ map (port: "${name}: expose port ${toString port} declared twice") (
-          duplicates (map (forward: forward.listenPort) guest.expose)
-        )
-        ++ map (port: "${name}: hostForward vsock port ${toString port} declared twice") (
-          duplicates (map (forward: forward.vsockPort) guest.hostForwards)
-        )
-        ++ map (port: "${name}: hostForward target port ${toString port} declared twice") (
-          duplicates (map (forward: forward.targetPort) guest.hostForwards)
-        );
+        ++ map (port: "${name}: expose port ${toString port} declared twice") (duplicates guest.expose);
     in
     guest
     // {
@@ -199,20 +171,11 @@ in
       dnsProxy = dnsProxyOf options;
       subnet = subnetOf options;
       credentials = granted;
-      # the ports also name the socket units; the listen address is no
-      # separator, a second bind on the port fails either way
-      forwardEndpoints =
-        map (forward: "tcp:${toString forward.listenPort}") guest.expose
-        ++ map (forward: "vsock:${toString forward.vsockPort}") guest.hostForwards;
     };
 
   fleetErrors =
     instances:
-    let
-      values = lib.attrValues instances;
-    in
-    lib.optional (duplicates (map (instance: instance.id) values) != [ ]) "instance ids must be unique"
-    ++ lib.optional (
-      duplicates (lib.concatMap (instance: instance.forwardEndpoints) values) != [ ]
-    ) "host listen endpoints must be unique across instances";
+    lib.optional (
+      duplicates (map (instance: instance.id) (lib.attrValues instances)) != [ ]
+    ) "instance ids must be unique";
 }

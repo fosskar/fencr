@@ -82,17 +82,15 @@ in
       })
     ];
 
-    # `ssh <vm-name>` reaches the guest's vsock sshd through the vm's ssh
-    # socket, which every host account may open, so any host user holding
-    # an authorized key gets in with their own identity. no bridge ip, no
-    # network listener anywhere
+    # `ssh <vm-name>` reaches the guest's sshd at its bridge address; any
+    # host user holding an authorized key gets in with their own identity
     programs.ssh.extraConfig = lib.concatStrings (
       lib.mapAttrsToList (
         name: cfg:
         lib.optionalString (cfg.guest.sshKeys != [ ]) ''
           Host ${name}
+            HostName ${cfg.ip}
             User root
-            ProxyCommand ${pkgs.socat}/bin/socat - UNIX-CONNECT:${core.sshSocketOf name}
             StrictHostKeyChecking accept-new
         ''
       ) resolvedInstances

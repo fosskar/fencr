@@ -6,8 +6,6 @@ let
     powerPort
     secretsPort
     trustVariables
-    exposeUnits
-    hostForwardUnits
     ;
 in
 {
@@ -102,8 +100,6 @@ in
       boot.initrd.systemd.enable = true;
       system.etc.overlay.enable = true;
       services.userborn.enable = true;
-      # the guest ends of the forwards; the host ends live beside them in
-      # exposeUnits and hostForwardUnits
       systemd.services = lib.mkMerge [
         (lib.mkIf (agentSandbox.secretNames != [ ] || agentSandbox.credentialDomains != [ ]) {
           # the vsock device comes up with udev; the fetch waits for it
@@ -148,27 +144,16 @@ in
             serviceConfig.ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString powerPort},fork EXEC:'${pkgs.systemd}/bin/systemctl reboot'";
           };
         }
-        (lib.mkIf (agentSandbox.sshKeys != [ ]) {
-          sshd.wantedBy = lib.mkForce [ ];
-          "fencr-sshd-vsock@" = {
-            description = "sshd for a fencr vsock connection";
-            unitConfig.CollectMode = "inactive-or-failed";
-            serviceConfig = {
-              ExecStart = "-${pkgs.openssh}/bin/sshd -i -f /etc/ssh/sshd_config";
-              StandardInput = "socket";
-              StandardError = "journal";
-            };
-          };
-        })
-        (lib.listToAttrs (
-          map (exposeUnits.guest pkgs) agentSandbox.expose
-          ++ map (hostForwardUnits.guest pkgs) agentSandbox.hostForwards
-        ))
       ];
       networking = {
         useDHCP = false;
         useNetworkd = true;
-        firewall.enable = true;
+        # the bridge is the one interface: sshd when keys authorize it,
+        # and the exposed ports, reachable at the guest's address
+        firewall = {
+          enable = true;
+          allowedTCPPorts = lib.optional (agentSandbox.sshKeys != [ ]) 22 ++ agentSandbox.expose;
+        };
         # the iptables backend drags perl in through libpcap and rdma-core
         nftables.enable = true;
         # a credential's domain is the host, where its proxy answers with a
@@ -205,23 +190,23 @@ in
           LinkLocalAddressing = "ipv4";
         };
       };
-      # fencr owns vsock port 22 rather than merging with the socket emitted
-      # by systemd-ssh-generator
+      # no sshd on vsock from systemd-ssh-generator: the door is the bridge
       boot.kernelParams = [ "systemd.ssh_auto=0" ];
-      systemd.sockets.fencr-sshd-vsock = lib.mkIf (agentSandbox.sshKeys != [ ]) {
-        description = "sshd on fencr vsock";
-        wantedBy = [ "sockets.target" ];
-        listenStreams = [ "vsock::22" ];
-        socketConfig = {
-          Accept = true;
-          MaxConnections = 16;
-        };
-      };
       # /etc is rebuilt on every boot, so keep the host key on the state
       # volume; otherwise the host's known_hosts breaks each time
       systemd.tmpfiles.rules = [ "d /var/lib/ssh 0700 root root - -" ];
+      # socket-activated on the guest's address; the socket binds before
+      # networkd assigns it
+      systemd.sockets.sshd.socketConfig.FreeBind = lib.mkIf (agentSandbox.sshKeys != [ ]) true;
       services.openssh = {
         enable = agentSandbox.sshKeys != [ ];
+        startWhenNeeded = true;
+        listenAddresses = [
+          {
+            addr = agentSandbox.ip;
+            port = 22;
+          }
+        ];
         openFirewall = false;
         settings.PasswordAuthentication = false;
         hostKeys = [

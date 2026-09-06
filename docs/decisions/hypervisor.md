@@ -134,7 +134,10 @@ What the port changed:
 - host-to-guest relays and the ssh door speak the `CONNECT <port>`
   handshake through `fencr-vsock-forward connect`. The ssh door is a socket
   every host account may open, `/run/fencr-ssh-<vm>`, so the access model
-  (`ssh-access-model.md`) holds unchanged
+  (`ssh-access-model.md`) holds unchanged. Later that day all of these
+  relays went away: ssh and exposed ports moved onto the bridge, where the
+  field puts them (`ssh-access-model.md`), and vsock kept only the secrets
+  fetch and the power button
 - raw `secrets` ride the vsock: at boot the guest fetches one tar stream
   from a host socket only its user can open, served from the unit's systemd
   credentials. No firmware device, nothing in the store, nothing on disk,

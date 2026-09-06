@@ -6,12 +6,37 @@ Two tiers, both plain ssh public keys:
 - `fencr.vms.<name>.authorizedKeys` — authorized as root in that vm only.
   The owner tier: a vm belongs to whoever holds these keys.
 
-The guest authorizes the union. The vsock sshd (socket-activated, vsock
-port 22) exists only when the union is non-empty — no keys, no door. The
-host writes an `ssh <vm-name>` alias whose `ProxyCommand` opens the vm's
-ssh socket, `/run/fencr-ssh-<vm-name>`, which every host account may open;
-a relay carries the connection into the guest's vsock port 22, so any host
-user holding an authorized key logs in with their own identity.
+The guest authorizes the union. Its sshd, socket-activated on the vm's
+address on its bridge, exists only when the union is non-empty — no keys,
+no door, and no pinhole for it in the seal's output chain. The host writes
+an `ssh <vm-name>` alias with that address as `HostName`, so any host user
+holding an authorized key logs in with their own identity.
+
+## the door was a vsock socket, until 2026-09-06
+
+From crosvm until the evening of the Firecracker port the sshd listened on
+vsock port 22 and the host offered a socket every host account could open,
+`/run/fencr-ssh-<vm-name>`, with a relay per connection carrying the bytes
+in. Exposed ports and guest-to-host forwards had the same shape: a socket
+unit, a per-connection relay and a Rust program on the host, a listener in
+the guest. The rule behind it, "no network listener anywhere", came from
+the crosvm days when the bridge carried only the guest's internet traffic.
+
+Firecracker put egress and then the credential interception on the bridge
+anyway, so the vsock relays duplicated a road that already existed. What
+the Firecracker field does, from their own docs: vsock carries the host's
+control channel to an agent (Firecracker's `docs/vsock.md`,
+firecracker-containerd's agent, Kata's ttRPC over vsock), and everything a
+user connects to goes over the TAP network (Kata's pod ip, E2B's `envd` at
+the sandbox's tap address, Fly's ssh server over WireGuard, Ignite's
+`ssh`). fencr has no agent; its vsock relays carried what everyone else
+carries over the network. They were removed: ssh and `expose` moved onto
+the bridge, `hostForwards` went (`hostPorts` already reaches the host's
+bridge address), and vsock kept the boot-time secrets fetch and the power
+button, which are the control channel. The seal's output chain took over
+the one thing the socket file had provided: only the guest's sshd and its
+exposed ports are reachable from the host, and only while keys or `expose`
+say so.
 
 ## why keys are the user model
 

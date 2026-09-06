@@ -1,9 +1,11 @@
 # accessing a vm
 
 A vm has an ssh door only when keys authorize it: `fencr.adminKeys`
-(every vm) or `fencr.vms.<name>.authorizedKeys` (that vm). The door is a
-socket-activated sshd on vsock — no IP, no network listener. You are
-root inside the vm; the vm boundary is the privilege boundary.
+(every vm) or `fencr.vms.<name>.authorizedKeys` (that vm). The door is the
+guest's sshd on the vm's address on its bridge, `fencr.vms.<name>.ip`,
+and the seal lets the host reach that port and the vm's `expose`d ports,
+nothing else. You are root inside the vm; the vm boundary is the privilege
+boundary.
 
 ## on the host the vm runs on
 
@@ -12,16 +14,27 @@ ssh <vm-name>
 ```
 
 The module writes a `Host <vm-name>` alias into the system ssh
-configuration whose `ProxyCommand` opens the vm's ssh socket,
-`/run/fencr-ssh-<vm-name>`, which every host account may open; a relay
-carries the bytes into the guest's vsock port 22. Authentication is your
+configuration with the vm's address as `HostName`. Authentication is your
 own ssh key against the vm's authorized list, not your host privileges.
 
 ## from another machine (vm runs on a server)
 
-A vm has no TCP address, so `ProxyJump` does not apply. Two ways:
+The vm's address is private to the server, so jump through it. Put this
+in your own `~/.ssh/config`; `fencr list` on the server prints the
+address:
 
-Quick, interactive (fencr installed on your machine too):
+```
+Host myvm
+  HostName 10.30.1.2
+  User root
+  ProxyJump server
+```
+
+Your ssh authenticates directly against the vm; the server only forwards
+the connection and never sees your agent.
+
+Quick, interactive, without a config entry (fencr installed on your
+machine too):
 
 ```console
 fencr -H server list
@@ -39,27 +52,12 @@ Uses the server's alias. Authentication happens *on the server*, so your
 key must be usable there (`-A` agent forwarding works; be aware server
 root can use the forwarded agent while connected).
 
-Clean, end-to-end — put this in your own `~/.ssh/config`:
-
-```
-Host myvm
-  User root
-  ProxyCommand ssh server fencr proxy <vm-name>
-```
-
-(or `ProxyCommand fencr -H server proxy <vm-name>` with a local fencr.)
-
-The `fencr` command ships with the module on every fencr host; `proxy`
-resolves the vm name to its ssh socket server-side. Your ssh
-authenticates directly against the vm; the server only shuttles bytes
-and never sees your agent.
-
 On the host itself the same tool covers the day-to-day reads:
 
 ```console
 fencr list        # declared vms: id, cid, ip, egress, domain count
 fencr ssh sbx     # shell in the vm
-fencr status sbx  # the vm unit plus its forward, proxy and credential units
+fencr status sbx  # the vm unit plus its proxy and credential units
 ```
 
 Every command is a read; changing a vm means changing the system

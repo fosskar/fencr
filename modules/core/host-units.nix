@@ -4,14 +4,10 @@ let
     userOf
     vmUnitOf
     vsockOf
-    sshSocketOf
     secretsPort
     caUnit
     caCert
-    vsockForwardBin
     forwardHardening
-    exposeUnits
-    hostForwardUnits
     egressProxyServiceConfig
     credentialServiceConfig
     ;
@@ -22,60 +18,16 @@ in
     pkgs: instance:
     let
       vmUnit = vmUnitOf instance.name;
-      forwardName = forward: "fencr-${instance.name}-forward-${toString forward.listenPort}";
-      hostForwardName = forward: "fencr-${instance.name}-host-forward-${toString forward.vsockPort}";
       proxyName = "fencr-${instance.name}-egress-proxy";
       credentialsName = "fencr-${instance.name}-credentials";
       credentialUnits = lib.optional (instance.credentials != [ ]) "${credentialsName}.service";
-      forwardServices = map (forward: {
-        name = "${forwardName forward}@";
-        value = exposeUnits.service pkgs instance vmUnit forward;
-      }) instance.expose;
-      hostForwardServices = map (forward: {
-        name = "${hostForwardName forward}@";
-        value = hostForwardUnits.service pkgs instance vmUnit forward;
-      }) instance.hostForwards;
-      credentialServices = lib.optional (instance.credentials != [ ]) {
-        name = credentialsName;
-        value = {
+      credentialServices = lib.optionalAttrs (instance.credentials != [ ]) {
+        ${credentialsName} = {
           description = "credentials for ${instance.name}";
           wantedBy = [ "multi-user.target" ];
           requires = [ caUnit ];
           after = [ caUnit ];
           serviceConfig = credentialServiceConfig pkgs instance;
-        };
-      };
-      forwardSockets = map (forward: {
-        name = forwardName forward;
-        value = exposeUnits.socket instance forward;
-      }) instance.expose;
-      hostForwardSockets = map (forward: {
-        name = hostForwardName forward;
-        value = hostForwardUnits.socket instance forward;
-      }) instance.hostForwards;
-      # the ssh door: a socket every host account may open, relayed into
-      # the guest's vsock port 22; the key check happens in the guest
-      sshName = "fencr-${instance.name}-ssh";
-      sshUnits = lib.optionalAttrs (instance.sshKeys != [ ]) {
-        socket.${sshName} = {
-          description = "ssh into ${instance.name}";
-          wantedBy = [ "sockets.target" ];
-          socketConfig = {
-            ListenStream = sshSocketOf instance.name;
-            SocketMode = "0666";
-            Accept = true;
-            MaxConnections = 16;
-          };
-        };
-        service."${sshName}@" = {
-          description = "ssh into ${instance.name}";
-          after = [ vmUnit ];
-          requisite = [ vmUnit ];
-          partOf = [ vmUnit ];
-          unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig = forwardHardening // {
-            ExecStart = "${vsockForwardBin pkgs}/bin/fencr-vsock-forward connect ${vsockOf instance.name} 22";
-          };
         };
       };
       # raw secrets, served once per boot as a tar stream of the unit's
@@ -115,8 +67,7 @@ in
     in
     {
       services =
-        lib.listToAttrs (forwardServices ++ hostForwardServices ++ credentialServices)
-        // sshUnits.service or { }
+        credentialServices
         // secretsUnits.service or { }
         // lib.optionalAttrs instance.proxy {
           ${proxyName} = {
@@ -127,27 +78,11 @@ in
             serviceConfig = egressProxyServiceConfig pkgs instance;
           };
         };
-      sockets =
-        lib.listToAttrs (forwardSockets ++ hostForwardSockets)
-        // sshUnits.socket or { }
-        // secretsUnits.socket or { };
+      sockets = secretsUnits.socket or { };
       # what the guest system is built against
       inherit (instance) guest;
       unitNames = {
         vm = vmUnit;
-        sockets =
-          map (forward: {
-            unit = "${forwardName forward}.socket";
-            label = "host -> guest: ${forward.listenAddress}:${toString forward.listenPort} -> guest ${toString forward.guestPort}";
-          }) instance.expose
-          ++ map (forward: {
-            unit = "${hostForwardName forward}.socket";
-            label = "guest -> host: vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
-          }) instance.hostForwards
-          ++ lib.optional (instance.sshKeys != [ ]) {
-            unit = "${sshName}.socket";
-            label = "host -> guest: ssh";
-          };
         proxy = lib.optional instance.proxy "${proxyName}.service";
         credentials = credentialUnits;
       };

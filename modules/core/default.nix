@@ -10,7 +10,6 @@ lib.fix (
     ./instance.nix
     ./hardening.nix
     ./vm.nix
-    ./forwards.nix
     ./egress.nix
     ./credentials.nix
     ./host-units.nix

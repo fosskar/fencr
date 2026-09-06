@@ -9,6 +9,7 @@ let
     name: options:
     core.resolveInstance {
       inherit name;
+      sshKeys = [ "ssh-ed25519 AAAA check" ];
       credentials = {
         api = {
           upstream = "https://api.example.com";
@@ -33,12 +34,6 @@ let
     allowedDomains = [ "github.com" ];
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [ "33627" ];
-    hostForwards = [
-      {
-        vsockPort = 18764;
-        targetPort = 8764;
-      }
-    ];
     credentials = [ "api" ];
     hostPorts = [ 443 ];
   };
@@ -62,33 +57,11 @@ let
     id = 1;
     egress = "open";
   };
-  # a forward's port names its units, so a repeated port would silently keep
-  # only the first entry
-  sameListenPort = resolve "sbx" {
+  samePort = resolve "sbx" {
     id = 0;
     expose = [
-      "127.0.0.1:22100:9119"
-      "127.0.0.2:22100:9120"
-    ];
-  };
-  sameGuestPort = resolve "sbx" {
-    id = 0;
-    expose = [
-      "127.0.0.1:22100:9119"
-      "127.0.0.1:22101:9119"
-    ];
-  };
-  sameTargetPort = resolve "sbx" {
-    id = 0;
-    hostForwards = [
-      {
-        vsockPort = 18764;
-        targetPort = 8764;
-      }
-      {
-        vsockPort = 18765;
-        targetPort = 8764;
-      }
+      "22100"
+      22100
     ];
   };
   seal = lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf resolved));
@@ -96,15 +69,7 @@ let
 in
 assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
 assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
-assert lib.assertMsg (
-  resolved.expose == [
-    {
-      listenAddress = "127.0.0.1";
-      listenPort = 33627;
-      guestPort = 33627;
-    }
-  ]
-) "core check: expose was not resolved";
+assert lib.assertMsg (resolved.expose == [ 33627 ]) "core check: expose was not resolved";
 assert lib.assertMsg (
   resolved.proxy
   && resolved.guest.dns == "10.30.1.1"
@@ -113,20 +78,16 @@ assert lib.assertMsg (
 ) "core check: the egress proxy is not the guest's resolver";
 assert lib.assertMsg (longName.errors != [ ]) "core check: long interface name accepted";
 assert lib.assertMsg (
-  sameListenPort.errors == [ "sbx: expose port 22100 declared twice" ]
+  samePort.errors == [ "sbx: expose port 22100 declared twice" ]
 ) "core check: repeated expose port accepted";
-assert lib.assertMsg (sameGuestPort.errors == [ ]) "core check: shared guest port rejected";
-assert lib.assertMsg (
-  sameTargetPort.errors == [ "sbx: hostForward target port 8764 declared twice" ]
-) "core check: repeated hostForward target port accepted";
 assert lib.assertMsg (
   lib.length (
     core.fleetErrors {
       first = resolved;
       second = resolved;
     }
-  ) == 2
-) "core check: duplicate fleet resources accepted";
+  ) == 1
+) "core check: duplicate instance id accepted";
 assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
     "bridge"
@@ -134,7 +95,6 @@ assert lib.assertMsg (
     "credentialDomains"
     "dns"
     "expose"
-    "hostForwards"
     "hostIp"
     "ip"
     "mac"
@@ -172,8 +132,9 @@ assert lib.assertMsg (
     == 1
 ) "unit check: egress proxy is not the vm's road out";
 assert lib.assertMsg (
-  occurrences "priority filter - 1;" == 2
+  occurrences "priority filter - 1;" == 3
   && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
+  && occurrences ''oifname "br-sbx" meta nfproto ipv6 drop'' == 1
 ) "core check: seal chain priority or v6 drop drifted";
 assert lib.assertMsg (
   unknownCredential.errors == [ "sbx: credential \"nope\" is not declared in fencr.credentials" ]
@@ -204,31 +165,26 @@ assert lib.assertMsg (
   && !lib.hasInfix "udp dport 53 redirect" (core.firewallOf keyed)."fencr-keyed-nat".content
 ) "core check: a credential alone does not bring the interception path";
 assert lib.assertMsg (
-  builtins.attrNames units.sockets == [
-    "fencr-sbx-forward-33627"
-    "fencr-sbx-host-forward-18764"
-    "fencr-sbx-secrets"
-  ]
-  && units.sockets."fencr-sbx-forward-33627".socketConfig.ListenStream == "127.0.0.1:33627"
-  &&
-    units.sockets."fencr-sbx-host-forward-18764".socketConfig.ListenStream
-    == "/run/fencr-sbx/vsock_18764"
-  && units.sockets."fencr-sbx-host-forward-18764".socketConfig.SocketUser == "fencr-sbx"
-  && units.sockets."fencr-sbx-host-forward-18764".socketConfig.SocketMode == "0600"
-  && units.sockets."fencr-sbx-host-forward-18764".socketConfig.TriggerLimitIntervalSec == 0
+  builtins.attrNames units.sockets == [ "fencr-sbx-secrets" ]
+  && units.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
+  && units.sockets."fencr-sbx-secrets".socketConfig.SocketUser == "fencr-sbx"
+  && units.sockets."fencr-sbx-secrets".socketConfig.SocketMode == "0600"
+  && units.sockets."fencr-sbx-secrets".socketConfig.TriggerLimitIntervalSec == 0
 ) "unit check: host sockets drifted";
 assert lib.assertMsg (
-  lib.hasSuffix "connect /run/fencr-sbx/vsock 33627"
-    units.services."fencr-sbx-forward-33627@".serviceConfig.ExecStart
-  && lib.hasSuffix "serve 8764" units.services."fencr-sbx-host-forward-18764@".serviceConfig.ExecStart
-) "unit check: relays do not use the vm's vsock socket";
+  units.services."fencr-sbx-secrets@".after == [
+    "fencr-sbx.service"
+    "fencr-ca.service"
+  ]
+  && units.services."fencr-sbx-secrets@".requisite == [ "fencr-sbx.service" ]
+  && units.services."fencr-sbx-secrets@".partOf == [ "fencr-sbx.service" ]
+  && units.services."fencr-sbx-secrets@".serviceConfig.DynamicUser
+) "unit check: secrets relay drifted";
 assert lib.assertMsg (
-  units.services."fencr-sbx-forward-33627@".after == [ "fencr-sbx.service" ]
-  && units.services."fencr-sbx-forward-33627@".requisite == [ "fencr-sbx.service" ]
-  && units.services."fencr-sbx-host-forward-18764@".partOf == [ "fencr-sbx.service" ]
-  && !(units.services."fencr-sbx-forward-33627@" ? requires)
-  && units.services."fencr-sbx-forward-33627@".serviceConfig.DynamicUser
-) "unit check: forward relay drifted";
+  occurrences ''oifname "br-sbx" ip daddr 10.30.1.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
+  == 1
+  && occurrences ''oifname "br-sbx" counter drop comment "fencr:sbx:guest-blocked"'' == 1
+) "core check: the host is not held to the guest's sshd and exposed ports";
 assert lib.assertMsg (
   units.services."fencr-sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-credentials-sbx"
   && units.services."fencr-sbx-credentials".serviceConfig.Group == "kvm"

@@ -23,23 +23,21 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `fleetErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
-  (`vmService`), `forwards.nix` (expose and host-forward units),
-  `egress.nix` (egress proxy unit, `firewallOf`), `credentials.nix` (the
-  authority and credential proxies), `host-units.nix` (`hostUnits`, ssh door,
-  secrets) and `guest.nix` (`guestBase`). Keep shared defaults in
-  `core.defaults` and derivation logic here rather than duplicating it in the
-  module or CLI.
-- `modules/cli.nix` generates Rust; `modules/core/vsock-forward.rs` has two
-  modes: `serve` splices an accepted connection to a host loopback port,
-  `connect` opens a guest vsock port through Firecracker's `CONNECT <port>`
-  handshake on the VM's unix socket. `modules/core/egress-proxy.rs` answers DNS
+  (`vmService`), `egress.nix` (egress proxy unit, `firewallOf`),
+  `credentials.nix` (the authority and credential proxies), `host-units.nix`
+  (`hostUnits`, the secrets socket) and `guest.nix` (`guestBase`). Keep shared
+  defaults in `core.defaults` and derivation logic here rather than
+  duplicating it in the module or CLI.
+- `modules/cli.nix` generates Rust; `modules/core/egress-proxy.rs` answers DNS
   queries, hands credential domains to their proxies by TLS SNI and applies the
-  allowlist to the rest. These binaries use `pkgs.writers.writeRustBin` with
-  Rust edition 2024, not a Cargo workspace.
-- Firecracker's vsock is the unix socket `/run/fencr-<name>/vsock`, in a
-  directory only the VM's user and group `kvm` enter. Guest-to-host connections
-  to port N arrive on `vsock_N` beside it; the path is the identity. The ssh
-  door `/run/fencr-ssh-<name>` is the one socket every host account may open.
+  allowlist to the rest. Both use `pkgs.writers.writeRustBin` with Rust edition
+  2024, not a Cargo workspace.
+- The bridge is the road between host and guest: the guest's sshd and its
+  `expose`d ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
+  seal's output chain lets the host reach those ports and nothing else. vsock
+  carries only the boot-time secrets fetch and the power button: Firecracker's
+  unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user and
+  group `kvm` enter, with guest-to-host port N arriving on `vsock_N` beside it.
 - Each VM runs as `fencr-<name>` with persistent state at
   `/var/lib/fencr-vms/<name>/state.img`, mounted as guest `/var/lib`. The guest
   closure is a read-only store image, not a host store share.
@@ -65,10 +63,12 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   systemd credentials; they are readable by guest root. Never put real secret
   values in the Nix store.
 - SSH combines `fencr.adminKeys` and per-VM `authorizedKeys`; no keys means no
-  SSH listener. Guest root is the intended privilege level. `expose` narrows TCP
-  listening addresses, not direct vsock access by host users.
-- Forward services use `requisite`, not `requires`, for the VM unit: a connection
-  must not start a stopped VM. Keep relay identities separate from VM users.
+  SSH listener and no output-chain pinhole for it. Guest root is the intended
+  privilege level. `expose` opens a guest port to every host process; it does
+  not authenticate.
+- The secrets relay uses `requisite`, not `requires`, for the VM unit: a
+  connection must not start a stopped VM. Keep relay identities separate from
+  VM users.
 - Hosts need KVM and systemd-networkd. KSM is disabled. The VM unit runs as
   the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices and
   `UMask=0007`, which is what lets group `kvm` open its vsock; a CPU template

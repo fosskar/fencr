@@ -7,6 +7,7 @@ let
     egressProxyBin
     credentialSocketOf
     forwardFilterFragment
+    hostToGuestFragment
     natRuleFragment
     proxyRedirectFragment
     proxyDnsPort
@@ -173,8 +174,30 @@ in
       iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
     '';
 
+  # output-chain fragment: what the host itself may open toward the guest.
+  # the guest's sshd and its exposed ports, nothing else; replies to what
+  # the guest opened flow back either way
+  hostToGuestFragment =
+    cfg:
+    let
+      ports = lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.expose;
+    in
+    ''
+      oifname "${cfg.bridge}" meta nfproto ipv6 drop
+      oifname "${cfg.bridge}" ct state established,related accept
+    ''
+    + lib.optionalString (ports != [ ]) ''
+      oifname "${cfg.bridge}" ip daddr ${cfg.ip} tcp dport { ${
+        lib.concatMapStringsSep ", " toString ports
+      } } counter accept comment "fencr:${cfg.name}:guest"
+    ''
+    + ''
+      oifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-guest-blocked: "
+      oifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:guest-blocked"
+    '';
+
   # the seal as complete nftables tables for networking.nftables.tables. they
-  # stand on their own so no host chain runs ahead of them; both chains sit
+  # stand on their own so no host chain runs ahead of them; the chains sit
   # one below filter, since a host chain at the same priority would tie
   firewallOf = cfg: {
     "fencr-${cfg.name}-nat" = {
@@ -201,6 +224,10 @@ in
         chain input {
           type filter hook input priority filter - 1; policy accept;
           ${sealInputFragment cfg cfg.hostPorts}
+        }
+        chain output {
+          type filter hook output priority filter - 1; policy accept;
+          ${hostToGuestFragment cfg}
         }
       '';
     };

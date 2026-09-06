@@ -13,15 +13,15 @@ fencr.vms.myagent = {
   id = 0;
   services = [ my-agent-module ];                    # any nixos modules
   authorizedKeys = [ "ssh-ed25519 AAAA... you" ];    # ssh way in
-  expose = [ "22100" ];                              # web ui way in
+  expose = [ 9119 ];                                 # web ui way in
 };
 ```
 
 What this gives you, with no further options:
 
 - the vm has no network egress, including dns
-- nothing reaches the vm except `ssh myagent` (your key, over vsock) and
-  host port 22100 (its web ui)
+- nothing reaches the vm except `ssh myagent` (your key) and port 9119 at
+  the vm's address (its web ui); the address is `fencr.vms.myagent.ip`
 - `/var/lib` inside the vm survives reboots and rebuilds
 - 4 vcpus, 4 GiB with a hard cap the agent cannot exceed
 

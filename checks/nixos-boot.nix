@@ -111,25 +111,33 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # on the host, only one is on the list
         allowedTCPDestinations = [ "192.168.1.2:8123" ];
         allowedDomains = [ "allowed.test" ];
-        expose = [
-          {
-            listenAddress = "127.0.0.1";
-            listenPort = 22100;
-            guestPort = 9119;
-          }
-        ];
+        # the web ui: reachable from the host at the guest's address, on
+        # this port and no other
+        expose = [ 9119 ];
         # the credential: the guest calls api.test over https as it would
         # any site, the host ends the tls and injects the bearer token,
         # the value never enters the vm
         credentials = [ "api" ];
         services = [
-          {
-            environment.systemPackages = [ pkgs.curl ];
-            systemd.services.ingress = {
-              wantedBy = [ "multi-user.target" ];
-              serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 9119 --bind 127.0.0.1 --directory ${documentRoot}";
-            };
-          }
+          (
+            { agentSandbox, ... }:
+            {
+              environment.systemPackages = [ pkgs.curl ];
+              # a service on the guest's address waits for the address
+              systemd.services.ingress = {
+                wantedBy = [ "multi-user.target" ];
+                after = [ "network-online.target" ];
+                wants = [ "network-online.target" ];
+                serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 9119 --bind ${agentSandbox.ip} --directory ${documentRoot}";
+              };
+              systemd.services.unexposed = {
+                wantedBy = [ "multi-user.target" ];
+                after = [ "network-online.target" ];
+                wants = [ "network-online.target" ];
+                serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 9120 --bind ${agentSandbox.ip} --directory ${documentRoot}";
+              };
+            }
+          )
         ];
       };
 
@@ -174,14 +182,18 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
     };
 
     testScript = ''
-      ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 'ProxyCommand=${pkgs.socat}/bin/socat - UNIX-CONNECT:/run/fencr-ssh-sbx' root@sbx"
+      ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@10.30.1.2"
 
       target.wait_for_unit("target-8123.service")
       target.wait_for_unit("target-80.service")
       host.wait_for_unit("fencr-sbx.service", timeout=1200)
-      host.wait_for_unit("fencr-sbx-forward-22100.socket")
-      host.wait_until_succeeds("curl --fail --silent http://127.0.0.1:22100 | grep -Fx 'fencr ingress'", timeout=120)
-      host.fail("nc -z -w 2 10.30.1.2 22")
+      # the guest at its address: the exposed port answers, the other one
+      # and everything else the host tries is dropped by the seal's output
+      # chain before it leaves the host
+      host.wait_until_succeeds("curl --fail --silent http://10.30.1.2:9119 | grep -Fx 'fencr ingress'", timeout=120)
+      host.fail("curl --silent --max-time 3 http://10.30.1.2:9120")
+      host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:guest-blocked\"' | grep -qv 'packets 0 '")
+      host.succeed("nc -z -w 2 10.30.1.2 22")
 
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
@@ -190,9 +202,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = fencr-sbx:600")
-      # the vm's vsock sockets belong to its user; the ssh socket is for all
+      # the vm's vsock sockets belong to its user
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:770")
-      host.succeed("test \"$(stat -c %a /run/fencr-ssh-sbx)\" = 666")
 
       host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
       # the test host exposes svm and vmx; the guest must not see either

@@ -12,12 +12,6 @@ let
     name: cfg:
     ''("${name}", ${toString cfg.id}, ${toString cfg.cid}, "${cfg.ip}", "${cfg.egress}", ${toString (lib.length cfg.allowedDomains)}, "${units.${name}.unitNames.vm}"),'';
 
-  socketRows =
-    name: unitSet:
-    map (socket: ''
-      ("${name}", "${socket.unit}", "${socket.label}"),
-    '') unitSet.unitNames.sockets;
-
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
   credentialRows =
@@ -45,11 +39,6 @@ pkgs.writers.writeRustBin "fencr"
     ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}
     ];
 
-    // vm, socket unit, human label
-    static SOCKETS: &[(&str, &str, &str)] = &[
-    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList socketRows units))}
-    ];
-
     // vm, egress proxy unit
     static PROXIED: &[(&str, &str)] = &[
     ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows units))}
@@ -60,7 +49,6 @@ pkgs.writers.writeRustBin "fencr"
     ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList credentialRows units))}
     ];
 
-    const SOCAT: &str = "${pkgs.socat}/bin/socat";
     const SSH: &str = "${pkgs.openssh}/bin/ssh";
     const SYSTEMCTL: &str = "${pkgs.systemd}/bin/systemctl";
     const JOURNALCTL: &str = "${pkgs.systemd}/bin/journalctl";
@@ -89,7 +77,6 @@ pkgs.writers.writeRustBin "fencr"
         eprintln!();
         eprintln!("  list             declared vms");
         eprintln!("  ssh <vm> [cmd]   open a shell (or run a command) in a vm");
-        eprintln!("  proxy <vm>       stdio splice to the vm's vsock sshd, for ProxyCommand");
         eprintln!("  status [vm]      vm health and traffic [--watch]; --full for systemctl");
         eprintln!("  dashboard        alias for status --watch [--once]");
         eprintln!();
@@ -253,27 +240,6 @@ pkgs.writers.writeRustBin "fencr"
         }
     }
 
-    fn connection_lines(name: &str, s: &Style, out: &mut Vec<String>) {
-        for (vm, unit, label) in SOCKETS {
-            if *vm != name {
-                continue;
-            }
-            let p = props(unit, "LoadState,ActiveState,NAccepted,NConnections");
-            let state = match p.get("LoadState").map(String::as_str) {
-                Some("not-found") | None => format!("{}MISSING{}", s.red, s.reset),
-                _ if p.get("ActiveState").map(String::as_str) != Some("active") => {
-                    format!("{}NOT LISTENING{}", s.red, s.reset)
-                }
-                _ => {
-                    let accepted = p.get("NAccepted").map(String::as_str).unwrap_or("?");
-                    let active = p.get("NConnections").map(String::as_str).unwrap_or("?");
-                    format!("{}{active} active{} ({accepted} total)", s.green, s.reset)
-                }
-            };
-            out.push(format!("  {label}  {state}"));
-        }
-    }
-
     fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
         let mut services = Vec::new();
         for (vm, unit) in PROXIED {
@@ -314,9 +280,6 @@ pkgs.writers.writeRustBin "fencr"
             }
             None => out.push(format!("  {}unavailable: nft requires root{}", s.dim, s.reset)),
         }
-        out.push(String::new());
-        out.push("Connections:".to_string());
-        connection_lines(vm.0, s, out);
         out.push(String::new());
         out.push(format!("Domains: {}", domains(vm.0, vm.4, s)));
         service_lines(vm.0, s, out);
@@ -377,21 +340,11 @@ pkgs.writers.writeRustBin "fencr"
             Some("dashboard") => show(None, !args.iter().any(|a| a == "--once")),
             Some("ssh") => {
                 let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-                find(name);
-                let proxy = format!("ProxyCommand={SOCAT} - UNIX-CONNECT:/run/fencr-ssh-{name}");
+                let vm = find(name);
                 fail(Command::new(SSH)
-                    .arg("-o").arg(proxy)
                     .arg("-o").arg("StrictHostKeyChecking=accept-new")
-                    .arg(format!("root@{name}"))
+                    .arg(format!("root@{}", vm.3))
                     .args(&args[2..])
-                    .exec());
-            }
-            Some("proxy") => {
-                let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-                find(name);
-                fail(Command::new(SOCAT)
-                    .arg("-")
-                    .arg(format!("UNIX-CONNECT:/run/fencr-ssh-{name}"))
                     .exec());
             }
             Some("status") => {
