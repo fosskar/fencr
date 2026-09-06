@@ -3,10 +3,13 @@
 Accepted 2026-09-06 after a run on a real host (nixbox, one agent vm with
 three services and a migrated state tree).
 
-fencr moves its microvms from qemu to crosvm. The reason that kept qemu over
-cloud-hypervisor does not apply: crosvm on Linux uses the kernel's vhost-vsock,
-so host socket units bind vsock ports, the relays see the guest's cid, and ssh
-over vsock works unchanged.
+fencr runs its microvms on crosvm. It started on qemu; cloud-hypervisor was
+rejected early because its vsock is the hybrid unix-socket model, where
+host-to-guest connections need a handshake helper and guest-to-host
+connections arrive on per-port unix sockets without a peer cid to check.
+crosvm on Linux uses the kernel's vhost-vsock, so host socket units bind
+vsock ports, the relays see the guest's cid, and ssh over vsock works
+unchanged.
 
 ## why
 
@@ -20,8 +23,8 @@ over vsock works unchanged.
 
 ## decisions
 
-- crosvm replaces qemu; there is no hypervisor option. two runner paths for
-  secrets and shares would drift, the same argument as for cloud-hypervisor
+- crosvm replaces qemu; there is no hypervisor option. every forward path
+  would exist twice and the seal semantics could drift between two runners
 - raw `secrets` keep their shape: crosvm's fw_cfg device carries the systemd
   credentials, and the guest gets an ssdt declaring qemu's QEMU0002 node
   because crosvm exposes no acpi node and the nixos kernel's driver takes no
