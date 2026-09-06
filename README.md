@@ -40,9 +40,9 @@ No daemon, no API server, no YAML. `nixos-rebuild` is the control plane.
 - explicit pinholes for the destinations you name; optional open internet
   still blocks every private range
 - host↔guest port forwards over vsock, socket-activated, no TCP exposure
-- persistent `/var/lib` per instance, owned on the host by a uid range of
-  the vm's own: guest root is an unprivileged host user; the guest's own
-  closure on a read-only store image
+- persistent `/var/lib` per instance as one disk image owned by the vm's
+  own host user, so no file server faces the guest; the guest's own closure
+  on a read-only store image
 - memory ceiling with balloon, hard cap on the unit, CPU quota
 
 The host needs `/dev/kvm` and unprivileged user namespaces; fencr loads the

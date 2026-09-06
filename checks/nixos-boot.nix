@@ -138,13 +138,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # the test host exposes svm and vmx; the guest must not see either
       host.fail(f"{ssh} 'grep -qwE \"svm|vmx\" /proc/cpuinfo'", timeout=60)
       host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
-      host.succeed("findmnt -n -o OPTIONS /var/lib/fencr-vms/sbx | grep nosuid | grep nodev | grep -q noexec")
-      host.succeed(f"{ssh} 'cp /run/current-system/sw/bin/true /var/lib/fencr-probe && chmod 4755 /var/lib/fencr-probe'", timeout=60)
-      host.succeed("test -u /var/lib/fencr-vms/sbx/fencr-probe")
-      host.fail("/var/lib/fencr-vms/sbx/fencr-probe")
-      host.succeed("test \"$(stat -c %u /var/lib/fencr-vms/sbx/fencr-probe)\" = 1000000")
-      host.succeed(f"{ssh} 'install -d -o nobody -g nogroup /var/lib/fencr-user && su nobody -s /bin/sh -c \"touch /var/lib/fencr-user/file\"'", timeout=60)
-      host.succeed("test \"$(stat -c %u /var/lib/fencr-vms/sbx/fencr-user/file)\" = $((1000000 + 65534))")
+      # the state tree is one image owned by the vm's user, and it outlives
+      # the vm: what the guest writes is there again after a restart
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
+      host.succeed(f"{ssh} 'findmnt -n -o SOURCE /var/lib' | grep -Fx /dev/vdb", timeout=60)
+      host.succeed(f"{ssh} 'echo survives > /var/lib/fencr-probe'", timeout=60)
+      host.succeed("systemctl restart fencr-sbx.service")
+      host.wait_until_succeeds(f"{ssh} 'cat /var/lib/fencr-probe' | grep -Fx survives", timeout=300)
 
       # the seal, probed with real packets from inside the vm. every probe
       # carries a timeout: a hang here means the seal swallowed the reply

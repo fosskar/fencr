@@ -30,7 +30,7 @@ entire filesystem, network and lifecycle already belong to its owner.
 ## stated plainly
 
 Host root always reaches every vm regardless of any of this: it owns the
-hypervisor process, the virtiofs state tree, the staged secrets and the
+hypervisor process, the state image, the staged secrets and the
 serial console. adminKeys does not grant host root anything new; it only
 gives that fact an ssh-shaped, auditable form.
 

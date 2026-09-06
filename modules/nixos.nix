@@ -133,6 +133,15 @@ in
             default = core.defaults.memoryMax;
             description = "hard cap on the whole vm unit, enforced by the host; guest ceiling plus hypervisor overhead.";
           };
+          stateSize = lib.mkOption {
+            type = lib.types.int;
+            default = core.defaults.stateSize;
+            description = ''
+              size in MiB of the vm's /var/lib, a sparse disk image at
+              /var/lib/fencr-vms/<name>/state.img. a larger value grows the
+              image and its filesystem on the next start; it never shrinks.
+            '';
+          };
           cpuQuota = lib.mkOption {
             type = lib.types.str;
             default = core.defaults.cpuQuota;
@@ -308,10 +317,15 @@ in
       }
     );
 
+    # the parent keeps host users outside group kvm away from every image
+    systemd.tmpfiles.rules = [
+      "d /var/lib/fencr-vms 0710 root kvm -"
+    ]
+    ++ map (name: "d ${core.stateDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances);
+
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
-        "fencr-${name}" = core.vmService instance guestSystems.${name}.config.microvm.declaredRunner;
-        "${name}-setup" = core.setupService pkgs instance;
+        "fencr-${name}" = core.vmService pkgs instance guestSystems.${name}.config.microvm.declaredRunner;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
     );

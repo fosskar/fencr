@@ -83,7 +83,6 @@ let
 in
 assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
 assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
-assert lib.assertMsg (resolved.uidBase == 1000000) "core check: wrong uid base";
 assert lib.assertMsg (
   resolved.expose == [
     {
@@ -129,8 +128,8 @@ assert lib.assertMsg (
     "proxy"
     "secretNames"
     "sshKeys"
+    "stateSize"
     "tap"
-    "uidBase"
     "vcpu"
   ]
 ) "core check: guest contract drifted";

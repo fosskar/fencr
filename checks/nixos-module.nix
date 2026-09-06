@@ -57,8 +57,9 @@ in
         guestConfig.microvm.hypervisor == "crosvm"
         && config.systemd.services."fencr-sbx".serviceConfig.User == "fencr-sbx"
         && config.users.users."fencr-sbx".group == "kvm"
-        && config.systemd.services."fencr-sbx".serviceConfig.AmbientCapabilities == "CAP_SETUID CAP_SETGID"
-        && config.systemd.services."fencr-sbx".requires == [ "sbx-setup.service" ];
+        && config.systemd.services."fencr-sbx".serviceConfig.CapabilityBoundingSet == ""
+        && config.systemd.services."fencr-sbx".serviceConfig.RestrictSUIDSGID
+        && guestConfig.fileSystems."/var/lib".device == "/dev/disk/by-label/fencr-state";
       message = "nixos module check: hypervisor unit drifted";
     }
     {

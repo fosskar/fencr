@@ -10,6 +10,7 @@ rec {
     mem = 4096;
     memoryMax = "4608M";
     cpuQuota = "400%";
+    stateSize = 32768;
     egress = "closed";
     prefixLength = 24;
     allowedDomains = [ ];
@@ -24,11 +25,11 @@ rec {
   bridgeOf = name: "br-${name}";
   macOf = cfg: "02:00:00:00:20:0${toString (cfg.id + 1)}";
   cidOf = cfg: 3 + cfg.id;
-  uidBaseOf = cfg: 1000000 + cfg.id * 65536;
   hostIpOf = cfg: "10.30.${toString (cfg.id + 1)}.1";
   ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
 
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
+  stateImageOf = name: "${stateDirOf name}/state.img";
   userOf = name: "fencr-${name}";
   vmUnitOf = name: "fencr-${name}.service";
 
@@ -123,34 +124,41 @@ rec {
   };
 
   # the hypervisor unit: the microvm.nix runner under the vm's own system
-  # user in group kvm, so two vms' crosvm processes share no host identity.
-  # AF_INET is for the tap ioctls only, the two capabilities for the uid map
-  # only. crosvm's jails remount /proc and its file device applies the
-  # guest's modes, so those four knobs of the shared set stay off
+  # user in group kvm, so two vms' crosvm processes share no host identity
+  # and the state image has a stable owner. AF_INET is for the tap ioctls
+  # only. crosvm's jails remount /proc, so those two knobs of the shared
+  # set stay off. the runner creates the state image on first start; a
+  # larger stateSize grows it here and the guest grows the filesystem
   vmService =
-    instance: runner:
+    pkgs: instance: runner:
     let
       runDir = "/run/fencr-${instance.name}";
+      image = stateImageOf instance.name;
     in
     {
       description = "fencr sandbox ${instance.name}";
       wantedBy = [ "multi-user.target" ];
-      after = [
-        "network.target"
-        "${instance.name}-setup.service"
-      ];
-      requires = [ "${instance.name}-setup.service" ];
+      after = [ "network.target" ];
       serviceConfig =
         removeAttrs hardened [
           "PrivateDevices"
           "ProcSubset"
           "ProtectProc"
-          "RestrictSUIDSGID"
-          "UMask"
         ]
         // {
+          ExecStartPre = pkgs.writeShellScript "fencr-${instance.name}-grow" ''
+            set -eu
+            if [ -e ${image} ] && [ "$(${pkgs.coreutils}/bin/stat -c %s ${image})" -lt $((${toString instance.stateSize} * 1048576)) ]; then
+              ${pkgs.coreutils}/bin/truncate -s ${toString instance.stateSize}M ${image}
+            fi
+          '';
           ExecStart = "${runner}/bin/microvm-run";
-          ExecStop = "${runner}/bin/microvm-shutdown";
+          # microvm-shutdown only presses the power button; waiting for
+          # crosvm to exit is what lets the guest unmount its state
+          ExecStop = pkgs.writeShellScript "fencr-${instance.name}-stop" ''
+            ${runner}/bin/microvm-shutdown
+            while [ -d /proc/$MAINPID ]; do sleep 0.5; done
+          '';
           User = userOf instance.name;
           RuntimeDirectory = "fencr-${instance.name}";
           WorkingDirectory = runDir;
@@ -178,34 +186,7 @@ rec {
           ];
           IPAddressDeny = "any";
           RestrictNamespaces = "user mnt pid net";
-          CapabilityBoundingSet = "CAP_SETUID CAP_SETGID";
-          AmbientCapabilities = "CAP_SETUID CAP_SETGID";
         };
-    };
-
-  # the state tree: the guest sets its root's mode itself, so the parent is
-  # what keeps host users outside group kvm out. a unit of its own because a
-  # mount from the vm unit's ExecStartPre stays in that unit's namespace, and
-  # it stays active so a restarting vm does not start it again each time
-  setupService =
-    pkgs: instance:
-    let
-      dir = stateDirOf instance.name;
-      base = toString instance.uidBase;
-    in
-    {
-      description = "state tree for fencr sandbox ${instance.name}";
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = pkgs.writeShellScript "fencr-${instance.name}-setup" ''
-          set -eu
-          ${pkgs.coreutils}/bin/install -d -g kvm -m 0710 ${builtins.dirOf dir}
-          ${pkgs.coreutils}/bin/install -d -o ${base} -g ${base} -m 0700 ${dir}
-          ${pkgs.util-linux}/bin/mountpoint -q ${dir} \
-            || ${pkgs.util-linux}/bin/mount --bind -o nosuid,nodev,noexec ${dir} ${dir}
-        '';
-      };
     };
 
   # crosvm's fw_cfg device carries the systemd credentials but has no acpi
@@ -518,6 +499,7 @@ rec {
         inherit (options)
           vcpu
           mem
+          stateSize
           dns
           prefixLength
           ;
@@ -525,7 +507,6 @@ rec {
         bridge = bridgeOf name;
         mac = macOf options;
         cid = cidOf options;
-        uidBase = uidBaseOf options;
         hostIp = hostIpOf options;
         ip = ipOf options;
         proxy = proxyOf options;
@@ -813,35 +794,34 @@ rec {
           }
         ];
 
-        # no microvm.nix share: that would be a root virtiofsd, and without a
-        # host store share it builds an erofs image of the guest's closure.
+        # the state tree is a disk image the runner creates on first start;
+        # no share, so no file server faces the guest and without a host
+        # store share the guest's closure becomes an erofs image
+        volumes = [
+          {
+            image = stateImageOf agentSandbox.name;
+            label = "fencr-state";
+            mountPoint = "/var/lib";
+            size = agentSandbox.stateSize;
+          }
+        ];
+
         # credentials go through fw_cfg, which microvm.nix's runner refuses
-        crosvm.extraArgs =
-          let
-            base = toString agentSandbox.uidBase;
-          in
+        crosvm.extraArgs = lib.optionals pkgs.stdenv.hostPlatform.isx86_64 (
           [
-            "--shared-dir"
-            "${stateDirOf agentSandbox.name}:state:type=fs:uidmap=0 ${base} 65536:gidmap=0 ${base} 65536:security_ctx=false"
+            "--nested"
+            "mode=off"
+            "--acpi-table"
+            "${fwCfgTable pkgs}"
           ]
-          ++ lib.optionals pkgs.stdenv.hostPlatform.isx86_64 (
-            [
-              "--nested"
-              "mode=off"
-              "--acpi-table"
-              "${fwCfgTable pkgs}"
-            ]
-            ++ lib.concatMap (secretName: [
-              "--fw-cfg"
-              "name=opt/io.systemd.credentials/${secretName},path=${agentSandbox.credentialFiles.${secretName}}"
-            ]) agentSandbox.secretNames
-          );
+          ++ lib.concatMap (secretName: [
+            "--fw-cfg"
+            "name=opt/io.systemd.credentials/${secretName},path=${agentSandbox.credentialFiles.${secretName}}"
+          ]) agentSandbox.secretNames
+        );
       };
 
-      fileSystems."/var/lib" = {
-        device = "state";
-        fsType = "virtiofs";
-      };
+      fileSystems."/var/lib".autoResize = true;
       boot.initrd.kernelModules = lib.optional pkgs.stdenv.hostPlatform.isx86_64 "qemu_fw_cfg";
       assertions = [
         {
