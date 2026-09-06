@@ -1,87 +1,161 @@
 # fencr
 
-Sealed microVM sandboxes for AI agents, as NixOS options.
+fencr is a NixOS module for running AI agents in microVMs with explicit
+network permissions, persistent storage and resource limits. It uses
+[crosvm](https://crosvm.dev/) through
+[microvm.nix](https://github.com/microvm-nix/microvm.nix).
 
-You say what the agent may reach. fencr does the firewall.
+VMs run as system-wide systemd services, independent of login sessions.
+Their configuration belongs to the NixOS host; changes are deployed with
+`nixos-rebuild`. SSH public keys authorize access to each VM, rather than
+assigning a VM to a host account.
 
-fencr is a system-wide service, not a user tool. It runs on the machine that
-hosts the vms — server, VPS or workstation — independent of any login
-session. Clients attach and prove who they are with an ssh key; a vm belongs
-to whoever holds an authorized key, not to a system account. This is the
-deliberate opposite of user-scoped sandboxes like Docker `sbx`
-([docs/decisions/system-scoped-identity.md](docs/decisions/system-scoped-identity.md)).
+fencr does not include an agent, configure model providers, clone
+repositories or mount host working trees. `fencr.vms.<name>.services`
+accepts ordinary NixOS modules that install and configure the workload.
+Those modules are also responsible for getting code into the VM.
+
+## Configuration
+
+Add the flake input:
 
 ```nix
-fencr.vms.myagent = {
-  id = 0;
-  services = [ my-agent-module ];
+inputs.fencr.url = "github:fosskar/fencr";
+```
 
-  # egress is closed by default, including dns. grant only what is needed.
-  allowedTCPDestinations = [ "192.168.1.50:8123" ];
+Import the module into your NixOS host configuration, with `fencr` available
+as the flake input:
 
-  # or grant egress by name: implies a closed seal. the vm resolves every
-  # name to the host, which reads the server name from the tls handshake
-  # and passes allowed connections through unread — no proxy variables,
-  # no tls interception, no dns leaves the host
-  # allowedDomains = [ "github.com" "*.github.com" ];
+```nix
+{ fencr, pkgs, ... }:
+{
+  imports = [ fencr.nixosModules.fencr ];
 
-  # "expose" opens a host endpoint into the vm; 33627 is "fencr" on a
-  # phone keypad and as good a default example as any
-  expose = [ "33627" ];
-  secrets."agent.env" = "/run/secrets/agent.env";
+  networking.useNetworkd = true;
 
-  # a credential the agent may use but never sees: inside the vm it is a
-  # loopback port, the host adds the header on the way out
-  credentials = [ "anthropic" ];
-};
+  fencr.vms.myagent = {
+    id = 0;
+    authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
+    services = [
+      { environment.systemPackages = [ pkgs.ripgrep ]; }
+    ];
+  };
+}
+```
 
+Replace the example public key with your own and add your agent's NixOS
+module to `services`. Each VM needs a unique `id` between `0` and `8`.
+
+The host requires `/dev/kvm`, unprivileged user namespaces and
+systemd-networkd. The module enables nftables and disables kernel same-page
+merging (KSM). It uses the host's first `networking.nameservers` entry by
+default; set `fencr.vms.<name>.dns` if the host has no resolver listed there.
+
+By default, each VM has:
+
+- no network egress, including external DNS;
+- SSH over vsock, enabled only when authorized keys are configured;
+- 4 vCPUs, 4096 MiB of guest memory, a `4608M` systemd `MemoryMax` and
+  `400%` `CPUQuota`;
+- a 32768 MiB sparse disk image mounted at `/var/lib`, stored on the host at
+  `/var/lib/fencr-vms/<name>/state.img`;
+- a read-only image containing its Nix store closure, without a host store
+  share.
+
+`vcpu`, `mem`, `memoryMax`, `cpuQuota` and `stateSize` configure these limits.
+Increasing `stateSize` grows the state image on the next start; it does not
+shrink existing images.
+
+## Network access
+
+Network permissions are configured per VM:
+
+| Option | Effect |
+| --- | --- |
+| `allowedTCPDestinations = [ "192.168.1.50:8123" ];` | Allow TCP to an IPv4 address or subnet and port, including an explicitly permitted private destination. |
+| `allowedDomains = [ "github.com" "*.github.com" ];` | Allow TLS connections on port 443 by server name, without TLS interception or proxy environment variables. Requires `egress = "closed"`. |
+| `egress = "open";` | Allow public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly permitted. |
+| `expose = [ "8080" ];` | Forward host `127.0.0.1:8080` to guest `127.0.0.1:8080` over vsock. |
+| `hostForwards = [ { vsockPort = 9000; targetPort = 9000; } ];` | Forward guest `127.0.0.1:9000` to host `127.0.0.1:9000` over vsock. |
+| `hostPorts = [ 8123 ];` | Allow access to a host TCP port over the VM's bridge. |
+
+`allowedDomains` checks TLS Server Name Indication (SNI), not HTTP paths or
+methods. It does not support plain HTTP or connections without a visible
+server name. Shared CDN infrastructure can allow a client to reach a
+different site through an allowed server name; this is not application-level
+request filtering. See [domain egress](docs/decisions/domain-egress-proxy.md).
+
+`expose` does not authenticate clients. Every host account can also reach
+exposed guest ports directly over vsock, regardless of the TCP listen
+address. Services on those ports must provide their own authentication.
+
+## Credentials and secrets
+
+A granted credential lets a VM call an HTTP API through a host-side proxy
+that adds the secret header:
+
+```nix
 fencr.credentials.anthropic = {
   upstream = "https://api.anthropic.com";
   header = "x-api-key";
   secretFile = "/run/secrets/anthropic";
 };
+
+fencr.vms.myagent.credentials = [ "anthropic" ];
 ```
 
-No daemon, no API server, no YAML. `nixos-rebuild` is the control plane.
+The workload module receives `agentSandbox.credentials.anthropic.port` and
+configures its client to use `http://127.0.0.1:<port>` as the API base URL.
+The proxy keeps the credential value outside the VM, but the agent can
+still exercise the API permissions it grants. Method and path restrictions
+are not implemented.
 
-## What you get
+When a workload needs the raw value instead, use
+`fencr.vms.myagent.secrets."agent.env" = "/run/secrets/agent.env";`.
+The file appears at `/run/agent-secrets/agent.env` inside the VM and is
+readable by guest root. Raw `secrets` currently require `x86_64-linux`.
+See [credentials](docs/decisions/credentials.md) for the transport and trust
+model.
 
-- one crosvm microVM per instance ([microvm.nix](https://github.com/microvm-nix/microvm.nix)), every device in its own jail, vhost-vsock transport
-- default-deny egress, including dns
-- explicit pinholes for the destinations you name; optional open internet
-  still blocks every private range
-- host↔guest port forwards over vsock, socket-activated, no TCP exposure
-- persistent `/var/lib` per instance as one disk image owned by the vm's
-  own host user, so no file server faces the guest; the guest's own closure
-  on a read-only store image
-- memory ceiling with balloon, hard cap on the unit, CPU quota
+## Access and operation
 
-The host needs `/dev/kvm` and unprivileged user namespaces; fencr loads the
-kernel modules it uses and turns same-page merging off.
+The module installs the `fencr` command on the host:
 
-## Quickstart
+```console
+fencr list
+fencr status myagent
+fencr dashboard
+ssh myagent
+```
 
-[docs/quickstart.md](docs/quickstart.md) — the four-line config and what it gives you.
+`fencr.vms.<name>.authorizedKeys` authorizes root SSH access to one VM;
+`fencr.adminKeys` authorizes root SSH access to every VM. Host root remains
+trusted: it controls the hypervisor, state images and secrets regardless of
+these key lists.
 
-## Access
+For end-to-end SSH from another machine, add a local SSH configuration entry:
 
-`fencr.adminKeys` grants every listed public key root access to every vm.
-`fencr.vms.<name>.authorizedKeys` hands one vm to its owner — a public key
-is the identity, no host account needed. `ssh <vm-name>` on the
-host, `ProxyCommand ssh server fencr proxy <vm-name>` from anywhere
-else. [docs/access.md](docs/access.md) has the detail.
+```sshconfig
+Host myagent
+  User root
+  ProxyCommand ssh server fencr proxy myagent
+```
 
-## Status
+Replace `server` with your host's SSH alias. This requires SSH access to the
+host as well as a key authorized in the VM; it does not require agent
+forwarding. See [access](docs/access.md) for other connection methods.
 
-Extraction in progress from a private nixfiles repository, where this runs
-in production for a homelab agent fleet. The module lands here after the
-vsock transport rework settles there.
+## Implementation and design
 
-## Non-goals
+The NixOS module, CLI, network and credential proxies are implemented in this
+repository. Flake checks cover module evaluation, core configuration logic,
+the CLI and NixOS boot integration. crosvm is the current hypervisor;
+[Firecracker is proposed](docs/decisions/firecracker-over-crosvm.md), not
+implemented.
 
-fencr ships no agent. Bring your own NixOS modules — hermes-agent, a shell
-with claude code, anything. fencr is only the enclosure.
+The design decisions explain the scope and security model:
 
-Getting code into a vm is payload too: fencr does not clone repositories or
-mount host working trees. A `services` module fetches whatever it needs,
-using a granted credential if the source is private.
+- [Sandbox only, no agent](docs/decisions/sandbox-only-scope.md)
+- [System-scoped identity](docs/decisions/system-scoped-identity.md)
+- [SSH access model](docs/decisions/ssh-access-model.md)
+- [crosvm over QEMU](docs/decisions/crosvm-over-qemu.md)
