@@ -502,7 +502,6 @@ rec {
         secrets
         ;
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
-      declaredHostForwards = options.hostForwards;
       brokeredForwards = lib.filter (forward: forward.broker != null) options.hostForwards;
       forwardEndpoints =
         map (forward: "tcp:${forward.listenAddress}:${toString forward.listenPort}") guest.expose
@@ -573,17 +572,14 @@ rec {
         sockets =
           map (forward: {
             unit = "${forwardName forward}.socket";
-            label = "in  ${forward.listenAddress}:${toString forward.listenPort} -> guest ${toString forward.guestPort}";
+            label = "host -> guest: ${forward.listenAddress}:${toString forward.listenPort} -> guest ${toString forward.guestPort}";
           }) instance.expose
           ++ map (forward: {
             unit = "${hostForwardName forward}.socket";
-            label = "out vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
+            label = "guest -> host: vsock ${toString forward.vsockPort} -> host ${toString forward.targetPort}";
           }) instance.hostForwards;
         proxy = lib.optional (instance.proxy != null) "${proxyName}.service";
-        brokers = map (forward: {
-          unit = "${brokerName forward}.service";
-          label = "broker ${brokerSocketOf instance forward} -> ${toString forward.targetPort}";
-        }) instance.brokeredForwards;
+        brokers = map (forward: "${brokerName forward}.service") instance.brokeredForwards;
       };
     };
 

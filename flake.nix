@@ -56,6 +56,8 @@
             modules = [ (import ./checks/nixos-module.nix self pkgs.stdenv.hostPlatform.system) ];
           }).config.system.build.toplevel;
 
+        cli = import ./checks/cli.nix self pkgs;
+
         flakelet = import ./checks/flakelet.nix self pkgs;
 
         flakelet-boot = import ./checks/flakelet-boot.nix self pkgs;

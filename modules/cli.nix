@@ -21,11 +21,7 @@ let
 
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
-  brokerRows =
-    name: unitSet:
-    map (broker: ''
-      ("${name}", "${broker.unit}", "${broker.label}"),
-    '') unitSet.unitNames.brokers;
+  brokerRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.brokers;
 in
 pkgs.writers.writeRustBin "fencr"
   {
@@ -59,8 +55,8 @@ pkgs.writers.writeRustBin "fencr"
     ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows units))}
     ];
 
-    // vm, broker unit, human label
-    static BROKERS: &[(&str, &str, &str)] = &[
+    // vm, broker unit
+    static BROKERS: &[(&str, &str)] = &[
     ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList brokerRows units))}
     ];
 
@@ -252,8 +248,7 @@ pkgs.writers.writeRustBin "fencr"
         result.trim_end().to_string()
     }
 
-    fn unit_health(unit: &str, s: &Style) -> String {
-        let p = props(unit, "LoadState,ActiveState,SubState");
+    fn unit_health(p: &BTreeMap<String, String>, s: &Style) -> String {
         match p.get("LoadState").map(String::as_str) {
             Some("not-found") | None => format!("{}MISSING{}", s.red, s.reset),
             _ => match p.get("ActiveState").map(String::as_str) {
@@ -270,13 +265,6 @@ pkgs.writers.writeRustBin "fencr"
                 continue;
             }
             let p = props(unit, "LoadState,ActiveState,NAccepted,NConnections");
-            let direction = if let Some(endpoint) = label.strip_prefix("in  ") {
-                format!("host -> guest: {endpoint}")
-            } else if let Some(endpoint) = label.strip_prefix("out ") {
-                format!("guest -> host: {endpoint}")
-            } else {
-                label.to_string()
-            };
             let state = match p.get("LoadState").map(String::as_str) {
                 Some("not-found") | None => format!("{}MISSING{}", s.red, s.reset),
                 _ if p.get("ActiveState").map(String::as_str) != Some("active") => {
@@ -288,7 +276,7 @@ pkgs.writers.writeRustBin "fencr"
                     format!("{}{active} active{} ({accepted} total)", s.green, s.reset)
                 }
             };
-            out.push(format!("  {direction}  {state}"));
+            out.push(format!("  {label}  {state}"));
         }
     }
 
@@ -296,12 +284,12 @@ pkgs.writers.writeRustBin "fencr"
         let mut services = Vec::new();
         for (vm, unit) in PROXIED {
             if *vm == name {
-                services.push(format!("egress proxy {}", unit_health(unit, s)));
+                services.push(format!("egress proxy {}", unit_health(&props(unit, "LoadState,ActiveState"), s)));
             }
         }
-        for (vm, unit, _) in BROKERS {
+        for (vm, unit) in BROKERS {
             if *vm == name {
-                services.push(format!("credential broker {}", unit_health(unit, s)));
+                services.push(format!("credential broker {}", unit_health(&props(unit, "LoadState,ActiveState"), s)));
             }
         }
         if !services.is_empty() {
@@ -311,7 +299,7 @@ pkgs.writers.writeRustBin "fencr"
 
     fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut Vec<String>) {
         let p = props(vm.6, "LoadState,ActiveState,MemoryCurrent");
-        let state = unit_health(vm.6, s);
+        let state = unit_health(&p, s);
         let memory = p
             .get("MemoryCurrent")
             .and_then(|value| value.parse::<u64>().ok())

@@ -53,8 +53,6 @@ let
       flakelet = {
         name = "sbx";
         storePath = path: path;
-        contracts = { };
-        extraModules = [ ];
       };
     };
   };
