@@ -22,8 +22,9 @@ over vsock works unchanged.
 - crosvm replaces qemu; there is no hypervisor option. two runner paths for
   secrets and shares would drift, the same argument as for cloud-hypervisor
 - raw `secrets` keep their shape: crosvm's fw_cfg device carries the systemd
-  credentials, and the guest kernel gets `qemu_fw_cfg.ioport=` because crosvm
-  exposes no acpi node for the device. proven by a check before anything else
+  credentials, and the guest gets an ssdt declaring qemu's QEMU0002 node
+  because crosvm exposes no acpi node and the nixos kernel's driver takes no
+  command line parameter. proven by checks/crosvm-credentials.nix
 - the state tree maps guest uids to a per-vm range of host uids; crosvm holds
   CAP_SETUID and CAP_SETGID for that mapping and nothing else. guest root
   becomes an unprivileged host uid, non-root guest users keep working, and one
