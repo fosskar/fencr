@@ -5,6 +5,7 @@ let
     tapOf
     bridgeOf
     macOf
+    memoryMaxOf
     cidOf
     hostIpOf
     ipOf
@@ -28,7 +29,6 @@ in
   defaults = {
     vcpu = 4;
     mem = 4096;
-    memoryMax = "4608M";
     cpuQuota = "400%";
     stateSize = 32768;
     egress = "closed";
@@ -41,6 +41,9 @@ in
     hostPorts = [ ];
     secrets = { };
   };
+
+  # the unit's hard cap: the guest's memory plus room for firecracker
+  memoryMaxOf = mem: "${toString (mem + 512)}M";
 
   tapOf = name: "tap-${name}";
   bridgeOf = name: "br-${name}";
@@ -186,9 +189,9 @@ in
     guest
     // {
       inherit guest errors;
+      memoryMax = options.memoryMax or (memoryMaxOf options.mem);
       inherit (options)
         id
-        memoryMax
         cpuQuota
         egress
         allowedDomains

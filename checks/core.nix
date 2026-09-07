@@ -74,6 +74,19 @@ assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
 assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
 assert lib.assertMsg (resolved.expose == [ 33627 ]) "core check: expose was not resolved";
 assert lib.assertMsg (
+  resolved.memoryMax == "4608M"
+  &&
+    (resolve "sbx" {
+      id = 0;
+      mem = 8192;
+    }).memoryMax == "8704M"
+  &&
+    (resolve "sbx" {
+      id = 0;
+      memoryMax = "1G";
+    }).memoryMax == "1G"
+) "core check: the unit's cap does not follow the guest's memory";
+assert lib.assertMsg (
   resolved.proxy
   && resolved.guest.dns == "10.30.1.1"
   && !longName.proxy

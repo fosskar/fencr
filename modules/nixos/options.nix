@@ -126,12 +126,13 @@ in
             mem = lib.mkOption {
               type = lib.types.int;
               default = core.defaults.mem;
-              description = "guest memory ceiling; free page reporting returns unused memory to the host.";
+              description = "guest memory in MiB.";
             };
             memoryMax = lib.mkOption {
               type = lib.types.str;
-              default = core.defaults.memoryMax;
-              description = "hard cap on the whole vm unit, enforced by the host; guest ceiling plus hypervisor overhead.";
+              default = core.memoryMaxOf config.mem;
+              defaultText = "mem plus 512 MiB";
+              description = "hard cap on the whole vm unit, enforced by the host: the guest's memory plus room for the hypervisor.";
             };
             stateSize = lib.mkOption {
               type = lib.types.int;

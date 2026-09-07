@@ -56,8 +56,8 @@ By default, each VM has:
 - no network egress, including external DNS;
 - SSH at the VM's address on its bridge, enabled only when authorized keys
   are configured;
-- 4 vCPUs, 4096 MiB of guest memory, a `4608M` systemd `MemoryMax` and
-  `400%` `CPUQuota`;
+- 4 vCPUs, 4096 MiB of guest memory, a systemd `MemoryMax` 512 MiB above
+  it and `400%` `CPUQuota`;
 - a 32768 MiB sparse disk image mounted at `/var/lib`, stored on the host at
   `/var/lib/fencr-vms/<name>/state.img`;
 - a read-only image containing its Nix store closure, without a host store
