@@ -88,13 +88,25 @@ fn fail(err: std::io::Error) -> ! {
     exit(1)
 }
 
-fn output(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(cmd).args(args).output().ok()?;
+/// a command's stdout, or the first line of why there is none
+fn output(cmd: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new(cmd)
+        .args(args)
+        .output()
+        .map_err(|error| error.to_string())?;
     if out.status.success() {
-        String::from_utf8(out.stdout).ok()
+        String::from_utf8(out.stdout).map_err(|error| error.to_string())
     } else {
-        None
+        Err(String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .find(|line| !line.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| out.status.to_string()))
     }
+}
+
+fn unavailable(reason: &str, s: &Style) -> String {
+    format!("{}unavailable: {reason}{}", s.dim, s.reset)
 }
 
 fn print_list() {
@@ -110,17 +122,13 @@ fn print_list() {
     }
 }
 
-fn props(unit: &str, names: &str) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
+fn props(unit: &str, names: &str) -> Result<BTreeMap<String, String>, String> {
     let property = format!("--property={names}");
-    if let Some(text) = output(SYSTEMCTL, &["show", unit, &property]) {
-        for line in text.lines() {
-            if let Some((key, value)) = line.split_once('=') {
-                map.insert(key.to_string(), value.to_string());
-            }
-        }
-    }
-    map
+    Ok(output(SYSTEMCTL, &["show", unit, &property])?
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect())
 }
 
 fn human(bytes: u64) -> String {
@@ -189,15 +197,16 @@ fn recent_denied(kernel: &str, name: &str) -> Option<String> {
     }
 }
 
-fn domains(name: &str, egress: &str, s: &Style) -> String {
+fn domains(name: &str, s: &Style) -> String {
     let Some((_, unit)) = PROXIED.iter().find(|p| p.0 == name) else {
-        return format!("{}unavailable with {egress} egress{}", s.dim, s.reset);
+        return format!("{}none declared{}", s.dim, s.reset);
     };
-    let Some(log) = output(
+    let log = match output(
         JOURNALCTL,
         &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"],
-    ) else {
-        return format!("{}journal access denied{}", s.dim, s.reset);
+    ) {
+        Ok(log) => log,
+        Err(reason) => return unavailable(&reason, s),
     };
     // the egress proxy logs one line per connection: "allow <host>",
     // "intercept <host>" for a credential's domain, "deny <host>", or
@@ -238,7 +247,11 @@ fn domains(name: &str, egress: &str, s: &Style) -> String {
     result.trim_end().to_string()
 }
 
-fn unit_health(p: &BTreeMap<String, String>, s: &Style) -> String {
+fn unit_health(p: &Result<BTreeMap<String, String>, String>, s: &Style) -> String {
+    let p = match p {
+        Ok(p) => p,
+        Err(reason) => return unavailable(reason, s),
+    };
     match p.get("LoadState").map(String::as_str) {
         Some("not-found") | None => format!("{}MISSING{}", s.red, s.reset),
         _ => match p.get("ActiveState").map(String::as_str) {
@@ -272,11 +285,19 @@ fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
     }
 }
 
-fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut Vec<String>) {
+fn render_vm(
+    vm: &Vm,
+    ruleset: &Result<String, String>,
+    kernel: &Result<String, String>,
+    s: &Style,
+    out: &mut Vec<String>,
+) {
     let p = props(vm.unit, "LoadState,ActiveState,MemoryCurrent");
     let state = unit_health(&p, s);
     let memory = p
-        .get("MemoryCurrent")
+        .as_ref()
+        .ok()
+        .and_then(|p| p.get("MemoryCurrent"))
         .and_then(|value| value.parse::<u64>().ok())
         .map(|bytes| format!("  memory {}", human(bytes)))
         .unwrap_or_default();
@@ -293,27 +314,27 @@ fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut 
     out.push(String::new());
     out.push("Traffic:".to_string());
     match ruleset {
-        Some(ruleset) => {
+        Ok(ruleset) => {
             let (allowed, blocked) = traffic(ruleset, vm.name);
             out.push(format!(
                 "  {}allowed{}  {allowed} packets",
                 s.green, s.reset
             ));
-            let recent = recent_denied(kernel, vm.name)
-                .map(|peers| format!("  (recent: {peers})"))
-                .unwrap_or_default();
+            let recent = match kernel {
+                Ok(kernel) => recent_denied(kernel, vm.name)
+                    .map(|peers| format!("  (recent: {peers})"))
+                    .unwrap_or_default(),
+                Err(reason) => format!("  (recent: {})", unavailable(reason, s)),
+            };
             out.push(format!(
                 "  {}blocked{}  {blocked} packets{recent}",
                 s.red, s.reset
             ));
         }
-        None => out.push(format!(
-            "  {}unavailable: nft requires root{}",
-            s.dim, s.reset
-        )),
+        Err(reason) => out.push(format!("  {}", unavailable(reason, s))),
     }
     out.push(String::new());
-    out.push(format!("Domains: {}", domains(vm.name, vm.egress, s)));
+    out.push(format!("Domains: {}", domains(vm.name, s)));
     service_lines(vm.name, s, out);
     out.push(String::new());
 }
@@ -334,13 +355,12 @@ fn render(s: &Style, only: Option<&str>) -> Vec<String> {
             "-o",
             "cat",
         ],
-    )
-    .unwrap_or_default();
+    );
     for vm in VMS
         .iter()
         .filter(|vm| only.map(|name| name == vm.name).unwrap_or(true))
     {
-        render_vm(vm, ruleset.as_deref(), &kernel, s, &mut out);
+        render_vm(vm, &ruleset, &kernel, s, &mut out);
     }
     if VMS.is_empty() {
         out.push("(no vms declared)".to_string());
