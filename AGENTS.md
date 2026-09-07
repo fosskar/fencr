@@ -76,7 +76,8 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 - The secrets relay uses `requisite`, not `requires`, for the VM unit: a
   connection must not start a stopped VM. Keep relay identities separate from
   VM users.
-- Hosts need KVM and systemd-networkd. KSM is disabled. The VM unit runs as
+- Hosts need KVM and systemd-networkd, which brings systemd-resolved, the
+  stub the proxy units resolve through. KSM is disabled. The VM unit runs as
   the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices; group
   `kvm` is for those two and for the credentials socket the egress proxy
   opens. On x86_64, a CPU template hides vmx and svm from the guest. Stopping presses the guest's vsock power

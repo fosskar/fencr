@@ -160,8 +160,8 @@ forwarding. See [access](docs/access.md) for other connection methods.
 ## Implementation and design
 
 The NixOS module, CLI, network and credential proxies are implemented in this
-repository. Flake checks cover module evaluation, core configuration logic,
-the CLI and NixOS boot integration. Firecracker replaced crosvm, which had
+repository. Flake checks cover the NixOS module, core configuration logic,
+the CLI, the egress proxy's parsers and NixOS boot integration. Firecracker replaced crosvm, which had
 replaced QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds
 the history and the costs.
 

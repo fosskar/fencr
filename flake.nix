@@ -40,7 +40,6 @@
         default = self.nixosModules.fencr;
       };
 
-      # nixbot scheduled effects: flake input updates.
       herculesCI = import ./effects.nix {
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
         inherit nixbot;

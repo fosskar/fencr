@@ -124,9 +124,9 @@ hold itself (`credentials.md`).
 What the port changed:
 
 - Firecracker's vsock on the host is a unix socket, `/run/fencr-<vm>/vsock`,
-  created by Firecracker as the vm's user; the vm unit's umask lets group
-  `kvm`, the relays, open it. The runner's own path for it lives in the
-  working directory and is wiped on every start, so fencr names its own
+  created by Firecracker as the vm's user. The runner's own path for it
+  lives in the working directory and is wiped on every start, so fencr
+  names its own
 - guest-to-host forwards are socket units on `/run/fencr-<vm>/vsock_<port>`,
   owned by the vm's user with mode 0600: the path is the identity, only that
   vm's Firecracker can open it. The relay's cid check and its unsafe

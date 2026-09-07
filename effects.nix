@@ -1,12 +1,12 @@
-# nixbot effects. The GitToken comes from nixbot at runtime (a github app
-# installation token on github repos).
+# nixbot effects. the GitToken comes from nixbot at runtime (a github app
+# installation token on github repos)
 { pkgs, nixbot }:
 let
   inherit (nixbot.lib.effects { inherit pkgs; }) mkEffect;
 
   # nixbot mounts a pushable clone of the effect's commit at
-  # $NIXBOT_EFFECT_CHECKOUT, which is also the working directory. The updater
-  # comes from nixfiles, which needs no flake input to run.
+  # $NIXBOT_EFFECT_CHECKOUT, which is also the working directory. the updater
+  # comes from nixfiles, which needs no flake input to run
   mkUpdateEffect =
     name: command:
     mkEffect {

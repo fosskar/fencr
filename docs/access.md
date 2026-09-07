@@ -60,8 +60,8 @@ fencr ssh sbx     # shell in the vm
 fencr status sbx  # the vm unit plus its proxy and credential units
 ```
 
-Every command is a read; changing a vm means changing the system
-configuration and running `nixos-rebuild`.
+Every command but `ssh` is a read; changing a vm's configuration means
+changing the system configuration and running `nixos-rebuild`.
 
 ## host root, stated plainly
 
