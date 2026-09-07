@@ -93,6 +93,7 @@ nix fmt
 nix build .#checks.x86_64-linux.formatting --no-link
 nix build .#checks.x86_64-linux.core --no-link
 nix build .#checks.x86_64-linux.cli --no-link
+nix build .#checks.x86_64-linux.egress-proxy --no-link
 nix build .#checks.x86_64-linux.nixos-module --no-link
 nix build .#checks.x86_64-linux.nixos-boot --no-link -L
 nix flake check
@@ -104,6 +105,7 @@ nix flake check
 - `checks/core.nix` probes pure builders and generated configuration through
   evaluation assertions. Extend it for derivation, validation, and unit changes.
 - `checks/cli.nix` exercises the compiled CLI with mocked system commands.
+- `checks/egress-proxy.nix` runs the proxy's `#[cfg(test)]` cases with `rustc --test`.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.
 - `checks/nixos-boot.nix` runs a Firecracker guest inside a NixOS test VM,

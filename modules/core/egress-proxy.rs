@@ -307,3 +307,88 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// a client hello carrying the given extensions block
+    fn hello(extensions: &[u8]) -> Vec<u8> {
+        let mut body = vec![3, 3];
+        body.extend_from_slice(&[0; 32]);
+        body.push(0);
+        body.extend_from_slice(&[0, 2, 0x13, 0x01]);
+        body.extend_from_slice(&[1, 0]);
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(extensions);
+        let mut hello = vec![1];
+        hello.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        hello.extend(body);
+        hello
+    }
+
+    fn server_name_extension(name: &str) -> Vec<u8> {
+        let entry = name.len() + 3;
+        let mut extension = vec![0, 0];
+        extension.extend_from_slice(&((entry + 2) as u16).to_be_bytes());
+        extension.extend_from_slice(&(entry as u16).to_be_bytes());
+        extension.push(0);
+        extension.extend_from_slice(&(name.len() as u16).to_be_bytes());
+        extension.extend_from_slice(name.as_bytes());
+        extension
+    }
+
+    #[test]
+    fn the_server_name_is_found_behind_other_extensions() {
+        let mut extensions = vec![0, 0x17, 0, 0];
+        extensions.extend(server_name_extension("api.github.com"));
+        assert_eq!(
+            server_name(&hello(&extensions)),
+            Ok("api.github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn a_hello_without_a_name_or_cut_short_is_refused() {
+        assert_eq!(server_name(&hello(&[])), Err("no server_name"));
+        assert_eq!(server_name(&[2, 0, 0, 0]), Err("not a client hello"));
+        let cut = hello(&server_name_extension("x"));
+        assert_eq!(server_name(&cut[..20]), Err("short hello"));
+        assert_eq!(server_name(&hello(&[0, 0, 0xff, 0xff])), Err("short hello"));
+    }
+
+    #[test]
+    fn a_wildcard_matches_subdomains_only() {
+        let patterns = vec!["*.github.com".to_string(), "example.com".to_string()];
+        assert!(allowed(&patterns, "api.github.com"));
+        assert!(allowed(&patterns, "API.GitHub.com"));
+        assert!(allowed(&patterns, "example.com"));
+        assert!(!allowed(&patterns, "github.com"));
+        assert!(!allowed(&patterns, "evilgithub.com"));
+        assert!(!allowed(&patterns, "www.example.com"));
+    }
+
+    #[test]
+    fn every_a_query_is_answered_with_the_bridge_address() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        thread::spawn(move || serve_dns(&server, Ipv4Addr::new(10, 30, 1, 1)));
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        for (qtype, answers) in [(1u8, 1u8), (28, 0)] {
+            let mut query = vec![0xab, 0xcd, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+            query.extend_from_slice(b"\x07example\x03com\x00");
+            query.extend_from_slice(&[0, qtype, 0, 1]);
+            client.send_to(&query, address).unwrap();
+            let mut reply = [0u8; 512];
+            let len = client.recv(&mut reply).unwrap();
+            assert_eq!(&reply[..2], &[0xab, 0xcd]);
+            assert_eq!(reply[7], answers);
+            if answers == 1 {
+                assert_eq!(&reply[len - 4..len], &[10, 30, 1, 1]);
+            }
+        }
+    }
+}

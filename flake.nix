@@ -58,6 +58,8 @@
 
         cli = import ./checks/cli.nix self pkgs;
 
+        egress-proxy = import ./checks/egress-proxy.nix self pkgs;
+
         nixos-boot = import ./checks/nixos-boot.nix self pkgs;
       });
 
