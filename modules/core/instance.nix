@@ -9,6 +9,7 @@ let
     cidOf
     hostIpOf
     ipOf
+    prefixLength
     subnetOf
     stateDirOf
     runDirOf
@@ -36,7 +37,6 @@ in
     stateSize = 32768;
     egress = "closed";
     dns = null;
-    prefixLength = 24;
     credentials = [ ];
     allowedDomains = [ ];
     allowedTCPDestinations = [ ];
@@ -54,7 +54,8 @@ in
   cidOf = cfg: 3 + cfg.id;
   hostIpOf = cfg: "10.30.${toString (cfg.id + 1)}.1";
   ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
-  subnetOf = cfg: "10.30.${toString (cfg.id + 1)}.0/24";
+  prefixLength = 24;
+  subnetOf = cfg: "10.30.${toString (cfg.id + 1)}.0/${toString prefixLength}";
 
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
@@ -149,7 +150,6 @@ in
           vcpu
           mem
           stateSize
-          prefixLength
           ;
         # with a domain allowlist the egress proxy is the guest's resolver
         dns = if dnsProxyOf options then hostIpOf options else options.dns;

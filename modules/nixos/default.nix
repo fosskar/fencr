@@ -165,7 +165,7 @@ in
         networks."10-${cfg.bridge}" = {
           matchConfig.Name = cfg.bridge;
           networkConfig = {
-            Address = "${cfg.hostIp}/${toString cfg.prefixLength}";
+            Address = "${cfg.hostIp}/${toString core.prefixLength}";
             ConfigureWithoutCarrier = true;
           };
         };

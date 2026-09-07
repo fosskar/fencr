@@ -5,6 +5,7 @@ let
     vsockOf
     powerPort
     secretsPort
+    prefixLength
     guestTrust
     trustVariables
     guestPortsOf
@@ -185,7 +186,7 @@ in
       systemd.network.networks."10-lan" = {
         matchConfig.MACAddress = agentSandbox.mac;
         networkConfig = {
-          Address = "${agentSandbox.ip}/${toString agentSandbox.prefixLength}";
+          Address = "${agentSandbox.ip}/${toString prefixLength}";
           Gateway = agentSandbox.hostIp;
           DNS = lib.mkIf (agentSandbox.dns != null) agentSandbox.dns;
           IPv6AcceptRA = false;

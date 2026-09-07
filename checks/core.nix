@@ -132,7 +132,6 @@ assert lib.assertMsg (
     "mac"
     "mem"
     "name"
-    "prefixLength"
     "secretNames"
     "sshKeys"
     "stateSize"
