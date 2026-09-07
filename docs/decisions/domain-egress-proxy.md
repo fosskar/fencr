@@ -60,3 +60,26 @@ into an nftables set, giving transparent per-domain rules. Rejected:
 shared cdn addresses make an accepted address far broader than the name
 that resolved to it, and cache churn makes the firewall racy. The server name
 names the destination explicitly on every connection.
+
+## inbound and outbound grants
+
+The public interface now uses `inbound` and `outbound` instead of `expose`,
+`hostPorts`, `egress`, `allowedDomains` and `allowedTCPDestinations`.
+The enforcement mechanisms above are unchanged; `resolveInstance` partitions
+these grants into the existing internal fields for the builders.
+
+`outbound` is one list of strings: domains mean TLS on 443, `host:<port>`
+means host TCP access, `<ipv4[/prefix]>:<port>` means address-based TCP
+access, and `internet` means public IPv4 and DNS. Each entry has one spelling,
+without nested destination categories or a mixture of strings and attribute
+sets. The distinction between proxy and firewall enforcement stays internal.
+
+`internet` cannot accompany domain grants: public internet access makes those
+restrictions ineffective and uses the host's resolver rather than the SNI
+proxy's DNS answers. Host and address grants can accompany either mode.
+
+`inbound` is a list of integer guest TCP ports. It has no `from` field because
+only host-to-guest access is supported; it does not publish ports externally.
+SSH keys and credential grants retain their automatic access, and the CLI
+shows those permissions alongside explicit grants. Raw secrets remain separate
+because they deliver values into the guest rather than grant network access.

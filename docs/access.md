@@ -3,7 +3,7 @@
 A vm has an ssh door only when keys authorize it: `fencr.adminKeys`
 (every vm) or `fencr.vms.<name>.authorizedKeys` (that vm). The door is the
 guest's sshd on the vm's address on its bridge, `fencr.vms.<name>.ip`,
-and the vm's firewall lets the host reach that port and the vm's `expose`d ports,
+and the vm's firewall lets the host reach that port and the vm's `inbound` ports,
 nothing else. You are root inside the vm; the vm boundary is the privilege
 boundary.
 
@@ -55,7 +55,7 @@ root can use the forwarded agent while connected).
 On the host itself the same tool covers the day-to-day reads:
 
 ```console
-fencr list        # declared vms: id, cid, ip, egress, domain count
+fencr list        # declared vms: id, cid, ip, inbound and outbound grants
 fencr ssh sbx     # shell in the vm
 fencr status sbx  # the vm unit plus its proxy and credential units
 ```

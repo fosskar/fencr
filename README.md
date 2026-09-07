@@ -69,23 +69,47 @@ shrink existing images.
 
 ## Network access
 
-Network permissions are configured per VM:
+Network permissions are configured in two lists per VM:
 
-| Option | Effect |
+```nix
+fencr.vms.myagent = {
+  inbound = [ 8080 ];
+  outbound = [
+    "github.com"
+    "*.github.com"
+    "host:8123"
+    "192.168.20.0/24:1234"
+  ];
+};
+```
+
+`inbound` lists guest TCP ports the host may reach at
+`fencr.vms.<name>.ip`. The guest service must listen on that address, not
+loopback. These ports are not published to the LAN or internet.
+
+Each `outbound` string grants one kind of access:
+
+| Entry | Effect |
 | --- | --- |
-| `allowedTCPDestinations = [ "192.168.1.50:8123" ];` | Allow TCP to an IPv4 address or subnet and port, including an explicitly permitted private destination. |
-| `allowedDomains = [ "github.com" "*.github.com" ];` | Allow TLS connections on port 443 by server name, without TLS interception or proxy environment variables. Requires `egress = "closed"`. |
-| `egress = "open";` | Allow public IPv4 internet access; the host's resolver answers the VM on the bridge. Private and other special-use ranges remain blocked unless explicitly permitted. |
-| `expose = [ 8080 ];` | Let the host reach guest port 8080 at the VM's address, `fencr.vms.<name>.ip`. The service inside must listen on that address. Every other guest port is unreachable from the host. |
-| `hostPorts = [ 8123 ];` | Allow access to a host TCP port over the VM's bridge. |
+| `"github.com"` | TLS on port 443 to that server name. No port suffix. |
+| `"*.github.com"` | TLS on port 443 to subdomains, not bare `github.com`. |
+| `"host:8123"` | TCP to port 8123 on the host, over the VM's bridge. |
+| `"192.168.20.0/24:1234"` | TCP to an IPv4 address or subnet and port, including private destinations. |
+| `"internet"` | Public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly granted. |
 
-`allowedDomains` checks TLS Server Name Indication (SNI), not HTTP paths or
+`"internet"` may accompany host/address grants, but not domain grants.
+Both lists default to empty: no explicit access, including DNS. SSH keys
+and credential grants automatically enable their required access, shown
+alongside explicit grants in `fencr status`. Reply traffic needs no separate
+grant.
+
+Domain grants check TLS Server Name Indication (SNI), not HTTP paths or
 methods. It does not support plain HTTP or connections without a visible
 server name. Shared CDN infrastructure can allow a client to reach a
 different site through an allowed server name; this is not application-level
 request filtering. See [domain egress](docs/decisions/domain-egress-proxy.md).
 
-`expose` does not authenticate clients: any process on the host can connect
+`inbound` does not authenticate clients: any process on the host can connect
 to an exposed port. Services on those ports must provide their own
 authentication.
 

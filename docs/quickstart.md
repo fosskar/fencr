@@ -11,9 +11,9 @@ imports = [ fencr.nixosModules.fencr ];
 
 fencr.vms.myagent = {
   id = 0;
-  services = [ my-agent-module ];                    # any nixos modules
-  authorizedKeys = [ "ssh-ed25519 AAAA... you" ];    # ssh way in
-  expose = [ 9119 ];                                 # web ui way in
+  services = [ my-agent-module ];                   # any nixos modules
+  authorizedKeys = [ "ssh-ed25519 AAAA... you" ];   # ssh way in
+  inbound = [ 9119 ];                               # web ui from the host
 };
 ```
 
@@ -28,13 +28,21 @@ What this gives you, with no further options:
 Each further line is one permission or one limit:
 
 ```nix
-  allowedDomains = [ "github.com" "*.github.com" ];  # out: only these sites
-  allowedTCPDestinations = [ "192.168.1.50:8123" ];  # out: one address
-  egress = "open";                                    # out: public internet
+  outbound = [ "github.com" "*.github.com" "192.168.1.50:8123" ];
   credentials = [ "anthropic" ];                      # api key the vm uses, never sees
   secrets."nostr.key" = "/run/secrets/nostr.key";     # a key the program must hold itself
   vcpu = 8; mem = 8192;                               # bigger box
 ```
+
+Domain entries grant TLS on 443; address entries grant TCP on the stated
+port. Add `"host:8080"` to reach a host service. For public internet and DNS
+instead of selected domains, use `outbound = [ "internet" ];`. It can
+accompany host/address entries, but not domains. Private networks remain
+blocked unless explicitly granted. Replies need no separate grant.
+
+`inbound` accepts integer TCP ports, reachable only from the host at the
+vm's address; it does not publish them to other machines. `fencr status`
+shows the effective grants, including automatic SSH and credential access.
 
 Inside the vm, `services` entries are ordinary NixOS configuration:
 

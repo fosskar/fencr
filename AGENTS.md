@@ -32,6 +32,9 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   the one list of guest ports the host may reach; the guest firewall and the
   output chain both take it. Keep shared defaults in `core.defaults` and
   derivation logic here rather than duplicating it in the module or CLI.
+  `resolveInstance` classifies public `inbound` and `outbound` grants into
+  the internal fields `expose`, `egress`, `allowedDomains`, `hostPorts` and
+  `allowedTCPDestinations`; firewall and proxy builders consume those fields.
 - `modules/cli.rs` is the fencr command; `modules/cli.nix` appends its instance
   tables and tool paths at build. `modules/core/egress-proxy.rs` answers DNS
   queries, hands credential domains to their proxies by TLS SNI and applies the
@@ -40,7 +43,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   rendered by `firewallOf` and canned journal lines, so its parsers run on the
   text the firewall writes.
 - The bridge is the road between host and guest: the guest's sshd and its
-  `expose`d ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
+  `inbound` ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
   firewall's output chain lets the host reach those ports and nothing else. vsock
   carries only the boot-time secrets fetch and the power button: Firecracker's
   unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user
@@ -51,11 +54,13 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 
 ## boundaries
 
-- Egress defaults to closed, including DNS. Explicit `allowedTCPDestinations`
-  are exceptions; open egress still blocks other special-use ranges. IPv6 is
+- `outbound` defaults to empty, including no DNS grant. Explicit IPv4/CIDR
+  and port entries grant TCP access; `"internet"` grants public IPv4 and DNS
+  but still blocks other special-use ranges. IPv6 is
   dropped on the bridge. The vm's nftables filter chains run at `filter - 1`, before
   the host firewall; preserve both the vm's tables and the host firewall integration.
-- `allowedDomains` requires closed egress. The host answers guest DNS with its
+- Domain grants in `outbound` cannot accompany `"internet"`. For domain
+  grants, the host answers guest DNS with its
   bridge address and authorizes TLS by SNI without decrypting it or using proxy
   environment variables. `*.example.com` does not include `example.com`.
 - `credentials` intercepts TLS for the credential's domain only: the guest's
@@ -71,7 +76,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   values in the Nix store.
 - SSH combines `fencr.adminKeys` and per-VM `authorizedKeys`; no keys means no
   SSH listener and no output-chain pinhole for it. Guest root is the intended
-  privilege level. `expose` opens a guest port to every host process; it does
+  privilege level. `inbound` opens a guest port to every host process; it does
   not authenticate.
 - The secrets relay uses `requisite`, not `requires`, for the VM unit: a
   connection must not start a stopped VM. Keep relay identities separate from

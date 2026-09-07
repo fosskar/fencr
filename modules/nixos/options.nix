@@ -2,15 +2,6 @@
 { lib, ... }:
 let
   core = import ../core { inherit lib; };
-  exposeType = lib.types.coercedTo lib.types.str core.parseExpose lib.types.port;
-  destinationType = lib.types.coercedTo lib.types.str core.parseDestination (
-    lib.types.submodule {
-      options = {
-        address = lib.mkOption { type = lib.types.str; };
-        port = lib.mkOption { type = lib.types.port; };
-      };
-    }
-  );
 in
 {
   options.fencr.guestSystems = lib.mkOption {
@@ -93,7 +84,7 @@ in
               type = lib.types.str;
               readOnly = true;
               default = core.hostIpOf { inherit (config) id; };
-              description = "the host's address on the vm's bridge, where hostPorts answer.";
+              description = "the host's address on the vm's bridge, where outbound host:<port> grants apply.";
             };
 
             services = lib.mkOption {
@@ -159,51 +150,37 @@ in
               '';
             };
 
-            egress = lib.mkOption {
-              type = lib.types.enum [
-                "open"
-                "closed"
-              ];
-              default = core.defaults.egress;
-              description = ''
-                "open": internet and dns reachable, private ranges sealed.
-                "closed": nothing reachable beyond allowedTCPDestinations,
-                dns included. this is the default.
-              '';
-            };
-
-            allowedDomains = lib.mkOption {
+            outbound = lib.mkOption {
               type = lib.types.listOf lib.types.str;
-              default = core.defaults.allowedDomains;
-              example = lib.literalExpression ''[ "github.com" "*.github.com" ]'';
+              default = core.defaults.outbound;
+              example = [
+                "github.com"
+                "*.github.com"
+                "host:8080"
+                "192.168.1.0/24:8123"
+              ];
               description = ''
-                domains reachable over tls; "*.github.com" does not match the
-                bare "github.com", list both. implies egress = "closed": the
-                vm resolves every name to the host, which reads the server
-                name from the tls handshake and passes allowed connections
-                through unread. no proxy variables, no interception, and no
-                dns leaves the host.
+                connections the vm may initiate: a domain grants TLS on 443,
+                host:<port> grants TCP to the host, and <ipv4[/prefix]>:<port>
+                grants TCP to that address or subnet, including private ranges.
+                "internet" grants public IPv4 internet access and DNS, excluding
+                special-use ranges; it cannot accompany domain grants.
+                "*.github.com" does not include "github.com". domains use the
+                host's SNI proxy, without TLS interception or external DNS.
+                empty means no explicit grants, including DNS. credential
+                grants enable their own access independently.
               '';
             };
 
-            allowedTCPDestinations = lib.mkOption {
-              type = lib.types.listOf destinationType;
-              default = core.defaults.allowedTCPDestinations;
-              description = ''
-                IPv4 TCP destinations reachable from the vm, as
-                "<address>:<port>" or { address; port; }. each entry is an
-                explicit exception to the default closed egress policy.
-              '';
-            };
-
-            expose = lib.mkOption {
-              type = lib.types.listOf exposeType;
-              default = core.defaults.expose;
+            inbound = lib.mkOption {
+              type = lib.types.listOf lib.types.port;
+              default = core.defaults.inbound;
               example = [ 9119 ];
               description = ''
-                guest ports the host may reach, at the vm's address on its
-                bridge. the service inside must listen on that address, not
-                on loopback. nothing on the host reaches any other guest port.
+                guest TCP ports any host process may reach at the vm's bridge
+                address. the guest service must listen on that address, not
+                loopback. ports are not published to the LAN or internet.
+                SSH access is enabled separately by authorized keys.
               '';
             };
 
@@ -220,11 +197,6 @@ in
               '';
             };
 
-            hostPorts = lib.mkOption {
-              type = lib.types.listOf lib.types.port;
-              default = core.defaults.hostPorts;
-              description = "host TCP ports reachable from the vm over the bridge.";
-            };
           };
         }
       )

@@ -28,9 +28,8 @@ struct Vm {
     id: u32,
     cid: u32,
     ip: &'static str,
-    egress: &'static str,
-    /// how many allowedDomains the vm declares
-    domains: u32,
+    inbound: &'static [&'static str],
+    outbound: &'static [&'static str],
     unit: &'static str,
 }
 
@@ -109,15 +108,28 @@ fn unavailable(reason: &str, s: &Style) -> String {
     format!("{}unavailable: {reason}{}", s.dim, s.reset)
 }
 
+fn grant_summary(grants: &[&str]) -> String {
+    if grants.is_empty() {
+        "denied".to_string()
+    } else {
+        grants.join(", ")
+    }
+}
+
 fn print_list() {
     println!(
-        "{:<16} {:<3} {:<4} {:<12} {:<7} DOMAINS",
-        "NAME", "ID", "CID", "IP", "EGRESS"
+        "{:<16} {:<3} {:<4} {:<12} INBOUND / OUTBOUND",
+        "NAME", "ID", "CID", "IP"
     );
     for vm in VMS {
         println!(
-            "{:<16} {:<3} {:<4} {:<12} {:<7} {}",
-            vm.name, vm.id, vm.cid, vm.ip, vm.egress, vm.domains
+            "{:<16} {:<3} {:<4} {:<12} {} / {}",
+            vm.name,
+            vm.id,
+            vm.cid,
+            vm.ip,
+            grant_summary(vm.inbound),
+            grant_summary(vm.outbound)
         );
     }
 }
@@ -305,12 +317,17 @@ fn render_vm(
         "{}{}{}  {state}  {}{memory}",
         s.bold, vm.name, s.reset, vm.ip
     ));
-    out.push(format!(
-        "Internet: {}{}{}",
-        s.bold,
-        vm.egress.to_uppercase(),
-        s.reset
-    ));
+    for (heading, grants) in [
+        ("Inbound (from host)", vm.inbound),
+        ("Outbound (otherwise denied)", vm.outbound),
+    ] {
+        out.push(format!("{heading}:"));
+        if grants.is_empty() {
+            out.push("  denied".to_string());
+        } else {
+            out.extend(grants.iter().map(|grant| format!("  {grant}")));
+        }
+    }
     out.push(String::new());
     out.push("Traffic:".to_string());
     match ruleset {

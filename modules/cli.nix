@@ -9,9 +9,29 @@
   units,
 }:
 let
+  core = import ./core { inherit lib; };
+  rustStringSlice = values: "&[" + lib.concatMapStringsSep ", " builtins.toJSON values + "]";
+  inbound =
+    cfg:
+    map (
+      port:
+      "TCP ${toString port}"
+      + lib.optionalString (port == 22 && cfg.sshKeys != [ ]) " (SSH; authorized keys)"
+    ) (lib.unique (core.guestPortsOf cfg));
+  outbound =
+    cfg:
+    lib.optional (cfg.egress == "open") "public IPv4 internet and DNS (special-use ranges excluded)"
+    ++ map (port: "host TCP ${toString port}") cfg.hostPorts
+    ++ map (
+      destination: "${destination.address} TCP ${toString destination.port}"
+    ) cfg.allowedTCPDestinations
+    ++ map (domain: "${domain} TLS 443") cfg.allowedDomains
+    ++ map (
+      credential: "${credential.domain} TLS 443 (credential ${credential.name}; key stays on host)"
+    ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", egress: "${cfg.egress}", domains: ${toString (lib.length cfg.allowedDomains)}, unit: "${units.${name}.unitNames.vm}" },'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", inbound: ${rustStringSlice (inbound cfg)}, outbound: ${rustStringSlice (outbound cfg)}, unit: "${units.${name}.unitNames.vm}" },'';
 
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 

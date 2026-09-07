@@ -110,16 +110,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # the firewall: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
-        allowedTCPDestinations = [ "192.168.1.2:8123" ];
-        # private.test is on the list but resolves to a private address the
-        # proxy unit denies, so the name alone must not open the lan
-        allowedDomains = [
+        # private.test resolves to a private address the proxy unit denies
+        outbound = [
+          "192.168.1.2:8123"
           "allowed.test"
           "private.test"
         ];
         # the web ui: reachable from the host at the guest's address, on
         # this port and no other
-        expose = [ 9119 ];
+        inbound = [ 9119 ];
         # the credential: the guest calls api.test over https as it would
         # any site, the host ends the tls and injects the bearer token,
         # the value never enters the vm
@@ -159,7 +158,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         id = 1;
         vcpu = 1;
         mem = 512;
-        egress = "open";
+        outbound = [ "internet" ];
         authorizedKeys = [ snakeOilEd25519PublicKey ];
       };
 

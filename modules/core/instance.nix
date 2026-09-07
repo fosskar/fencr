@@ -13,8 +13,7 @@ let
     subnetOf
     stateDirOf
     runDirOf
-    parseDestination
-    parseExpose
+    parseOutbound
     dnsProxyOf
     hostDnsOf
     proxyOf
@@ -24,7 +23,6 @@ let
     caMembers
     guestTrust
     domainPatternError
-    domainPatternErrors
     duplicates
     ;
 in
@@ -36,12 +34,9 @@ in
     mem = 4096;
     cpuQuota = "400%";
     stateSize = 32768;
-    egress = "closed";
     credentials = [ ];
-    allowedDomains = [ ];
-    allowedTCPDestinations = [ ];
-    expose = [ ];
-    hostPorts = [ ];
+    inbound = [ ];
+    outbound = [ ];
     secrets = { };
   };
 
@@ -80,34 +75,81 @@ in
   # systemd credentials, so they touch neither the store nor a disk
   secretsPort = 5;
 
-  # "<ipv4[/prefix]>:<port>" sugar for destination entries; a name goes in
-  # allowedDomains
-  parseDestination =
-    value:
-    if builtins.isAttrs value then
-      value
-    else
-      let
-        matched = builtins.match "([0-9./]+):([0-9]+)" value;
-      in
-      if matched == null then
-        throw "fencr: destination \"${value}\" is not <ipv4[/prefix]>:<port>; a name goes in allowedDomains"
+  # domainPatternError also accepts dotted IPv4 addresses and numeric final
+  # labels; reject these before domain validation so addresses require a port.
+  parseOutbound =
+    entry:
+    let
+      valid = kind: value: {
+        inherit kind value;
+        text = entry;
+        error = null;
+      };
+      invalid = error: {
+        kind = "invalid";
+        value = null;
+        inherit error;
+        text = entry;
+      };
+      decimal =
+        text: maximum:
+        let
+          matched = builtins.match "0*([1-9][0-9]*|0)" text;
+          digits = builtins.head matched;
+        in
+        matched != null
+        && lib.stringLength digits <= lib.stringLength (toString maximum)
+        && lib.toIntBase10 digits <= maximum;
+      parts = lib.splitString ":" entry;
+      address = builtins.head parts;
+      port = lib.last parts;
+      network = lib.splitString "/" address;
+      octets = lib.splitString "." (builtins.head network);
+      portError =
+        if port == "" then
+          "missing port"
+        else if builtins.match "[0-9]+" port == null then
+          "port must be a decimal integer"
+        else if !decimal port 65535 || lib.toIntBase10 port < 1 then
+          "port must be between 1 and 65535"
+        else
+          null;
+    in
+    if entry == "internet" then
+      valid "internet" entry
+    else if entry == "host" then
+      invalid "host needs a port; expected host:<port>"
+    else if lib.length parts > 2 then
+      invalid "expected one colon separating the destination and port"
+    else if lib.hasPrefix "host:" entry then
+      if portError == null then valid "host" (lib.toIntBase10 port) else invalid portError
+    else if builtins.match "[0-9./]+:.*" entry != null then
+      if lib.length octets != 4 || !lib.all (octet: builtins.match "[0-9]+" octet != null) octets then
+        invalid "expected a dotted-quad IPv4 address"
+      else if !lib.all (octet: decimal octet 255) octets then
+        invalid "octet out of range"
+      else if lib.length network > 2 || (lib.length network == 2 && !decimal (lib.last network) 32) then
+        invalid "prefix must be between 0 and 32"
+      else if portError != null then
+        invalid portError
       else
-        {
-          address = builtins.elemAt matched 0;
-          port = lib.toInt (builtins.elemAt matched 1);
-        };
-
-  # an exposed port is a guest port the host may reach at the guest's
-  # address; a string is the same port spelled out
-  parseExpose =
-    value:
-    if builtins.isInt value then
-      value
-    else if builtins.match "[0-9]+" value != null then
-      lib.toInt value
+        valid "tcp" {
+          address =
+            lib.concatMapStringsSep "." (octet: toString (lib.toIntBase10 octet)) octets
+            + lib.optionalString (lib.length network == 2) "/${toString (lib.toIntBase10 (lib.last network))}";
+          port = lib.toIntBase10 port;
+        }
+    else if
+      builtins.match "[0-9./]+" entry != null
+      || builtins.match "[0-9]+" (lib.last (lib.splitString "." entry)) != null
+    then
+      invalid "an address needs a port"
+    else if lib.hasInfix ":" entry then
+      invalid "expected host:<port> or <ipv4[/prefix]>:<port>; domains use TLS on 443 without a port"
+    else if domainPatternError entry != null then
+      invalid (domainPatternError entry)
     else
-      throw "fencr: expose entry \"${value}\" is not a port";
+      valid "domain" entry;
 
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
@@ -127,8 +169,6 @@ in
     else
       "\"${pattern}\": not a hostname pattern; expected \"example.com\" or \"*.example.com\"";
 
-  domainPatternErrors = domains: lib.filter (e: e != null) (map domainPatternError domains);
-
   # the guest ports the host may reach at the guest's address: its sshd
   # when keys authorize one, and what expose lists. the guest's firewall
   # opens exactly these and the host's output chain admits exactly these
@@ -142,7 +182,15 @@ in
       ...
     }@args:
     let
-      options = defaults // args.options;
+      declared = defaults // args.options;
+      entries = map parseOutbound declared.outbound;
+      values = kind: map (entry: entry.value) (lib.filter (entry: entry.kind == kind) entries);
+      options = declared // {
+        egress = if values "internet" != [ ] then "open" else "closed";
+        allowedDomains = values "domain";
+        allowedTCPDestinations = values "tcp";
+        hostPorts = values "host";
+      };
       granted = credentialsOf options credentials;
       guest = {
         inherit name sshKeys;
@@ -160,7 +208,7 @@ in
         cid = cidOf options;
         hostIp = hostIpOf options;
         ip = ipOf options;
-        expose = map parseExpose options.expose;
+        expose = options.inbound;
         credentialDomains = map (credential: credential.domain) granted;
         secretNames = lib.attrNames options.secrets;
       };
@@ -176,9 +224,9 @@ in
         ) "vm name \"${name}\" is too long: \"${guest.tap}\" exceeds IFNAMSIZ"
         ++ lib.optional (
           options.allowedDomains != [ ] && options.egress != "closed"
-        ) "${name}: allowedDomains requires egress = \"closed\""
-        ++ map (error: "${name}: invalid allowedDomains ${error}") (
-          domainPatternErrors options.allowedDomains
+        ) "${name}: outbound cannot combine internet with domain grants"
+        ++ map (entry: "${name}: outbound entry \"${entry.text}\": ${entry.error}") (
+          lib.filter (entry: entry.error != null) entries
         )
         ++ map (credential: "${name}: credential \"${credential}\" is not declared in fencr.credentials") (
           lib.filter (credential: !(credentials ? ${credential})) options.credentials
@@ -196,7 +244,7 @@ in
         ++ map (domain: "${name}: credential domain ${domain} granted twice") (
           duplicates (map (credential: credential.domain) granted)
         )
-        ++ map (port: "${name}: expose port ${toString port} declared twice") (duplicates guest.expose);
+        ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates guest.expose);
     in
     guest
     // {
@@ -209,8 +257,8 @@ in
         allowedDomains
         hostPorts
         secrets
+        allowedTCPDestinations
         ;
-      allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       proxy = proxyOf options;
       dnsProxy = dnsProxyOf options;
       hostDns = hostDnsOf options;

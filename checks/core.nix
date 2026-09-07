@@ -28,11 +28,13 @@ let
     };
   resolved = resolve "sbx" {
     id = 0;
-    allowedDomains = [ "github.com" ];
-    allowedTCPDestinations = [ "192.168.1.50:8123" ];
-    expose = [ "33627" ];
+    outbound = [
+      "github.com"
+      "192.168.1.50:8123"
+      "host:443"
+    ];
+    inbound = [ 33627 ];
     credentials = [ "api" ];
-    hostPorts = [ 443 ];
   };
   unknownCredential = resolve "sbx" {
     id = 0;
@@ -45,19 +47,18 @@ let
   # a credential alone brings the egress proxy, but not its resolver
   keyed = resolve "keyed" {
     id = 2;
-    egress = "open";
     credentials = [ "api" ];
   };
   keyedUnits = core.hostUnits pkgs keyed;
   units = core.hostUnits pkgs resolved;
   longName = resolve "coding-agent-1" {
     id = 1;
-    egress = "open";
+    outbound = [ "internet" ];
   };
   samePort = resolve "sbx" {
     id = 0;
-    expose = [
-      "22100"
+    inbound = [
+      22100
       22100
     ];
   };
@@ -66,10 +67,138 @@ let
   natTable = tables."fencr-sbx-nat".content;
   rendered = filterTable + natTable;
   occurrences = needle: lib.length (lib.splitString needle rendered) - 1;
+  check =
+    label: actual: expected:
+    lib.assertMsg (
+      actual == expected
+    ) "core check: ${label}: expected ${builtins.toJSON expected}, got ${builtins.toJSON actual}";
+  invalidOutbound =
+    entry: message:
+    check "outbound ${builtins.toJSON entry} errors"
+      (resolve "sbx" {
+        id = 0;
+        outbound = [ entry ];
+      }).errors
+      [ "sbx: outbound entry \"${entry}\": ${message}" ];
+  outboundValue =
+    entry: expected:
+    check "outbound ${builtins.toJSON entry} value" (core.parseOutbound entry).value expected;
+  outboundKind =
+    entry: expected:
+    check "outbound ${builtins.toJSON entry} kind" (core.parseOutbound entry).kind expected;
+  legacyPolicy = resolved // {
+    egress = "closed";
+    allowedDomains = [ "github.com" ];
+    allowedTCPDestinations = [
+      {
+        address = "192.168.1.50";
+        port = 8123;
+      }
+    ];
+    hostPorts = [ 443 ];
+    expose = [ 33627 ];
+    proxy = true;
+    dnsProxy = true;
+    hostDns = false;
+  };
 in
+assert lib.assertMsg (
+  core.forwardRules resolved == core.forwardRules legacyPolicy
+  && core.inputRules resolved == core.inputRules legacyPolicy
+  && core.outputRules resolved == core.outputRules legacyPolicy
+  && core.redirectRules resolved == core.redirectRules legacyPolicy
+  && core.egressProxyServiceConfig pkgs resolved == core.egressProxyServiceConfig pkgs legacyPolicy
+) "core check: access syntax changed enforcement";
+assert check "internet and domain grants"
+  (resolve "sbx" {
+    id = 0;
+    outbound = [
+      "internet"
+      "github.com"
+    ];
+  }).errors
+  [ "sbx: outbound cannot combine internet with domain grants" ];
+assert (
+  invalidOutbound "host" "host needs a port; expected host:<port>"
+  && invalidOutbound "1.2.3.4" "an address needs a port"
+  && invalidOutbound "example.123" "an address needs a port"
+  && invalidOutbound "300.1.1.1:80" "octet out of range"
+  && invalidOutbound "1.2.3:80" "expected a dotted-quad IPv4 address"
+  && invalidOutbound "1.2.3.4/33:80" "prefix must be between 0 and 32"
+  && invalidOutbound "1.2.3.4/24/1:80" "prefix must be between 0 and 32"
+  && lib.all (entry: invalidOutbound entry "port must be between 1 and 65535") [
+    "host:0"
+    "host:65536"
+    "1.2.3.4:0"
+    "1.2.3.4:65536"
+  ]
+  && lib.all (entry: invalidOutbound entry "port must be a decimal integer") [
+    "host:no"
+    "1.2.3.4:no"
+  ]
+  && lib.all (entry: invalidOutbound entry "missing port") [
+    "host:"
+    "1.2.3.4:"
+  ]
+  && lib.all (entry: invalidOutbound entry "expected one colon separating the destination and port") [
+    "host:8080:1"
+    "1.2.3.4:80:1"
+  ]
+  && invalidOutbound "1.2.3.4/99999999999999999999:80" "prefix must be between 0 and 32"
+  && invalidOutbound "99999999999999999999.1.1.1:80" "octet out of range"
+  && invalidOutbound "localhost" ''"localhost": not a hostname pattern; expected "example.com" or "*.example.com"''
+  && invalidOutbound "github.com:443" "expected host:<port> or <ipv4[/prefix]>:<port>; domains use TLS on 443 without a port"
+);
+assert check "internet with host and subnet grants"
+  (resolve "sbx" {
+    id = 0;
+    outbound = [
+      "internet"
+      "host:8080"
+      "192.168.20.0/24:1234"
+    ];
+  }).errors
+  [ ];
+assert (
+  outboundValue "192.168.20.0/24:1234" {
+    address = "192.168.20.0/24";
+    port = 1234;
+  }
+  && outboundValue "010.001.002.003/08:080" {
+    address = "10.1.2.3/8";
+    port = 80;
+  }
+  && outboundValue "host:080" 80
+  && outboundValue "0255.1.1.1:80" {
+    address = "255.1.1.1";
+    port = 80;
+  }
+  && outboundValue "host:00000000000000000000080" 80
+  && outboundKind "example.host" "domain"
+  && outboundKind "*.github.com" "domain"
+  && outboundKind "0.0.0.0/0:1" "tcp"
+  && outboundKind "255.255.255.255/32:65535" "tcp"
+);
+assert lib.assertMsg (
+  !(builtins.tryEval (
+    builtins.deepSeq
+      (lib.evalModules {
+        modules = [
+          ../modules/nixos/options.nix
+          {
+            fencr.vms.sbx = {
+              id = 0;
+              inbound = [ "9119" ];
+            };
+          }
+        ];
+      }).config.fencr.vms.sbx.inbound
+      true
+  )).success
+) "core check: inbound accepted a string port";
 assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
 assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
-assert lib.assertMsg (resolved.expose == [ 33627 ]) "core check: expose was not resolved";
+assert lib.assertMsg (resolved.expose == [ 33627 ]) "core check: inbound was not resolved";
 assert lib.assertMsg (
   resolved.memoryMax == "4608M"
   &&
@@ -102,8 +231,8 @@ assert lib.assertMsg (
   && !lib.hasInfix "dport 53 " filterTable
 ) "core check: open egress does not admit the host's resolver on the bridge";
 assert lib.assertMsg (
-  samePort.errors == [ "sbx: expose port 22100 declared twice" ]
-) "core check: repeated expose port accepted";
+  samePort.errors == [ "sbx: inbound port 22100 declared twice" ]
+) "core check: repeated inbound port accepted";
 assert lib.assertMsg (
   lib.length (
     core.fleetErrors {
@@ -202,7 +331,7 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   keyed.proxy
   && !keyed.dnsProxy
-  && keyed.guest.dns == "10.30.3.1"
+  && keyed.guest.dns == null
   && keyedUnits.services ? "fencr-keyed-egress-proxy"
   && keyedUnits.services."fencr-keyed-egress-proxy".wants == [ "fencr-keyed-credentials.service" ]
   && keyedUnits.sockets ? "fencr-keyed-secrets"

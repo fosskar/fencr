@@ -60,7 +60,7 @@ in
             443
             33443
           ];
-      message = "nixos module check: allowedDomains did not make the egress proxy the resolver";
+      message = "nixos module check: outbound domains did not make the egress proxy the resolver";
     }
     {
       assertion =
@@ -70,8 +70,13 @@ in
       message = "nixos module check: open egress did not put the host's resolver on the bridge";
     }
     {
-      assertion = config.fencr.vms.sealed.egress == "closed";
-      message = "nixos module check: egress is not closed by default";
+      assertion =
+        let
+          rules = config.networking.nftables.tables.fencr-sealed.content;
+        in
+        lib.hasInfix ''counter drop comment "fencr:sealed:blocked"'' rules
+        && !lib.hasInfix ''counter accept comment "fencr:sealed:internet"'' rules;
+      message = "nixos module check: domain grants opened internet access";
     }
     {
       assertion =
@@ -118,11 +123,13 @@ in
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
     ];
     id = 0;
-    egress = "open";
-    hostPorts = [ 443 ];
-    allowedTCPDestinations = [ "192.168.1.50:8123" ];
-    expose = [
-      "33627"
+    outbound = [
+      "internet"
+      "host:443"
+      "192.168.1.50:8123"
+    ];
+    inbound = [
+      33627
       22100
     ];
     credentials = [ "anthropic" ];
@@ -137,7 +144,7 @@ in
 
   fencr.vms.sealed = {
     id = 1;
-    allowedDomains = [
+    outbound = [
       "github.com"
       "*.github.com"
     ];
