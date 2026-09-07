@@ -1,9 +1,9 @@
 //! the road out for a vm with allowedDomains or credentials: on the bridge
 //! address it answers every dns name with itself and, on the port the firewall
 //! redirects 443 to, reads the server name from the tls client hello. a
-//! credential's domain goes to that credential's proxy on its unix socket,
-//! which holds the certificate; an allowed name is spliced to the real host
-//! unread; the rest is refused.
+//! credential's domain goes to the vm's credentials proxy on its unix
+//! socket, which holds the certificate; an allowed name is spliced to the
+//! real host unread; the rest is refused.
 use std::io::{self, Read, Write};
 use std::net::{
     Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
@@ -54,7 +54,7 @@ fn server_name(hello: &[u8]) -> Result<String, &'static str> {
     while extensions >= 4 {
         let kind = u16::from_be_bytes(take(2)?.try_into().unwrap());
         let length = u16::from_be_bytes(take(2)?.try_into().unwrap()) as usize;
-        extensions -= 4 + length;
+        extensions = extensions.checked_sub(4 + length).ok_or("short hello")?;
         if kind != 0 {
             take(length)?;
             continue;
@@ -159,7 +159,8 @@ fn splice<S: Server>(mut client: TcpStream, mut server: S) -> io::Result<()> {
 fn serve_tls(
     mut client: TcpStream,
     patterns: &[String],
-    intercepts: &[(String, String)],
+    intercepts: &[String],
+    socket: &str,
 ) -> io::Result<()> {
     client.set_read_timeout(Some(Duration::from_secs(10)))?;
     let (hello, name) = read_client_hello(&mut client)?;
@@ -170,9 +171,9 @@ fn serve_tls(
             return Ok(());
         }
     };
-    if let Some((_, socket)) = intercepts
+    if intercepts
         .iter()
-        .find(|(domain, _)| host.eq_ignore_ascii_case(domain))
+        .any(|domain| host.eq_ignore_ascii_case(domain))
     {
         let mut server = UnixStream::connect(socket)?;
         client.set_read_timeout(None)?;
@@ -243,12 +244,16 @@ fn lines(path: &str) -> io::Result<Vec<String>> {
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
-    let (Some(dns_address), Some(tls_address), Some(allowlist), Some(interceptlist)) =
-        (args.next(), args.next(), args.next(), args.next())
-    else {
+    let (Some(dns_address), Some(tls_address), Some(allowlist), Some(interceptlist), Some(socket)) = (
+        args.next(),
+        args.next(),
+        args.next(),
+        args.next(),
+        args.next(),
+    ) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: fencr-egress-proxy <dns address:port> <tls address:port> <allowlist file> <intercept file>",
+            "usage: fencr-egress-proxy <dns address:port> <tls address:port> <allowlist file> <intercept file> <credentials socket>",
         ));
     };
     let invalid = |what: &str| {
@@ -261,19 +266,8 @@ fn run() -> io::Result<()> {
     let tls_address: SocketAddrV4 = tls_address.parse().map_err(|_| invalid("tls address"))?;
     let answer = *dns_address.ip();
     let patterns: Arc<Vec<String>> = Arc::new(lines(&allowlist)?);
-    // "<domain> <unix socket>" per line
-    let intercepts: Arc<Vec<(String, String)>> = Arc::new(
-        lines(&interceptlist)?
-            .iter()
-            .map(|line| {
-                line.split_once(' ')
-                    .map(|(domain, socket)| (domain.to_owned(), socket.to_owned()))
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "intercept line without socket")
-                    })
-            })
-            .collect::<io::Result<_>>()?,
-    );
+    let intercepts: Arc<Vec<String>> = Arc::new(lines(&interceptlist)?);
+    let socket: Arc<str> = Arc::from(socket);
     // the bridge gets its address from networkd; be there when it does
     let dns = loop {
         match UdpSocket::bind(dns_address) {
@@ -294,8 +288,9 @@ fn run() -> io::Result<()> {
         let client = client?;
         let patterns = Arc::clone(&patterns);
         let intercepts = Arc::clone(&intercepts);
+        let socket = Arc::clone(&socket);
         thread::spawn(move || {
-            if let Err(error) = serve_tls(client, &patterns, &intercepts) {
+            if let Err(error) = serve_tls(client, &patterns, &intercepts, &socket) {
                 eprintln!("relay: {error}");
             }
         });

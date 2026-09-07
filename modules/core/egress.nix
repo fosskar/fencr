@@ -50,11 +50,9 @@ in
         )
       } ${
         pkgs.writeText "fencr-egress-intercepts" (
-          lib.concatMapStrings (
-            credential: "${credential.domain} ${credentialSocketOf instance}\n"
-          ) instance.credentials
+          lib.concatMapStrings (credential: "${credential.domain}\n") instance.credentials
         )
-      }";
+      } ${credentialSocketOf instance}";
       # resolving on the host goes through resolved, over its unix socket
       # or its stub on 127.0.0.53
       IPAddressAllow = [
