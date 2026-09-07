@@ -75,7 +75,7 @@ Network permissions are configured per VM:
 | --- | --- |
 | `allowedTCPDestinations = [ "192.168.1.50:8123" ];` | Allow TCP to an IPv4 address or subnet and port, including an explicitly permitted private destination. |
 | `allowedDomains = [ "github.com" "*.github.com" ];` | Allow TLS connections on port 443 by server name, without TLS interception or proxy environment variables. Requires `egress = "closed"`. |
-| `egress = "open"; dns = "9.9.9.9";` | Allow public IPv4 internet access and the named resolver. Private and other special-use ranges remain blocked unless explicitly permitted. |
+| `egress = "open";` | Allow public IPv4 internet access; the host's resolver answers the VM on the bridge. Private and other special-use ranges remain blocked unless explicitly permitted. |
 | `expose = [ 8080 ];` | Let the host reach guest port 8080 at the VM's address, `fencr.vms.<name>.ip`. The service inside must listen on that address. Every other guest port is unreachable from the host. |
 | `hostPorts = [ 8123 ];` | Allow access to a host TCP port over the VM's bridge. |
 

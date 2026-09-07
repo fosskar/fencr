@@ -176,13 +176,24 @@ in
       }
     );
 
+    # with open egress the host's resolved answers the guest on the bridge
+    services.resolved.settings.Resolve.DNSStubListenerExtra =
+      let
+        addresses = map (cfg: cfg.hostIp) (
+          lib.filter (cfg: cfg.hostDns) (lib.attrValues resolvedInstances)
+        );
+      in
+      lib.mkIf (addresses != [ ]) addresses;
+
     # its input chain accepts first, but the main chain's drop policy
-    # still runs after it, so the egress proxy's ports open there too
+    # still runs after it, so the resolver's and the egress proxy's ports
+    # open there too
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
         ${cfg.bridge} = {
-          allowedTCPPorts = cfg.hostPorts ++ lib.optional cfg.proxy core.proxyTlsPort;
-          allowedUDPPorts = lib.optional cfg.dnsProxy core.proxyDnsPort;
+          allowedTCPPorts =
+            cfg.hostPorts ++ lib.optional cfg.hostDns 53 ++ lib.optional cfg.proxy core.proxyTlsPort;
+          allowedUDPPorts = lib.optional cfg.hostDns 53 ++ lib.optional cfg.dnsProxy core.proxyDnsPort;
         };
       }
     );

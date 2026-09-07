@@ -22,11 +22,10 @@ let
 in
 {
   # forward chain: what the guest reaches beyond the bridge. egress "open":
-  # dns and declared pinholes plus the internet, every other private range
-  # dropped. egress "closed": nothing but the declared pinholes, dns
-  # included in nothing. replies to whatever was allowed flow back either
-  # way. drops log with a rate limit so the journal shows who knocked
-  # without flooding
+  # declared pinholes plus the internet, every other private range
+  # dropped. egress "closed": nothing but the declared pinholes. replies to
+  # whatever was allowed flow back either way. drops log with a rate limit
+  # so the journal shows who knocked without flooding
   forwardRules =
     cfg:
     let
@@ -34,10 +33,6 @@ in
     in
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
-    ''
-    + lib.optionalString (cfg.egress == "open") ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 counter accept comment "${tag cfg "dns"}"
-      iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 counter accept comment "${tag cfg "dns-tcp"}"
     ''
     + lib.concatMapStringsSep "\n" (
       destination:
@@ -73,8 +68,9 @@ in
     '';
 
   # input chain: what the guest reaches on the host itself, the declared
-  # ports and the egress proxy. v6 dropped first like on forward: the
-  # host's own link-local multicast reflects off the bridge
+  # ports, the host's resolver with open egress and the egress proxy. v6
+  # dropped first like on forward: the host's own link-local multicast
+  # reflects off the bridge
   inputRules =
     cfg:
     ''
@@ -85,6 +81,10 @@ in
       iifname "${cfg.bridge}" tcp dport { ${
         lib.concatMapStringsSep ", " toString cfg.hostPorts
       } } counter accept comment "${tag cfg "host"}"
+    ''
+    + lib.optionalString cfg.hostDns ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 counter accept comment "${tag cfg "dns"}"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 53 counter accept comment "${tag cfg "dns-tcp"}"
     ''
     + lib.optionalString cfg.dnsProxy ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString proxyDnsPort} counter accept comment "${tag cfg "egress-dns"}"

@@ -24,10 +24,7 @@ let
           secretFile = "/run/secrets/local-token";
         };
       };
-      options = {
-        dns = "9.9.9.9";
-      }
-      // options;
+      inherit options;
     };
   resolved = resolve "sbx" {
     id = 0;
@@ -90,25 +87,20 @@ assert lib.assertMsg (
   resolved.proxy
   && resolved.guest.dns == "10.30.1.1"
   && !longName.proxy
-  && longName.guest.dns == "9.9.9.9"
-) "core check: the egress proxy is not the guest's resolver";
+  && longName.hostDns
+  && longName.guest.dns == "10.30.2.1"
+  && !(resolve "sbx" { id = 0; }).hostDns
+  && (resolve "sbx" { id = 0; }).guest.dns == null
+) "core check: the host is not the guest's resolver";
 assert lib.assertMsg (
   longName.errors
   == [ "vm name \"coding-agent-1\" is too long: \"tap-coding-agent-1\" exceeds IFNAMSIZ" ]
 ) "core check: long interface name accepted";
 assert lib.assertMsg (
-  (resolve "sbx" {
-    id = 0;
-    egress = "open";
-    dns = null;
-  }).errors == [ "sbx: egress = \"open\" needs dns, the resolver the forward chain admits" ]
-  && (resolve "sbx" { id = 0; }).guest.dns == "9.9.9.9"
-  &&
-    (core.resolveInstance {
-      name = "sbx";
-      options.id = 0;
-    }).guest.dns == null
-) "core check: dns is not optional where nothing admits it";
+  lib.hasInfix ''ip daddr 10.30.2.1 udp dport 53 counter accept comment "fencr:coding-agent-1:dns"''
+    (core.firewallOf longName)."fencr-coding-agent-1".content
+  && !lib.hasInfix "dport 53 " filterTable
+) "core check: open egress does not admit the host's resolver on the bridge";
 assert lib.assertMsg (
   samePort.errors == [ "sbx: expose port 22100 declared twice" ]
 ) "core check: repeated expose port accepted";
@@ -210,7 +202,7 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   keyed.proxy
   && !keyed.dnsProxy
-  && keyed.guest.dns == "9.9.9.9"
+  && keyed.guest.dns == "10.30.3.1"
   && keyedUnits.services ? "fencr-keyed-egress-proxy"
   && keyedUnits.services."fencr-keyed-egress-proxy".wants == [ "fencr-keyed-credentials.service" ]
   && keyedUnits.sockets ? "fencr-keyed-secrets"

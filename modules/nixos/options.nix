@@ -225,17 +225,6 @@ in
               default = core.defaults.hostPorts;
               description = "host TCP ports reachable from the vm over the bridge.";
             };
-
-            dns = lib.mkOption {
-              type = lib.types.nullOr lib.types.str;
-              default = core.defaults.dns;
-              example = "9.9.9.9";
-              description = ''
-                the guest's resolver, which egress = "open" admits through
-                the forward chain and requires. with allowedDomains the host
-                is the resolver; closed egress reaches none.
-              '';
-            };
           };
         }
       )

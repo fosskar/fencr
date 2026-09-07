@@ -72,6 +72,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         .${pkgs.stdenv.hostPlatform.system}
       ];
       virtualisation.diskSize = 4096;
+      virtualisation.memorySize = 2048;
 
       networking.useNetworkd = true;
       networking.nameservers = [ "9.9.9.9" ];
@@ -150,6 +151,16 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         upstream = "http://127.0.0.1:8765";
         domain = "api.test";
         secretFile = credentialFile;
+      };
+
+      # a second vm with open egress: the host's resolved answers it on the
+      # bridge
+      fencr.vms.open = {
+        id = 1;
+        vcpu = 1;
+        mem = 512;
+        egress = "open";
+        authorizedKeys = [ snakeOilEd25519PublicKey ];
       };
 
       networking.hosts."192.168.1.2" = [
@@ -270,6 +281,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
+
+      # open egress: the guest resolves through the host, whose resolved
+      # answers on the bridge
+      ssh_open = ssh.replace("10.30.1.2", "10.30.2.2")
+      host.wait_for_unit("fencr-open.service", timeout=600)
+      host.wait_until_succeeds(f"{ssh_open} 'getent hosts allowed.test' | grep -q '^192.168.1.2 '", timeout=300)
     '';
 
     meta.timeout = 1800;

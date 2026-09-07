@@ -12,7 +12,6 @@ let
     };
     options = {
       id = 0;
-      dns = "9.9.9.9";
       allowedDomains = [ "github.com" ];
       expose = [ "33627" ];
       credentials = [ "api" ];

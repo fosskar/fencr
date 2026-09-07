@@ -56,10 +56,18 @@ in
         && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ]
         &&
           config.networking.firewall.interfaces."br-sbx".allowedTCPPorts == [
+            53
             443
             33443
           ];
       message = "nixos module check: allowedDomains did not make the egress proxy the resolver";
+    }
+    {
+      assertion =
+        guestConfig.systemd.network.networks."10-lan".networkConfig.DNS == "10.30.1.1"
+        && config.services.resolved.settings.Resolve.DNSStubListenerExtra == [ "10.30.1.1" ]
+        && config.networking.firewall.interfaces."br-sbx".allowedUDPPorts == [ 53 ];
+      message = "nixos module check: open egress did not put the host's resolver on the bridge";
     }
     {
       assertion = config.fencr.vms.sealed.egress == "closed";
@@ -110,6 +118,7 @@ in
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
     ];
     id = 0;
+    egress = "open";
     hostPorts = [ 443 ];
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [

@@ -16,6 +16,7 @@ let
     parseDestination
     parseExpose
     dnsProxyOf
+    hostDnsOf
     proxyOf
     credentialsOf
     credentialDomainError
@@ -36,7 +37,6 @@ in
     cpuQuota = "400%";
     stateSize = 32768;
     egress = "closed";
-    dns = null;
     credentials = [ ];
     allowedDomains = [ ];
     allowedTCPDestinations = [ ];
@@ -151,8 +151,9 @@ in
           mem
           stateSize
           ;
-        # with a domain allowlist the egress proxy is the guest's resolver
-        dns = if dnsProxyOf options then hostIpOf options else options.dns;
+        # the host is the guest's resolver: the egress proxy with a domain
+        # allowlist, resolved with open egress; closed egress reaches none
+        dns = if dnsProxyOf options || hostDnsOf options then hostIpOf options else null;
         tap = tapOf name;
         bridge = bridgeOf name;
         mac = macOf options;
@@ -176,9 +177,6 @@ in
         ++ lib.optional (
           options.allowedDomains != [ ] && options.egress != "closed"
         ) "${name}: allowedDomains requires egress = \"closed\""
-        ++ lib.optional (
-          options.egress == "open" && options.dns == null
-        ) "${name}: egress = \"open\" needs dns, the resolver the forward chain admits"
         ++ map (error: "${name}: invalid allowedDomains ${error}") (
           domainPatternErrors options.allowedDomains
         )
@@ -215,6 +213,7 @@ in
       allowedTCPDestinations = map parseDestination options.allowedTCPDestinations;
       proxy = proxyOf options;
       dnsProxy = dnsProxyOf options;
+      hostDns = hostDnsOf options;
       subnet = subnetOf options;
       credentials = granted;
     };
