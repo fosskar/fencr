@@ -28,13 +28,15 @@ let
     esac
     printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\n' "$TEST_STATE"
   '';
-  # the ruleset the command parses is the one core renders, with every
-  # counter at three packets: the traffic line then sums the same comment
-  # tags the firewall wrote
+  # the ruleset the command parses is the one core renders, as nft lists it
+  # back: every counter at three packets, and the burst nft adds to a rate
+  # limit, since "packets" is the token the parser keys on. the traffic
+  # line then sums the same comment tags the firewall wrote
   ruleset = pkgs.writeText "fencr-test-ruleset" (
-    builtins.replaceStrings [ " counter " ] [ " counter packets 3 bytes 300 " ] (
-      lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf instance))
-    )
+    builtins.replaceStrings
+      [ " counter " " limit rate 5/second log " ]
+      [ " counter packets 3 bytes 300 " " limit rate 5/second burst 5 packets log " ]
+      (lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf instance)))
   );
   nft = pkgs.writeShellScriptBin "nft" ''
     cat ${ruleset}

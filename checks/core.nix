@@ -156,6 +156,10 @@ assert lib.assertMsg (
       "10.30.1.0/24"
     ]
   && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-credentials".serviceConfig.IPAddressAllow
+  && occurrences ''iifname "br-sbx" tcp dport { 443 } counter accept comment "fencr:sbx:host"'' == 1
+  &&
+    occurrences ''iifname "br-sbx" ip daddr 192.168.1.50 tcp dport 8123 counter accept comment "fencr:sbx:pin-192.168.1.50-8123"''
+    == 1
   && occurrences "ip daddr 10.30.1.1 udp dport 53 redirect to :33053" == 1
   && occurrences "ip daddr 10.30.1.1 tcp dport 443 redirect to :33443" == 1
   &&

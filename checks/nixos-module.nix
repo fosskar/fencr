@@ -1,7 +1,7 @@
 self: system:
 
-# Evaluation smoke test: a machine with one instance exercising exposed
-# ports, ssh and a credential.
+# builds a host with two vms: exposed ports, ssh, a credential and a raw
+# secret on one, a domain allowlist on the other
 { config, lib, ... }:
 let
   guestConfig = config.fencr.guestSystems.sbx.config;
@@ -53,7 +53,12 @@ in
         == "10.30.2.1"
         && config.systemd.services ? "fencr-sealed-egress-proxy"
         && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 33053 ]
-        && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ];
+        && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ]
+        &&
+          config.networking.firewall.interfaces."br-sbx".allowedTCPPorts == [
+            443
+            33443
+          ];
       message = "nixos module check: allowedDomains did not make the egress proxy the resolver";
     }
     {
@@ -63,6 +68,11 @@ in
     {
       assertion =
         config.systemd.sockets ? fencr-sbx-secrets
+        &&
+          config.systemd.services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [
+            "raw:/run/secrets/raw"
+            "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
+          ]
         && guestConfig.systemd.services ? fencr-secrets
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
       message = "nixos module check: the vsock sockets are not the vm's own";
@@ -100,8 +110,6 @@ in
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
     ];
     id = 0;
-    vcpu = 2;
-    mem = 1024;
     hostPorts = [ 443 ];
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [
@@ -120,8 +128,6 @@ in
 
   fencr.vms.sealed = {
     id = 1;
-    vcpu = 1;
-    mem = 512;
     allowedDomains = [
       "github.com"
       "*.github.com"
