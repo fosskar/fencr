@@ -182,25 +182,31 @@ fn serve_tls(
         .iter()
         .any(|domain| host.eq_ignore_ascii_case(domain))
     {
-        let mut server = UnixStream::connect(socket)?;
-        client.set_read_timeout(None)?;
         eprintln!("intercept {host}");
-        server.write_all(&hello)?;
-        return splice(client, server);
+        return relay(client, &hello, UnixStream::connect(socket)?);
     }
     if !allowed(patterns, &host) {
         eprintln!("deny {host}");
         return Ok(());
     }
+    eprintln!("allow {host}");
     // the unit's IPAddressDeny is what keeps an allowed name out of the lan
     let address = (host.as_str(), 443u16)
         .to_socket_addrs()?
         .find(|a| a.is_ipv4())
         .ok_or_else(|| io::Error::other(format!("{host} has no ipv4 address")))?;
-    let mut server = TcpStream::connect_timeout(&address, Duration::from_secs(10))?;
+    relay(
+        client,
+        &hello,
+        TcpStream::connect_timeout(&address, Duration::from_secs(10))?,
+    )
+}
+
+/// replays the client hello to the server end and splices the rest; the
+/// verb is logged before the connect, so a failure follows its name
+fn relay<S: Server>(client: TcpStream, hello: &[u8], mut server: S) -> io::Result<()> {
     client.set_read_timeout(None)?;
-    eprintln!("allow {host}");
-    server.write_all(&hello)?;
+    server.write_all(hello)?;
     splice(client, server)
 }
 
@@ -236,6 +242,7 @@ fn serve_dns(socket: &UdpSocket, answer: Ipv4Addr) -> io::Result<()> {
             reply.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4]);
             reply.extend_from_slice(&answer.octets());
         }
+        // a reply that cannot be sent is that client's loss, not the resolver's
         let _ = socket.send_to(&reply, peer);
     }
 }
