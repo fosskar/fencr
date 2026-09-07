@@ -216,10 +216,10 @@ fn serve_dns(socket: &UdpSocket, answer: Ipv4Addr) -> io::Result<()> {
             }
             at += 1 + label as usize;
         }
-        let Some(qtype) = query.get(at..at + 2) else {
+        let Some(question) = query.get(12..at + 4) else {
             continue;
         };
-        let question = &query[12..at + 4];
+        let qtype = &question[question.len() - 4..][..2];
         let mut reply = Vec::with_capacity(len + 16);
         reply.extend_from_slice(&query[0..2]);
         reply.extend_from_slice(&[0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0]);
@@ -381,6 +381,9 @@ mod tests {
             let mut query = vec![0xab, 0xcd, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
             query.extend_from_slice(b"\x07example\x03com\x00");
             query.extend_from_slice(&[0, qtype, 0, 1]);
+            // a query cut off after its type gets no answer and does not
+            // end the resolver
+            client.send_to(&query[..query.len() - 2], address).unwrap();
             client.send_to(&query, address).unwrap();
             let mut reply = [0u8; 512];
             let len = client.recv(&mut reply).unwrap();
