@@ -41,16 +41,11 @@ in
     ];
   };
 
+  # the proxies set their own address families and allowed addresses
   proxyHardening = hardened // {
     Restart = "always";
     RestartSec = 5;
     DynamicUser = true;
-    IPAddressAllow = "localhost";
-    IPAddressDeny = "any";
-    RestrictAddressFamilies = [
-      "AF_INET"
-      "AF_VSOCK"
-    ];
   };
 
   # destinations a vm never reaches, even with open egress: private, link-local,

@@ -8,6 +8,11 @@ use std::{thread, time};
 
 // the instance tables and tool paths are appended by cli.nix at build:
 // VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT
+
+/// what the firewall writes into every counted rule; the vm name and the
+/// kind follow, and a kind containing "blocked" is a drop
+const TAG: &str = "comment \"fencr:";
+
 type Vm = (
     &'static str,
     u32,
@@ -127,10 +132,10 @@ fn traffic(ruleset: &str, name: &str) -> (u64, u64) {
     let mut allowed = 0;
     let mut blocked = 0;
     for line in ruleset.lines() {
-        let Some(pos) = line.find("comment \"fencr:") else {
+        let Some(pos) = line.find(TAG) else {
             continue;
         };
-        let tag = &line[pos + 15..];
+        let tag = &line[pos + TAG.len()..];
         let Some(end) = tag.find('"') else { continue };
         let Some((vm, kind)) = tag[..end].split_once(':') else {
             continue;
@@ -153,12 +158,20 @@ fn traffic(ruleset: &str, name: &str) -> (u64, u64) {
     (allowed, blocked)
 }
 
+/// the kernel's log lines for the vm's drop rules on every chain: their
+/// prefixes are `fencr-<vm>-blocked: `, `-host-blocked: ` and
+/// `-guest-blocked: `
 fn recent_denied(kernel: &str, name: &str) -> Option<String> {
-    let net = format!("fencr-{name}-blocked:");
-    let host = format!("fencr-{name}-host-blocked:");
+    let prefix = format!("fencr-{name}-");
     let mut hits: BTreeMap<String, u64> = BTreeMap::new();
     for line in kernel.lines() {
-        if !line.contains(&net) && !line.contains(&host) {
+        let Some(after) = line.find(&prefix).map(|pos| &line[pos + prefix.len()..]) else {
+            continue;
+        };
+        if !after.starts_with("blocked: ")
+            && !after.starts_with("host-blocked: ")
+            && !after.starts_with("guest-blocked: ")
+        {
             continue;
         }
         let dst = field(line, "DST=").unwrap_or("?");
@@ -196,24 +209,34 @@ fn domains(name: &str, egress: &str, s: &Style) -> String {
         return format!("{}journal access denied{}", s.dim, s.reset);
     };
     // the egress proxy logs one line per connection: "allow <host>",
-    // "deny <host>", or "deny: <reason>" when there was no server name
-    let mut seen: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    // "intercept <host>" for a credential's domain, "deny <host>", or
+    // "deny: <reason>" when there was no server name
+    let mut seen: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
     for line in log.lines() {
         if let Some(host) = line.strip_prefix("allow ") {
             seen.entry(host.to_string()).or_default().0 += 1;
-        } else if let Some(host) = line.strip_prefix("deny ") {
+        } else if let Some(host) = line.strip_prefix("intercept ") {
             seen.entry(host.to_string()).or_default().1 += 1;
+        } else if let Some(host) = line.strip_prefix("deny ") {
+            seen.entry(host.to_string()).or_default().2 += 1;
         }
     }
     if seen.is_empty() {
         return format!("{}no requests observed{}", s.dim, s.reset);
     }
     let mut result = String::new();
-    for (host, (allowed, refused)) in &seen {
+    for (host, (allowed, intercepted, refused)) in &seen {
         if *allowed > 0 {
             let _ = write!(
                 result,
                 "{}\u{2713} {host} ({allowed}){}  ",
+                s.green, s.reset
+            );
+        }
+        if *intercepted > 0 {
+            let _ = write!(
+                result,
+                "{}\u{2713} {host} ({intercepted}, credential){}  ",
                 s.green, s.reset
             );
         }

@@ -79,8 +79,6 @@ in
           };
         };
       sockets = secretsUnits.socket or { };
-      # what the guest system is built against
-      inherit (instance) guest;
       unitNames = {
         vm = vmUnit;
         proxy = lib.optional instance.proxy "${proxyName}.service";

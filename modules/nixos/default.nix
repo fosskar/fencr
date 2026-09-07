@@ -6,10 +6,8 @@
 #   fencr.vms.myagent.services = [ my-agent-module ];
 #
 # per-instance networking (bridge, subnet, tap, mac, vsock cid) derives from
-# the instance's id, so instances never collide. reaching a service inside is
-# this module's business too: `forwards` maps a host endpoint to a guest port
-# and the whole path — socket unit, vsock connector, guest-side proxy — lives
-# here, so callers never name a transport.
+# the instance's id, so instances never collide. the vm's address on its
+# bridge is where its sshd and its exposed ports answer.
 { inputs }:
 {
   config,
@@ -38,7 +36,7 @@ let
       inherit pkgs;
       system = pkgs.stdenv.hostPlatform.system;
       specialArgs = cfg.specialArgs // {
-        agentSandbox = unitSets.${name}.guest;
+        agentSandbox = resolvedInstances.${name}.guest;
       };
       modules = [
         inputs.microvm.nixosModules.microvm
@@ -140,13 +138,17 @@ in
     # before them, and the host keeps its own forward policy. the main
     # firewall's interface rules only add ports, so globally open ones (sshd
     # at least) would stay reachable from the bridges; its input chain
-    # runs first and admits only the bridge's declared allowedTCPPorts
+    # runs first and admits only the bridge's declared allowedTCPPorts, which
+    # other modules may add to. the proxy's own port has its own rule, held
+    # to the bridge address, and is left out of that set
     networking.nftables.tables = forEachInstance (
       _: cfg:
       core.firewallOf (
         cfg
         // {
-          hostPorts = lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts;
+          hostPorts = lib.subtractLists (lib.optional cfg.proxy core.proxyTlsPort) (
+            lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts
+          );
         }
       )
     );

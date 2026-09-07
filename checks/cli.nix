@@ -26,7 +26,7 @@ let
       unavailable) exit 1 ;;
       missing) printf 'LoadState=not-found\n'; exit 0 ;;
     esac
-    printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\nNAccepted=7\nNConnections=2\n' "$TEST_STATE"
+    printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\n' "$TEST_STATE"
   '';
   # the ruleset the command parses is the one core renders, with every
   # counter at three packets: the traffic line then sums the same comment
@@ -39,12 +39,14 @@ let
   nft = pkgs.writeShellScriptBin "nft" ''
     cat ${ruleset}
   '';
-  # the kernel log for recent denials, the proxy's own log for domains
+  # the kernel log for recent denials, on every drop chain; the proxy's
+  # own log for domains
   journalctl = pkgs.writeShellScriptBin "journalctl" ''
     case "$1" in
       -k)
         printf 'fencr-sbx-blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
         printf 'fencr-sbx-blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        printf 'fencr-sbx-guest-blocked: IN= OUT=br-sbx SRC=10.30.1.1 DST=10.30.1.2 PROTO=TCP DPT=9120\n'
         ;;
       -u)
         printf 'allow github.com\ndeny evil.test\nintercept api.test\n'
@@ -77,9 +79,9 @@ pkgs.runCommand "fencr-cli-check" { } ''
 
   Traffic:
     allowed  9 packets
-    blocked  9 packets  (recent: 1.2.3.4:443/tcp x2)
+    blocked  9 packets  (recent: 1.2.3.4:443/tcp x2, 10.30.1.2:9120/tcp x1)
 
-  Domains: ✗ evil.test (1)  ✓ github.com (1)
+  Domains: ✓ api.test (1, credential)  ✗ evil.test (1)  ✓ github.com (1)
   Services: egress proxy RUNNING, credential RUNNING
 
   EOF

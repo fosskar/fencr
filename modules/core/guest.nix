@@ -31,7 +31,7 @@ in
         inherit (agentSandbox) vcpu mem;
         vsock.cid = agentSandbox.cid;
         # the runner's own vsock path lives in the working directory and is
-        # wiped on every start; the forwards' sockets must not be
+        # wiped on every start; the secrets socket beside it must not be
         firecracker.extraConfig.vsock.uds_path = vsockOf agentSandbox.name;
         # the runner boots the kernel's unstripped vmlinux, 400 MiB of debug
         # symbols per guest; firecracker below 1.17 takes no bzImage
