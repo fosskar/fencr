@@ -2,7 +2,6 @@
 let
   inherit (core)
     proxyHardening
-    specialUseNetworks
     egressProxyBin
     credentialSocketOf
     proxyDnsPort
@@ -40,9 +39,7 @@ in
     } ./egress-proxy.rs;
 
   # listens on the bridge address only, so the guest's subnet is allowed in
-  # beside the internet; every other private range stays denied, and an
-  # allowed name resolving into the lan goes nowhere. group kvm is what
-  # the credential proxies' sockets admit
+  # beside the internet
   egressProxyServiceConfig =
     pkgs: instance:
     proxyHardening
@@ -58,7 +55,6 @@ in
           ) instance.credentials
         )
       }";
-      Group = "kvm";
       # resolving on the host goes through resolved, over its unix socket
       # or its stub on 127.0.0.53
       IPAddressAllow = [
@@ -66,12 +62,6 @@ in
         "::/0"
         "127.0.0.53/32"
         instance.subnet
-      ];
-      IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
-      RestrictAddressFamilies = [
-        "AF_INET"
-        "AF_INET6"
-        "AF_UNIX"
       ];
     };
 }

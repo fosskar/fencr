@@ -8,7 +8,7 @@ let
     caUnit
     caCert
     guestTrust
-    forwardHardening
+    hardened
     egressProxyServiceConfig
     credentialServiceConfig
     ;
@@ -54,7 +54,12 @@ in
           requires = lib.optional (instance.credentials != [ ]) caService;
           partOf = [ vmUnit ];
           unitConfig.CollectMode = "inactive-or-failed";
-          serviceConfig = forwardHardening // {
+          # a throwaway uid: a bug in tar shares nothing with the hypervisor
+          serviceConfig = hardened // {
+            DynamicUser = true;
+            StandardInput = "socket";
+            StandardError = "journal";
+            RestrictAddressFamilies = "none";
             LoadCredential =
               lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
               ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCert}";

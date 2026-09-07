@@ -203,7 +203,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = fencr-sbx:600")
       # the vm's vsock sockets belong to its user
-      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:770")
+      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:700")
 
       host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
       # the test host exposes svm and vmx; the guest must not see either
@@ -211,7 +211,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
       # the state tree is one image owned by the vm's user, and it outlives
       # the vm: what the guest writes is there again after a restart
-      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:660")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
       host.succeed(f"{ssh} 'findmnt -n -o SOURCE /var/lib' | grep -Fx /dev/vdb", timeout=60)
       host.succeed(f"{ssh} 'echo survives > /var/lib/fencr-probe'", timeout=60)
       host.succeed("systemctl restart fencr-sbx.service")

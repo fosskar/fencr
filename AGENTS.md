@@ -43,8 +43,8 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `expose`d ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
   firewall's output chain lets the host reach those ports and nothing else. vsock
   carries only the boot-time secrets fetch and the power button: Firecracker's
-  unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user and
-  group `kvm` enter, with guest-to-host port N arriving on `vsock_N` beside it.
+  unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user
+  enters, with guest-to-host port N arriving on `vsock_N` beside it.
 - Each VM runs as `fencr-<name>` with persistent state at
   `/var/lib/fencr-vms/<name>/state.img`, mounted as guest `/var/lib`. The guest
   closure is a read-only store image, not a host store share.
@@ -77,9 +77,9 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   connection must not start a stopped VM. Keep relay identities separate from
   VM users.
 - Hosts need KVM and systemd-networkd. KSM is disabled. The VM unit runs as
-  the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices and
-  `UMask=0007`, which is what lets group `kvm` open its vsock; on x86_64, a CPU
-  template hides vmx and svm from the guest. Stopping presses the guest's vsock power
+  the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices; group
+  `kvm` is for those two and for the credentials socket the egress proxy
+  opens. On x86_64, a CPU template hides vmx and svm from the guest. Stopping presses the guest's vsock power
   button (port 4), which reboots, because Firecracker exits on CPU reset.
 
 ## development and verification

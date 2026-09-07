@@ -13,12 +13,11 @@ in
 {
 
   # the hypervisor unit: the microvm.nix runner under the vm's own system
-  # user in group kvm, so two vms' firecracker processes share no host
-  # identity and the state image has a stable owner. AF_INET is for the tap
-  # ioctls only. the umask lets group kvm, the relays, open the vsock
-  # socket firecracker creates. the runner creates the state image on
-  # first start; a larger stateSize grows it here and the guest grows the
-  # filesystem
+  # user, so two vms' firecracker processes share no host identity and the
+  # state image has a stable owner; group kvm is for /dev/kvm and the tap.
+  # AF_INET is for the tap ioctls only. the runner creates the state image
+  # on first start; a larger stateSize grows it here and the guest grows
+  # the filesystem
   vmService =
     pkgs: instance: runner:
     let
@@ -55,7 +54,6 @@ in
           '';
           TimeoutStopSec = 60;
           User = userOf instance.name;
-          UMask = "0007";
           WorkingDirectory = runDir;
           Restart = "on-failure";
           RestartSec = 5;

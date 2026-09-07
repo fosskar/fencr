@@ -61,12 +61,11 @@ in
   };
   # firecracker's vsock on the host: one unix socket for connections into
   # the guest, and one per port, "<vsock>_<port>", for connections out of
-  # it. the directory admits the vm's user and group kvm, which is what the
-  # relays run with; nobody else on the host reaches a vm this way
+  # it, in a directory only the vm's user enters
   runDirOf = name: "/run/fencr-${name}";
   vsockOf = name: "${runDirOf name}/vsock";
-  # the power button: a guest listener on this vsock port powers off on any
-  # connection, and only the vm's user and group kvm can open the vsock
+  # the power button: a guest listener on this vsock port reboots on any
+  # connection, and only the vm's user can open the vsock
   powerPort = 4;
   # raw secrets: at boot the guest fetches them as one archive from a host
   # socket only the vm's own user can open; the host side reads them as

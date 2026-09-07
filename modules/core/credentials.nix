@@ -5,8 +5,8 @@ let
     caCert
     caKey
     guestTrust
+    hardened
     proxyHardening
-    specialUseNetworks
     upstreamHost
     domainPatternError
     unitsOf
@@ -40,11 +40,10 @@ in
   caService = pkgs: hostName: {
     description = "fencr certificate authority";
     unitConfig.ConditionPathExists = "!${caKey}";
-    serviceConfig = {
+    serviceConfig = hardened // {
       Type = "oneshot";
       StateDirectory = "fencr/ca";
       StateDirectoryMode = "0700";
-      UMask = "0077";
     };
     script = ''
       ${pkgs.openssl}/bin/openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
@@ -150,8 +149,7 @@ in
       ''
     );
 
-  # the upstream is loopback or the internet; a private range is never a
-  # credential target, so an allowed name cannot resolve into the lan
+  # the upstream is loopback or the internet
   credentialServiceConfig =
     pkgs: cfg:
     proxyHardening
@@ -167,19 +165,12 @@ in
         "XDG_DATA_HOME=/tmp"
         "XDG_CONFIG_HOME=/tmp"
       ];
-      Group = "kvm";
       RuntimeDirectory = (unitsOf cfg.name).credentials;
       RuntimeDirectoryMode = "0750";
       IPAddressAllow = [
         "0.0.0.0/0"
         "::/0"
         "127.0.0.1/32"
-      ];
-      IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
-      RestrictAddressFamilies = [
-        "AF_INET"
-        "AF_INET6"
-        "AF_UNIX"
       ];
     };
 }

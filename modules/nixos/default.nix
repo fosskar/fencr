@@ -104,13 +104,12 @@ in
     );
 
     # the parent keeps host users outside group kvm away from every image;
-    # the runtime directory holds the vm's vsock sockets and admits the
-    # relays, group kvm, and nobody else
+    # the state tree and the vsock sockets admit the vm's user alone
     systemd.tmpfiles.rules = [
       "d /var/lib/fencr-vms 0710 root kvm -"
     ]
     ++ map (name: "d ${core.stateDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances)
-    ++ map (name: "d ${core.runDirOf name} 0750 ${core.userOf name} kvm -") (lib.attrNames instances);
+    ++ map (name: "d ${core.runDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances);
 
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {

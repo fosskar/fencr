@@ -1,6 +1,6 @@
 { core, ... }:
 let
-  inherit (core) hardened;
+  inherit (core) hardened specialUseNetworks;
 in
 {
 
@@ -28,30 +28,26 @@ in
     UMask = "0077";
   };
 
-  # a relay handles whatever its peer sends; it gets a throwaway uid so a
-  # bug in it shares nothing with the hypervisor process
-  forwardHardening = hardened // {
-    DynamicUser = true;
-    SupplementaryGroups = [ "kvm" ];
-    StandardInput = "socket";
-    StandardError = "journal";
-    RestrictAddressFamilies = [
-      "AF_INET"
-      "AF_UNIX"
-    ];
-  };
-
-  # the proxies set their own address families and allowed addresses
+  # the proxies: a throwaway uid in group kvm, which is what the credentials
+  # socket admits; every special-use range denied so an upstream or an
+  # allowed name cannot resolve into the lan. each allows its own addresses
   proxyHardening = hardened // {
     Restart = "always";
     RestartSec = 5;
     DynamicUser = true;
+    Group = "kvm";
+    IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
+    RestrictAddressFamilies = [
+      "AF_INET"
+      "AF_INET6"
+      "AF_UNIX"
+    ];
   };
 
   # destinations a vm never reaches, even with open egress: private, link-local,
   # multicast and other special-use ranges. the firewall enforces the v4 list
-  # on the bridge (v6 is dropped wholesale there); the egress proxy unit
-  # enforces both on its own sockets
+  # on the bridge (v6 is dropped wholesale there); the proxy units enforce
+  # both on their own sockets
   specialUseNetworks = {
     v4 = [
       "0.0.0.0/8"
