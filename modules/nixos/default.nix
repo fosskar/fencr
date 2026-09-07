@@ -129,10 +129,12 @@ in
 
     # masquerade by the vm's source address instead of networking.nat, so
     # the module needs no knowledge of the host's uplink interface
-    boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkDefault true;
+    boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkIf (instances != { }) (
+      lib.mkDefault true
+    );
 
     # same-page merging lets a guest probe memory across vms
-    hardware.ksm.enable = false;
+    hardware.ksm.enable = lib.mkIf (instances != { }) false;
 
     # the vm's firewall tables stand beside the main firewall rather than inside it, so
     # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs
