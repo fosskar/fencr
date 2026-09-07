@@ -73,9 +73,16 @@ fn server_name(hello: &[u8]) -> Result<String, &'static str> {
                 .unwrap(),
         ) as usize;
         let name = entry.get(3..3 + name_len).ok_or("short server_name")?;
-        return std::str::from_utf8(name)
-            .map(str::to_owned)
-            .map_err(|_| "server_name is not utf-8");
+        // the name is echoed into the journal, where a newline would forge
+        // a line of its own; a host name is letters, digits, "-" and "."
+        if name.is_empty()
+            || !name
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || b"-.".contains(b))
+        {
+            return Err("server_name is not a host name");
+        }
+        return Ok(String::from_utf8_lossy(name).into_owned());
     }
     Err("no server_name")
 }
@@ -355,6 +362,10 @@ mod tests {
         let cut = hello(&server_name_extension("x"));
         assert_eq!(server_name(&cut[..20]), Err("short hello"));
         assert_eq!(server_name(&hello(&[0, 0, 0xff, 0xff])), Err("short hello"));
+        assert_eq!(
+            server_name(&hello(&server_name_extension("x\nallow evil.test"))),
+            Err("server_name is not a host name")
+        );
     }
 
     #[test]
