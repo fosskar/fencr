@@ -103,34 +103,32 @@ in
   # the secrets reach caddy as FENCR_CREDENTIAL_<index>, since a credential
   # name is no environment variable name
   credentialCaddyfile =
-    pkgs: socket: credentials:
-    pkgs.writeText "fencr-credentials.caddyfile" (
-      ''
-        {
-          admin off
-          auto_https disable_redirects
-          pki {
-            ca local {
-              root {
-                cert {$CREDENTIALS_DIRECTORY}/ca.crt
-                key {$CREDENTIALS_DIRECTORY}/ca.key
-              }
+    socket: credentials:
+    ''
+      {
+        admin off
+        auto_https disable_redirects
+        pki {
+          ca local {
+            root {
+              cert {$CREDENTIALS_DIRECTORY}/ca.crt
+              key {$CREDENTIALS_DIRECTORY}/ca.key
             }
           }
         }
-      ''
-      + lib.concatStrings (
-        lib.imap0 (index: credential: ''
-          https://${credential.domain} {
-            bind unix/${socket}|0660
-            tls internal
-            reverse_proxy ${credential.upstream} {
-              header_up Host {upstream_hostport}
-              header_up ${credential.header} "{$FENCR_CREDENTIAL_${toString index}}"
-            }
+      }
+    ''
+    + lib.concatStrings (
+      lib.imap0 (index: credential: ''
+        https://${credential.domain} {
+          bind unix/${socket}|0660
+          tls internal
+          reverse_proxy ${credential.upstream} {
+            header_up Host {upstream_hostport}
+            header_up ${credential.header} "{$FENCR_CREDENTIAL_${toString index}}"
           }
-        '') credentials
-      )
+        }
+      '') credentials
     );
 
   credentialExec =
@@ -143,9 +141,7 @@ in
         '') credentials
       )
       + ''
-        exec ${pkgs.caddy}/bin/caddy run --config ${
-          credentialCaddyfile pkgs socket credentials
-        } --adapter caddyfile
+        exec ${pkgs.caddy}/bin/caddy run --config ${pkgs.writeText "fencr-credentials.caddyfile" (credentialCaddyfile socket credentials)} --adapter caddyfile
       ''
     );
 

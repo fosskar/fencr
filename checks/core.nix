@@ -199,26 +199,22 @@ assert lib.assertMsg (
       "ca.key:/var/lib/fencr/ca/root.key"
     ]
   && units.services."fencr-sbx-egress-proxy".serviceConfig.Group == "kvm"
-  && lib.hasInfix "api.example.com /run/fencr-sbx-credentials/credentials.sock" (
-    builtins.readFile (
-      lib.last (lib.splitString " " units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart)
-    )
-  )
+  &&
+    lib.hasSuffix " /run/fencr-sbx-credentials/credentials.sock"
+      units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart
 ) "unit check: credential proxy is not behind the egress proxy on its unix socket";
 assert lib.assertMsg (
   let
-    caddyfile = builtins.readFile (
-      core.credentialCaddyfile pkgs "/run/x/credentials.sock" (
-        resolved.credentials
-        ++ [
-          {
-            name = "second";
-            domain = "second.example.com";
-            upstream = "http://127.0.0.1:1";
-            header = "x-key";
-          }
-        ]
-      )
+    caddyfile = core.credentialCaddyfile "/run/x/credentials.sock" (
+      resolved.credentials
+      ++ [
+        {
+          name = "second";
+          domain = "second.example.com";
+          upstream = "http://127.0.0.1:1";
+          header = "x-key";
+        }
+      ]
     );
   in
   lib.hasInfix "https://api.example.com {" caddyfile

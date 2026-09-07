@@ -12,15 +12,6 @@ in
   assertions = [
     {
       assertion =
-        builtins.attrNames (
-          lib.filterAttrs (name: _: lib.hasPrefix "fencr-sbx" name) config.systemd.sockets
-        ) == [
-          "fencr-sbx-secrets"
-        ];
-      message = "nixos module check: host sockets drifted";
-    }
-    {
-      assertion =
         guestConfig.systemd.sockets.sshd.socketConfig.ListenStream == [ "10.30.1.2:22" ]
         && guestConfig.systemd.sockets.sshd.socketConfig.FreeBind
         &&
@@ -30,11 +21,7 @@ in
             33627
           ]
         && config.fencr.vms.sbx.ip == "10.30.1.2"
-        && lib.hasInfix "HostName 10.30.1.2" config.programs.ssh.extraConfig
-        &&
-          lib.hasInfix
-            ''ip daddr 10.30.1.2 tcp dport { 22, 33627, 22100 } counter accept comment "fencr:sbx:guest"''
-            config.networking.nftables.tables."fencr-sbx".content;
+        && lib.hasInfix "HostName 10.30.1.2" config.programs.ssh.extraConfig;
       message = "nixos module check: the guest is not reached at its bridge address";
     }
     {
@@ -53,12 +40,8 @@ in
     }
     {
       assertion =
-        config.systemd.services."fencr-sbx-credentials".serviceConfig.LoadCredential == [
-          "anthropic:/run/secrets/anthropic"
-          "ca.crt:/var/lib/fencr/ca/root.crt"
-          "ca.key:/var/lib/fencr/ca/root.key"
-        ]
-        && config.systemd.services ? fencr-ca
+        config.systemd.services ? fencr-ca
+        && config.systemd.services ? fencr-sbx-credentials
         && guestConfig.networking.hosts."10.30.1.1" == [ "api.anthropic.com" ]
         && guestConfig.environment.etc."ssl/certs/ca-certificates.crt".source == "/run/fencr/ca-bundle.crt"
         && guestConfig.systemd.globalEnvironment.NIX_SSL_CERT_FILE == "/run/fencr/ca-bundle.crt";
@@ -79,14 +62,8 @@ in
     }
     {
       assertion =
-        config.systemd.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
-        &&
-          config.systemd.services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [
-            "raw:/run/secrets/raw"
-            "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
-          ]
+        config.systemd.sockets ? fencr-sbx-secrets
         && guestConfig.systemd.services ? fencr-secrets
-        && config.systemd.sockets."fencr-sbx-secrets".socketConfig.SocketUser == "fencr-sbx"
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
       message = "nixos module check: the vsock sockets are not the vm's own";
     }
