@@ -110,7 +110,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
         allowedTCPDestinations = [ "192.168.1.2:8123" ];
-        allowedDomains = [ "allowed.test" ];
+        # private.test is on the list but resolves to a private address the
+        # proxy unit denies, so the name alone must not open the lan
+        allowedDomains = [
+          "allowed.test"
+          "private.test"
+        ];
         # the web ui: reachable from the host at the guest's address, on
         # this port and no other
         expose = [ 9119 ];
@@ -151,6 +156,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         "allowed.test"
         "denied.test"
       ];
+      networking.hosts."192.168.1.1" = [ "private.test" ];
       # the test network is a private range the proxy unit denies; allow
       # the one target, which is the "internet" here
       systemd.services.fencr-sbx-egress-proxy.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
@@ -243,6 +249,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
+      # an allowed name that resolves into the lan: the proxy admits the
+      # name, the unit's deny list drops the syn, so the connect times out;
+      # the squatter listens on that address and would otherwise have
+      # completed the handshake at once
+      host.fail(f"{ssh} 'curl --silent --insecure --max-time 15 https://private.test/'", timeout=60)
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow private.test'")
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'relay: connection timed out'")
 
       # the credential, end to end: the guest calls the domain over https
       # and trusts the host's authority without being told to, whatever it

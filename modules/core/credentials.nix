@@ -145,7 +145,8 @@ in
       ''
     );
 
-  # the upstream is loopback or the internet
+  # the upstream is loopback or the internet; caddy resolves its name
+  # through resolved's stub, since go reads resolv.conf itself
   credentialServiceConfig =
     pkgs: cfg:
     proxyHardening
@@ -164,9 +165,8 @@ in
       RuntimeDirectory = (unitsOf cfg.name).credentials;
       RuntimeDirectoryMode = "0750";
       IPAddressAllow = [
-        "0.0.0.0/0"
-        "::/0"
         "127.0.0.1/32"
+        "127.0.0.53/32"
       ];
     };
 }

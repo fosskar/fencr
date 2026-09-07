@@ -53,11 +53,10 @@ in
           lib.concatMapStrings (credential: "${credential.domain}\n") instance.credentials
         )
       } ${credentialSocketOf instance}";
-      # resolving on the host goes through resolved, over its unix socket
-      # or its stub on 127.0.0.53
+      # the allow list is checked before the deny list, so it names only
+      # what the deny list would otherwise take: the guest's subnet and
+      # resolved's stub on 127.0.0.53. the internet needs no entry
       IPAddressAllow = [
-        "0.0.0.0/0"
-        "::/0"
         "127.0.0.53/32"
         instance.subnet
       ];

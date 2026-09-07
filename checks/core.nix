@@ -122,9 +122,12 @@ assert lib.assertMsg (
   &&
     lib.hasPrefix "${core.egressProxyBin pkgs}/bin/fencr-egress-proxy 10.30.1.1:33053 10.30.1.1:33443 "
       units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart
-  && lib.hasInfix "10.30.1.0/24" (
-    toString units.services."fencr-sbx-egress-proxy".serviceConfig.IPAddressAllow
-  )
+  &&
+    units.services."fencr-sbx-egress-proxy".serviceConfig.IPAddressAllow == [
+      "127.0.0.53/32"
+      "10.30.1.0/24"
+    ]
+  && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-credentials".serviceConfig.IPAddressAllow
   && occurrences "ip daddr 10.30.1.1 udp dport 53 redirect to :33053" == 1
   && occurrences "ip daddr 10.30.1.1 tcp dport 443 redirect to :33443" == 1
   &&
