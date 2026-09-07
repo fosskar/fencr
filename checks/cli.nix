@@ -45,6 +45,8 @@ let
   journalctl = pkgs.writeShellScriptBin "journalctl" ''
     case "$1" in
       -k)
+        # -g with no match exits 1 and prints nothing
+        [ "''${TEST_QUIET-}" = 1 ] && exit 1
         printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
         printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
         printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.30.1.1 DST=10.30.1.2 PROTO=TCP DPT=9120\n'
@@ -93,6 +95,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   show fencr-sbx-credentials.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
+  TEST_QUIET=1 ${cli}/bin/fencr status sbx | grep -Fx '  blocked  9 packets'
   ${cli}/bin/fencr status sbx --full > /dev/null
   grep -Fx "status fencr-sbx.service fencr-sbx-egress-proxy.service fencr-sbx-credentials.service --no-pager" "$TEST_LOG"
   for state in failed inactive missing unavailable; do

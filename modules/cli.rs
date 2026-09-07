@@ -356,6 +356,11 @@ fn render(s: &Style, only: Option<&str>) -> Vec<String> {
             "cat",
         ],
     );
+    // journalctl exits 1 when -g matches nothing: no denials, not a failure
+    let kernel = match kernel {
+        Err(reason) if reason == "exit status: 1" => Ok(String::new()),
+        kernel => kernel,
+    };
     for vm in VMS
         .iter()
         .filter(|vm| only.map(|name| name == vm.name).unwrap_or(true))
