@@ -11,7 +11,7 @@
 let
   vmRow =
     name: cfg:
-    ''("${name}", ${toString cfg.id}, ${toString cfg.cid}, "${cfg.ip}", "${cfg.egress}", ${toString (lib.length cfg.allowedDomains)}, "${units.${name}.unitNames.vm}"),'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", egress: "${cfg.egress}", domains: ${toString (lib.length cfg.allowedDomains)}, unit: "${units.${name}.unitNames.vm}" },'';
 
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
@@ -29,7 +29,6 @@ pkgs.writers.writeRustBin "fencr"
   (
     builtins.readFile ./cli.rs
     + ''
-      // name, id, cid, ip, egress, allowed domain count, vm unit
       static VMS: &[Vm] = &[
       ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}
       ];

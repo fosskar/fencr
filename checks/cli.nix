@@ -92,6 +92,8 @@ pkgs.runCommand "fencr-cli-check" { } ''
   show fencr-sbx-credentials.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
+  ${cli}/bin/fencr status sbx --full > /dev/null
+  grep -Fx "status fencr-sbx.service fencr-sbx-egress-proxy.service fencr-sbx-credentials.service --no-pager" "$TEST_LOG"
   for state in failed inactive missing unavailable; do
     export TEST_STATE="$state"
     case "$state" in

@@ -8,7 +8,7 @@ let
     specialUseNetworks
     upstreamHost
     domainPatternError
-    credentialRuntimeDirOf
+    unitsOf
     credentialSocketOf
     credentialCaddyfile
     credentialExec
@@ -18,7 +18,7 @@ in
   # one certificate authority per host, made on first use in a directory
   # root alone reads. each credential proxy signs its domain's certificate
   # with it, and a vm with a credential trusts it, fetched beside the secrets
-  caUnit = "fencr-ca.service";
+  caUnit = "fencr-ca";
   caDir = "/var/lib/fencr/ca";
   caCert = "${caDir}/root.crt";
   caKey = "${caDir}/root.key";
@@ -90,9 +90,7 @@ in
   # unix socket in its own runtime directory, group kvm, so only the vm's
   # egress proxy reaches it: no host loopback port, nothing for another
   # host process to borrow a credential through
-  credentialRuntimeDirOf = cfg: "fencr-credentials-${cfg.name}";
-
-  credentialSocketOf = cfg: "/run/${credentialRuntimeDirOf cfg}/credentials.sock";
+  credentialSocketOf = cfg: "/run/${(unitsOf cfg.name).credentials}/credentials.sock";
 
   # the secrets reach caddy as FENCR_CREDENTIAL_<index>, since a credential
   # name is no environment variable name
@@ -161,7 +159,7 @@ in
         "XDG_CONFIG_HOME=/tmp"
       ];
       Group = "kvm";
-      RuntimeDirectory = credentialRuntimeDirOf cfg;
+      RuntimeDirectory = (unitsOf cfg.name).credentials;
       RuntimeDirectoryMode = "0750";
       IPAddressAllow = [
         "0.0.0.0/0"

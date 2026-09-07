@@ -189,7 +189,7 @@ assert lib.assertMsg (
   && occurrences ''oifname "br-sbx" counter drop comment "fencr:sbx:guest-blocked"'' == 1
 ) "core check: the host is not held to the guest's sshd and exposed ports";
 assert lib.assertMsg (
-  units.services."fencr-sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-credentials-sbx"
+  units.services."fencr-sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-sbx-credentials"
   && units.services."fencr-sbx-credentials".serviceConfig.Group == "kvm"
   && units.services."fencr-sbx-credentials".requires == [ "fencr-ca.service" ]
   &&
@@ -199,7 +199,7 @@ assert lib.assertMsg (
       "ca.key:/var/lib/fencr/ca/root.key"
     ]
   && units.services."fencr-sbx-egress-proxy".serviceConfig.Group == "kvm"
-  && lib.hasInfix "api.example.com /run/fencr-credentials-sbx/credentials.sock" (
+  && lib.hasInfix "api.example.com /run/fencr-sbx-credentials/credentials.sock" (
     builtins.readFile (
       lib.last (lib.splitString " " units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart)
     )

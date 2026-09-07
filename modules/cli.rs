@@ -13,15 +13,16 @@ use std::{thread, time};
 /// kind follow, and a kind containing "blocked" is a drop
 const TAG: &str = "comment \"fencr:";
 
-type Vm = (
-    &'static str,
-    u32,
-    u32,
-    &'static str,
-    &'static str,
-    u32,
-    &'static str,
-);
+struct Vm {
+    name: &'static str,
+    id: u32,
+    cid: u32,
+    ip: &'static str,
+    egress: &'static str,
+    /// how many allowedDomains the vm declares
+    domains: u32,
+    unit: &'static str,
+}
 
 struct Style {
     bold: &'static str,
@@ -66,7 +67,7 @@ fn usage() -> ! {
 }
 
 fn find(name: &str) -> &'static Vm {
-    VMS.iter().find(|vm| vm.0 == name).unwrap_or_else(|| {
+    VMS.iter().find(|vm| vm.name == name).unwrap_or_else(|| {
         eprintln!("fencr: unknown vm \"{name}\"");
         exit(1)
     })
@@ -94,7 +95,7 @@ fn print_list() {
     for vm in VMS {
         println!(
             "{:<16} {:<3} {:<4} {:<12} {:<7} {}",
-            vm.0, vm.1, vm.2, vm.3, vm.4, vm.5
+            vm.name, vm.id, vm.cid, vm.ip, vm.egress, vm.domains
         );
     }
 }
@@ -282,7 +283,7 @@ fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
 }
 
 fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut Vec<String>) {
-    let p = props(vm.6, "LoadState,ActiveState,MemoryCurrent");
+    let p = props(vm.unit, "LoadState,ActiveState,MemoryCurrent");
     let state = unit_health(&p, s);
     let memory = p
         .get("MemoryCurrent")
@@ -291,24 +292,24 @@ fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut 
         .unwrap_or_default();
     out.push(format!(
         "{}{}{}  {state}  {}{memory}",
-        s.bold, vm.0, s.reset, vm.3
+        s.bold, vm.name, s.reset, vm.ip
     ));
     out.push(format!(
         "Internet: {}{}{}",
         s.bold,
-        vm.4.to_uppercase(),
+        vm.egress.to_uppercase(),
         s.reset
     ));
     out.push(String::new());
     out.push("Traffic:".to_string());
     match ruleset {
         Some(ruleset) => {
-            let (allowed, blocked) = traffic(ruleset, vm.0);
+            let (allowed, blocked) = traffic(ruleset, vm.name);
             out.push(format!(
                 "  {}allowed{}  {allowed} packets",
                 s.green, s.reset
             ));
-            let recent = recent_denied(kernel, vm.0)
+            let recent = recent_denied(kernel, vm.name)
                 .map(|peers| format!("  (recent: {peers})"))
                 .unwrap_or_default();
             out.push(format!(
@@ -322,8 +323,8 @@ fn render_vm(vm: &Vm, ruleset: Option<&str>, kernel: &str, s: &Style, out: &mut 
         )),
     }
     out.push(String::new());
-    out.push(format!("Domains: {}", domains(vm.0, vm.4, s)));
-    service_lines(vm.0, s, out);
+    out.push(format!("Domains: {}", domains(vm.name, vm.egress, s)));
+    service_lines(vm.name, s, out);
     out.push(String::new());
 }
 
@@ -347,7 +348,7 @@ fn render(s: &Style, only: Option<&str>) -> Vec<String> {
     .unwrap_or_default();
     for vm in VMS
         .iter()
-        .filter(|vm| only.map(|name| name == vm.0).unwrap_or(true))
+        .filter(|vm| only.map(|name| name == vm.name).unwrap_or(true))
     {
         render_vm(vm, ruleset.as_deref(), &kernel, s, &mut out);
     }
@@ -407,7 +408,7 @@ fn main() {
                 Command::new(SSH)
                     .arg("-o")
                     .arg("StrictHostKeyChecking=accept-new")
-                    .arg(format!("root@{}", vm.3))
+                    .arg(format!("root@{}", vm.ip))
                     .args(&args[2..])
                     .exec(),
             );
@@ -422,11 +423,16 @@ fn main() {
             }
             if args.iter().any(|a| a == "--full") {
                 let vm = name.map(find).unwrap_or_else(|| usage());
+                let units = PROXIED
+                    .iter()
+                    .chain(CREDENTIALS)
+                    .filter(|(owner, _)| *owner == vm.name)
+                    .map(|(_, unit)| *unit);
                 fail(
                     Command::new(SYSTEMCTL)
                         .arg("status")
-                        .arg(vm.6)
-                        .arg(format!("{}-*", vm.0))
+                        .arg(vm.unit)
+                        .args(units)
                         .arg("--no-pager")
                         .exec(),
                 );

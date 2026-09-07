@@ -52,7 +52,13 @@ in
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
   userOf = name: "fencr-${name}";
-  vmUnitOf = name: "fencr-${name}.service";
+  # the vm's units, keyed as systemd.services and systemd.sockets take them
+  unitsOf = name: {
+    vm = "fencr-${name}";
+    proxy = "fencr-${name}-egress-proxy";
+    credentials = "fencr-${name}-credentials";
+    secrets = "fencr-${name}-secrets";
+  };
   # firecracker's vsock on the host: one unix socket for connections into
   # the guest, and one per port, "<vsock>_<port>", for connections out of
   # it. the directory admits the vm's user and group kvm, which is what the

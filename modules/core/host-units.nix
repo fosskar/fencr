@@ -2,7 +2,7 @@
 let
   inherit (core)
     userOf
-    vmUnitOf
+    unitsOf
     vsockOf
     secretsPort
     caUnit
@@ -17,25 +17,24 @@ in
   hostUnits =
     pkgs: instance:
     let
-      vmUnit = vmUnitOf instance.name;
-      proxyName = "fencr-${instance.name}-egress-proxy";
-      credentialsName = "fencr-${instance.name}-credentials";
-      credentialUnits = lib.optional (instance.credentials != [ ]) "${credentialsName}.service";
+      units = unitsOf instance.name;
+      vmUnit = "${units.vm}.service";
+      caService = "${caUnit}.service";
+      credentialUnits = lib.optional (instance.credentials != [ ]) "${units.credentials}.service";
       credentialServices = lib.optionalAttrs (instance.credentials != [ ]) {
-        ${credentialsName} = {
+        ${units.credentials} = {
           description = "credentials for ${instance.name}";
           wantedBy = [ "multi-user.target" ];
-          requires = [ caUnit ];
-          after = [ caUnit ];
+          requires = [ caService ];
+          after = [ caService ];
           serviceConfig = credentialServiceConfig pkgs instance;
         };
       };
       # raw secrets, served once per boot as a tar stream of the unit's
       # credentials directory into a connection the guest opened; the
       # host's ca certificate rides along for a vm with a credential
-      secretsName = "fencr-${instance.name}-secrets";
       secretsUnits = lib.optionalAttrs (instance.secrets != { } || instance.credentials != [ ]) {
-        socket.${secretsName} = {
+        socket.${units.secrets} = {
           description = "raw secrets for ${instance.name}";
           wantedBy = [ "sockets.target" ];
           socketConfig = {
@@ -47,11 +46,11 @@ in
             TriggerLimitIntervalSec = 0;
           };
         };
-        service."${secretsName}@" = {
+        service."${units.secrets}@" = {
           description = "raw secrets for ${instance.name}";
-          after = [ vmUnit ] ++ lib.optional (instance.credentials != [ ]) caUnit;
+          after = [ vmUnit ] ++ lib.optional (instance.credentials != [ ]) caService;
           requisite = [ vmUnit ];
-          requires = lib.optional (instance.credentials != [ ]) caUnit;
+          requires = lib.optional (instance.credentials != [ ]) caService;
           partOf = [ vmUnit ];
           unitConfig.CollectMode = "inactive-or-failed";
           serviceConfig = forwardHardening // {
@@ -70,7 +69,7 @@ in
         credentialServices
         // secretsUnits.service or { }
         // lib.optionalAttrs instance.proxy {
-          ${proxyName} = {
+          ${units.proxy} = {
             description = "egress proxy for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
             after = [ "network.target" ] ++ credentialUnits;
@@ -81,7 +80,7 @@ in
       sockets = secretsUnits.socket or { };
       unitNames = {
         vm = vmUnit;
-        proxy = lib.optional instance.proxy "${proxyName}.service";
+        proxy = lib.optional instance.proxy "${units.proxy}.service";
         credentials = credentialUnits;
       };
     };
