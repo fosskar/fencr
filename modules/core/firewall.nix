@@ -73,14 +73,14 @@ in
   # ports and the egress proxy. v6 dropped first like on forward: the
   # host's own link-local multicast reflects off the bridge
   inputRules =
-    cfg: ports:
+    cfg:
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
       iifname "${cfg.bridge}" ct state established,related accept
     ''
-    + lib.optionalString (ports != [ ]) ''
+    + lib.optionalString (cfg.hostPorts != [ ]) ''
       iifname "${cfg.bridge}" tcp dport { ${
-        lib.concatMapStringsSep ", " toString ports
+        lib.concatMapStringsSep ", " toString cfg.hostPorts
       } } counter accept comment "fencr:${cfg.name}:host"
     ''
     + lib.optionalString cfg.dnsProxy ''
@@ -144,7 +144,7 @@ in
         }
         chain input {
           type filter hook input priority filter - 1; policy accept;
-          ${inputRules cfg cfg.hostPorts}
+          ${inputRules cfg}
         }
         chain output {
           type filter hook output priority filter - 1; policy accept;

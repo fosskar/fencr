@@ -139,21 +139,9 @@ in
     # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs
     # before them, and the host keeps its own forward policy. the main
     # firewall's interface rules only add ports, so globally open ones (sshd
-    # at least) would stay reachable from the bridges; its input chain
-    # runs first and admits only the bridge's declared allowedTCPPorts, which
-    # other modules may add to. the proxy's own port has its own rule, held
-    # to the bridge address, and is left out of that set
-    networking.nftables.tables = forEachInstance (
-      _: cfg:
-      core.firewallOf (
-        cfg
-        // {
-          hostPorts = lib.subtractLists (lib.optional cfg.proxy core.proxyTlsPort) (
-            lib.unique config.networking.firewall.interfaces.${cfg.bridge}.allowedTCPPorts
-          );
-        }
-      )
-    );
+    # at least) would stay reachable from the bridges; the vm's input chain
+    # runs first and admits hostPorts and the egress proxy, nothing else
+    networking.nftables.tables = forEachInstance (_: cfg: core.firewallOf cfg);
 
     # firecracker attaches the tap by name with a virtio header and one queue, so
     # it is persistent and its flags match; group kvm lets the vm unit open it
