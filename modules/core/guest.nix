@@ -224,6 +224,8 @@ in
       environment.systemPackages = [ ];
       nix.enable = lib.mkDefault false;
       programs.nano.enable = false;
-      system.stateVersion = lib.versions.majorMinor lib.version;
+      # /var/lib persists, so stateful defaults are pinned to the release the
+      # state image first shipped under rather than following the nixpkgs pin
+      system.stateVersion = lib.mkDefault "26.11";
     };
 }
