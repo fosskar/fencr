@@ -4,6 +4,7 @@ let
     caDir
     caCert
     caKey
+    caMembers
     guestTrust
     hardened
     proxyHardening
@@ -23,6 +24,12 @@ in
   caDir = "/var/lib/fencr/ca";
   caCert = "${caDir}/root.crt";
   caKey = "${caDir}/root.key";
+  # the credential proxy loads the authority under these ids, beside the
+  # credentials it is granted; a credential may not take them
+  caMembers = {
+    "ca.crt" = caCert;
+    "ca.key" = caKey;
+  };
 
   # what a vm with a credential fetches beside its secrets, and where the
   # guest installs it: the authority alone for node, the store bundle with
@@ -154,10 +161,7 @@ in
       ExecStart = "${credentialExec pkgs (credentialSocketOf cfg) cfg.credentials}";
       LoadCredential =
         map (credential: "${credential.name}:${credential.secretFile}") cfg.credentials
-        ++ [
-          "ca.crt:${caCert}"
-          "ca.key:${caKey}"
-        ];
+        ++ lib.mapAttrsToList (member: path: "${member}:${path}") caMembers;
       Environment = [
         "XDG_DATA_HOME=/tmp"
         "XDG_CONFIG_HOME=/tmp"

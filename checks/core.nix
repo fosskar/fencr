@@ -175,6 +175,29 @@ assert lib.assertMsg (
   unknownCredential.errors == [ "sbx: credential \"nope\" is not declared in fencr.credentials" ]
 ) "core check: unknown credential accepted";
 assert lib.assertMsg (
+  (core.resolveInstance {
+    name = "sbx";
+    credentials = lib.genAttrs [ "ca.key" "api:key" ] (credentialName: {
+      upstream = "https://api.example.com";
+      domain = "${lib.replaceStrings [ ":" ] [ "-" ] credentialName}.example.com";
+      header = "Authorization";
+      secretFile = "/run/secrets/api-token";
+    });
+    options = {
+      id = 0;
+      credentials = [
+        "ca.key"
+        "api:key"
+      ];
+      secrets."fencr-ca.crt" = "/run/secrets/raw";
+    };
+  }).errors == [
+    "sbx: secret name \"fencr-ca.crt\" is reserved for the authority"
+    "sbx: credential name \"api:key\" contains characters unsupported by systemd credentials"
+    "sbx: credential name \"ca.key\" is reserved for the authority"
+  ]
+) "core check: a name the authority uses was accepted";
+assert lib.assertMsg (
   resolved.guest.credentialDomains == [ "api.example.com" ]
   &&
     loopbackCredential.errors == [

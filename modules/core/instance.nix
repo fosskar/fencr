@@ -18,6 +18,9 @@ let
     proxyOf
     credentialsOf
     credentialDomainError
+    credentialId
+    caMembers
+    guestTrust
     domainPatternError
     domainPatternErrors
     duplicates
@@ -108,6 +111,9 @@ in
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
 
+  # secrets and credentials become systemd credential ids on the host
+  credentialId = value: builtins.match "[A-Za-z0-9_.-]+" value != null;
+
   # a pattern is a hostname, optionally with a leading "*." label. anything
   # else is rejected: "*github.com" also matches evilgithub.com, and stray
   # fnmatch metacharacters widen the allowlist silently.
@@ -162,7 +168,8 @@ in
         ++ map (
           secretName:
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
-        ) (lib.filter (secretName: builtins.match "[A-Za-z0-9_.-]+" secretName == null) guest.secretNames)
+        ) (lib.filter (secretName: !credentialId secretName) guest.secretNames)
+        ++ lib.optional (lib.elem guestTrust.member guest.secretNames) "${name}: secret name \"${guestTrust.member}\" is reserved for the authority"
         ++ lib.optional (
           lib.stringLength guest.tap > 15
         ) "vm name \"${name}\" is too long: \"${guest.tap}\" exceeds IFNAMSIZ"
@@ -178,6 +185,13 @@ in
         ++ map (credential: "${name}: credential \"${credential}\" is not declared in fencr.credentials") (
           lib.filter (credential: !(credentials ? ${credential})) options.credentials
         )
+        ++ map (
+          credential:
+          "${name}: credential name \"${credential.name}\" contains characters unsupported by systemd credentials"
+        ) (lib.filter (credential: !credentialId credential.name) granted)
+        ++ map (
+          credential: "${name}: credential name \"${credential.name}\" is reserved for the authority"
+        ) (lib.filter (credential: caMembers ? ${credential.name}) granted)
         ++ map (error: "${name}: ${error}") (
           lib.filter (error: error != null) (map credentialDomainError granted)
         )
