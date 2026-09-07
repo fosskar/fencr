@@ -23,9 +23,11 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `fleetErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
-  (`vmService`), `egress.nix` (the egress proxy unit and its two bridge
-  ports), `firewall.nix` (the vm's nftables tables: `forwardRules`,
-  `inputRules`, `outputRules`, `redirectRules`, `firewallOf`),
+  (`vmService`), `egress.nix` (the egress proxy binary and its service
+  settings; it listens on two bridge ports, `proxyDnsPort` and
+  `proxyTlsPort`, which `redirectRules` reaches from the guest's 53 and 443),
+  `firewall.nix` (the vm's nftables tables: `forwardRules`, `inputRules`,
+  `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
   `credentials.nix` (the authority and credential proxies), `host-units.nix`
   (`hostUnits`, the secrets socket) and `guest.nix` (`guestBase`, with the
   boot-time fetch in `guest-secrets.sh`). `guestPortsOf` in `instance.nix` is
@@ -49,8 +51,10 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user
   enters, with guest-to-host port N arriving on `vsock_N` beside it.
 - Each VM runs as `fencr-<name>` with persistent state at
-  `/var/lib/fencr-vms/<name>/state.img`, mounted as guest `/var/lib`. The guest
-  closure is a read-only store image, not a host store share.
+  `/var/lib/fencr-vms/<name>/state.img`, mounted as the guest's root
+  filesystem: the whole guest persists across reboots and rebuilds, only
+  `/nix/store` is replaced. The guest closure is a read-only store image, not
+  a host store share.
 
 ## boundaries
 
@@ -85,7 +89,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   stub the proxy units resolve through. KSM is disabled. The VM unit runs as
   the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices; group
   `kvm` is for those two and for the credentials socket the egress proxy
-  opens. On x86_64, a CPU template hides vmx and svm from the guest. Stopping presses the guest's vsock power
+  connects to. On x86_64, a CPU template hides vmx and svm from the guest. Stopping presses the guest's vsock power
   button (port 4), which reboots, because Firecracker exits on CPU reset.
 
 ## development and verification
