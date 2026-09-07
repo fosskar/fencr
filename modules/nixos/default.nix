@@ -54,7 +54,7 @@ in
   config = {
     fencr.guestSystems = guestSystems;
 
-    # the seal is written in nftables; the iptables firewall cannot host it
+    # the vm's firewall is written in nftables; the iptables firewall cannot host it
     networking.nftables.enable = lib.mkIf (instances != { }) true;
 
     assertions =
@@ -135,11 +135,11 @@ in
     # same-page merging lets a guest probe memory across vms
     hardware.ksm.enable = false;
 
-    # the seal tables stand beside the main firewall rather than inside it, so
+    # the vm's firewall tables stand beside the main firewall rather than inside it, so
     # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs
-    # before the seal, and the host keeps its own forward policy. the main
+    # before them, and the host keeps its own forward policy. the main
     # firewall's interface rules only add ports, so globally open ones (sshd
-    # at least) would stay reachable from the bridges; the seal's input chain
+    # at least) would stay reachable from the bridges; its input chain
     # runs first and admits only the bridge's declared allowedTCPPorts
     networking.nftables.tables = forEachInstance (
       _: cfg:
@@ -183,7 +183,7 @@ in
       }
     );
 
-    # the seal's input chain accepts first, but the main chain's drop policy
+    # its input chain accepts first, but the main chain's drop policy
     # still runs after it, so the egress proxy's ports open there too
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
@@ -195,7 +195,7 @@ in
     );
 
     # with filterForward the main forward chain drops by policy, and a drop
-    # in any chain is final even after the seal accepted
+    # in any chain is final even after the vm's firewall accepted
     networking.firewall.extraForwardRules = lib.concatMapStrings (cfg: ''
       iifname "${cfg.bridge}" accept
     '') (lib.attrValues resolvedInstances);

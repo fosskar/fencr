@@ -82,7 +82,7 @@ Decided while on crosvm, and still standing:
   state image has an owner that outlives the unit, which `DynamicUser`
   would not give it
 - there is no hypervisor option. Every forward path would exist twice and
-  the seal semantics could drift between two runners
+  the firewall rules could drift between two runners
 
 Why it was left: the block image took away crosvm's reason. The jailed file
 device had made guest root an unprivileged host uid; with no file server

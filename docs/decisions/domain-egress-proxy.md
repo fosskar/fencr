@@ -12,7 +12,7 @@ name the client itself puts in the tls handshake:
   answers every A query with that same address and everything else with
   an empty answer, so no dns query leaves the host and every tls
   connection the guest opens lands on the host
-- on 443 of the bridge address, which the seal's nat table redirects to
+- on 443 of the bridge address, which the firewall's nat table redirects to
   a high port the proxy binds on that address alone (2026-09-06: a host
   serving `*:443` itself left the proxy nothing to bind), the proxy reads
   the server name indication from the client hello, checks it against
@@ -23,7 +23,7 @@ name the client itself puts in the tls handshake:
 - the proxy unit denies private, link-local, multicast and other
   special-use destination ranges, so an allowed hostname cannot grant lan
   access by resolving to a private address
-- the seal's input chain admits only the proxy's two redirected ports
+- the input chain admits only the proxy's two redirected ports
   from the bridge to the host; a raw address on 443 hits the closed
   forward chain
 
@@ -58,5 +58,5 @@ variables, the vsock forward and tinyproxy.
 dnsmasq's `nftset=` can inject resolved addresses of allowlisted names
 into an nftables set, giving transparent per-domain rules. Rejected:
 shared cdn addresses make an accepted address far broader than the name
-that resolved to it, and cache churn makes the seal racy. The server name
+that resolved to it, and cache churn makes the firewall racy. The server name
 names the destination explicitly on every connection.

@@ -6,6 +6,7 @@ let
     powerPort
     secretsPort
     trustVariables
+    guestPortsOf
     ;
 in
 {
@@ -110,29 +111,26 @@ in
             after = [ "local-fs.target" ];
             requires = [ "local-fs.target" ];
             unitConfig.DefaultDependencies = false;
+            path = [ pkgs.coreutils ];
             serviceConfig = {
               Type = "oneshot";
               RemainAfterExit = true;
+              ExecStart = pkgs.replaceVarsWith {
+                src = ./guest-secrets.sh;
+                isExecutable = true;
+                replacements = {
+                  inherit (pkgs) runtimeShell;
+                  socat = "${pkgs.socat}/bin/socat";
+                  tar = "${pkgs.gnutar}/bin/tar";
+                  port = toString secretsPort;
+                  first = lib.head (agentSandbox.secretNames ++ [ "fencr-ca.crt" ]);
+                  # empty for a vm without a credential: no authority to install
+                  storeBundle = lib.optionalString (
+                    agentSandbox.credentialDomains != [ ]
+                  ) config.security.pki.caBundle;
+                };
+              };
             };
-            script = ''
-              install -d -m 0700 /run/agent-secrets
-              for _ in $(seq 60); do
-                if ${pkgs.socat}/bin/socat -u VSOCK-CONNECT:2:${toString secretsPort} - \
-                    | ${pkgs.gnutar}/bin/tar -C /run/agent-secrets -xf - --no-same-owner --no-same-permissions; then
-                  break
-                fi
-                sleep 0.5
-              done
-              test -e /run/agent-secrets/${lib.head (agentSandbox.secretNames ++ [ "fencr-ca.crt" ])}
-              chmod 0400 /run/agent-secrets/*
-            ''
-            + lib.optionalString (agentSandbox.credentialDomains != [ ]) ''
-              install -d -m 0755 /run/fencr
-              install -m 0444 /run/agent-secrets/fencr-ca.crt /run/fencr/ca.crt
-              rm /run/agent-secrets/fencr-ca.crt
-              cat ${config.security.pki.caBundle} /run/fencr/ca.crt > /run/fencr/ca-bundle.crt
-              chmod 0444 /run/fencr/ca-bundle.crt
-            '';
           };
         })
         {
@@ -148,11 +146,11 @@ in
       networking = {
         useDHCP = false;
         useNetworkd = true;
-        # the bridge is the one interface: sshd when keys authorize it,
-        # and the exposed ports, reachable at the guest's address
+        # the bridge is the one interface; the host's output chain admits
+        # the same ports
         firewall = {
           enable = true;
-          allowedTCPPorts = lib.optional (agentSandbox.sshKeys != [ ]) 22 ++ agentSandbox.expose;
+          allowedTCPPorts = guestPortsOf agentSandbox;
         };
         # the iptables backend drags perl in through libpcap and rdma-core
         nftables.enable = true;

@@ -23,18 +23,25 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `fleetErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
-  (`vmService`), `egress.nix` (egress proxy unit, `firewallOf`),
+  (`vmService`), `egress.nix` (the egress proxy unit and its two bridge
+  ports), `firewall.nix` (the vm's nftables tables: `forwardRules`,
+  `inputRules`, `outputRules`, `redirectRules`, `firewallOf`),
   `credentials.nix` (the authority and credential proxies), `host-units.nix`
-  (`hostUnits`, the secrets socket) and `guest.nix` (`guestBase`). Keep shared
-  defaults in `core.defaults` and derivation logic here rather than
-  duplicating it in the module or CLI.
-- `modules/cli.nix` generates Rust; `modules/core/egress-proxy.rs` answers DNS
+  (`hostUnits`, the secrets socket) and `guest.nix` (`guestBase`, with the
+  boot-time fetch in `guest-secrets.sh`). `guestPortsOf` in `instance.nix` is
+  the one list of guest ports the host may reach; the guest firewall and the
+  output chain both take it. Keep shared defaults in `core.defaults` and
+  derivation logic here rather than duplicating it in the module or CLI.
+- `modules/cli.rs` is the fencr command; `modules/cli.nix` appends its instance
+  tables and tool paths at build. `modules/core/egress-proxy.rs` answers DNS
   queries, hands credential domains to their proxies by TLS SNI and applies the
   allowlist to the rest. Both use `pkgs.writers.writeRustBin` with Rust edition
-  2024, not a Cargo workspace.
+  2024, not a Cargo workspace. `checks/cli.nix` feeds the command a ruleset
+  rendered by `firewallOf` and canned journal lines, so its parsers run on the
+  text the firewall writes.
 - The bridge is the road between host and guest: the guest's sshd and its
   `expose`d ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
-  seal's output chain lets the host reach those ports and nothing else. vsock
+  firewall's output chain lets the host reach those ports and nothing else. vsock
   carries only the boot-time secrets fetch and the power button: Firecracker's
   unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user and
   group `kvm` enter, with guest-to-host port N arriving on `vsock_N` beside it.
@@ -45,9 +52,9 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 ## boundaries
 
 - Egress defaults to closed, including DNS. Explicit `allowedTCPDestinations`
-  are exceptions; open egress still seals other special-use ranges. IPv6 is
-  dropped on the bridge. The seal's nftables filter chains run at `filter - 1`, before
-  the host firewall; preserve both the seal and host firewall integration.
+  are exceptions; open egress still blocks other special-use ranges. IPv6 is
+  dropped on the bridge. The vm's nftables filter chains run at `filter - 1`, before
+  the host firewall; preserve both the vm's tables and the host firewall integration.
 - `allowedDomains` requires closed egress. The host answers guest DNS with its
   bridge address and authorizes TLS by SNI without decrypting it or using proxy
   environment variables. `*.example.com` does not include `example.com`.

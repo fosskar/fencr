@@ -8,7 +8,7 @@ Two tiers, both plain ssh public keys:
 
 The guest authorizes the union. Its sshd, socket-activated on the vm's
 address on its bridge, exists only when the union is non-empty — no keys,
-no door, and no pinhole for it in the seal's output chain. The host writes
+no door, and no pinhole for it in the vm's firewall. The host writes
 an `ssh <vm-name>` alias with that address as `HostName`, so any host user
 holding an authorized key logs in with their own identity.
 
@@ -33,7 +33,7 @@ the sandbox's tap address, Fly's ssh server over WireGuard, Ignite's
 carries over the network. They were removed: ssh and `expose` moved onto
 the bridge, `hostForwards` went (`hostPorts` already reaches the host's
 bridge address), and vsock kept the boot-time secrets fetch and the power
-button, which are the control channel. The seal's output chain took over
+button, which are the control channel. The vm's firewall took over
 the one thing the socket file had provided: only the guest's sshd and its
 exposed ports are reachable from the host, and only while keys or `expose`
 say so.

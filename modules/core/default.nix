@@ -1,7 +1,7 @@
 # the builders behind the nixos module, one file per concern: instance
-# derivation, hardening sets, the hypervisor unit, forward transports, the
-# egress proxy and seal, the credential proxies, the host unit set and the
-# guest system. pure functions of an instance, so checks/core.nix probes
+# derivation, hardening sets, the hypervisor unit, the egress proxy, the
+# vm's firewall, the credential proxies, the host unit set and the guest
+# system. pure functions of an instance, so checks/core.nix probes
 # them without a host. every part sees the whole through `core`
 { lib }:
 lib.fix (
@@ -11,6 +11,7 @@ lib.fix (
     ./hardening.nix
     ./vm.nix
     ./egress.nix
+    ./firewall.nix
     ./credentials.nix
     ./host-units.nix
     ./guest.nix

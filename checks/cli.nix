@@ -6,6 +6,7 @@ let
     name = "sbx";
     credentials.api = {
       upstream = "http://127.0.0.1:8764";
+      domain = "api.test";
       header = "Authorization";
       secretFile = "/run/secrets/api-token";
     };
@@ -27,8 +28,29 @@ let
     esac
     printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\nNAccepted=7\nNConnections=2\n' "$TEST_STATE"
   '';
-  journalctl = pkgs.writeShellScriptBin "journalctl" "exit 0";
-  nft = pkgs.writeShellScriptBin "nft" "exit 0";
+  # the ruleset the command parses is the one core renders, with every
+  # counter at three packets: the traffic line then sums the same comment
+  # tags the firewall wrote
+  ruleset = pkgs.writeText "fencr-test-ruleset" (
+    builtins.replaceStrings [ " counter " ] [ " counter packets 3 bytes 300 " ] (
+      lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf instance))
+    )
+  );
+  nft = pkgs.writeShellScriptBin "nft" ''
+    cat ${ruleset}
+  '';
+  # the kernel log for recent denials, the proxy's own log for domains
+  journalctl = pkgs.writeShellScriptBin "journalctl" ''
+    case "$1" in
+      -k)
+        printf 'fencr-sbx-blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        printf 'fencr-sbx-blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        ;;
+      -u)
+        printf 'allow github.com\ndeny evil.test\nintercept api.test\n'
+        ;;
+    esac
+  '';
   cli = import ../modules/cli.nix {
     inherit lib;
     pkgs = pkgs // {
@@ -54,10 +76,10 @@ pkgs.runCommand "fencr-cli-check" { } ''
   Internet: CLOSED
 
   Traffic:
-    allowed  0 packets
-    blocked  0 packets
+    allowed  9 packets
+    blocked  9 packets  (recent: 1.2.3.4:443/tcp x2)
 
-  Domains: no requests observed
+  Domains: ✗ evil.test (1)  ✓ github.com (1)
   Services: egress proxy RUNNING, credential RUNNING
 
   EOF

@@ -17,6 +17,7 @@ let
     proxyOf
     credentialsOf
     credentialDomainError
+    domainPatternError
     domainPatternErrors
     duplicates
     ;
@@ -97,6 +98,25 @@ in
 
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
+
+  # a pattern is a hostname, optionally with a leading "*." label. anything
+  # else is rejected: "*github.com" also matches evilgithub.com, and stray
+  # fnmatch metacharacters widen the allowlist silently.
+  domainPatternError =
+    pattern:
+    if builtins.match "(\\*\\.)?([a-zA-Z0-9-]+\\.)+[a-zA-Z0-9-]+" pattern != null then
+      null
+    else if lib.hasPrefix "*" pattern && !lib.hasPrefix "*." pattern then
+      "\"${pattern}\": a wildcard must be its own label (\"*.example.com\"); \"*example.com\" also matches evilexample.com"
+    else
+      "\"${pattern}\": not a hostname pattern; expected \"example.com\" or \"*.example.com\"";
+
+  domainPatternErrors = domains: lib.filter (e: e != null) (map domainPatternError domains);
+
+  # the guest ports the host may reach at the guest's address: its sshd
+  # when keys authorize one, and what expose lists. the guest's firewall
+  # opens exactly these and the host's output chain admits exactly these
+  guestPortsOf = cfg: lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.expose;
 
   resolveInstance =
     {

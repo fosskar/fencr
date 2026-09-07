@@ -81,7 +81,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         pkgs.openssh
       ];
 
-      # a globally opened host port: the seal must still keep it from the vm
+      # a globally opened host port: the vm's firewall must still keep it from the vm
       networking.firewall.allowedTCPPorts = [ 80 ];
       networking.firewall.filterForward = true;
       systemd.services.host-80 = {
@@ -106,7 +106,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         mem = 768;
         authorizedKeys = [ snakeOilEd25519PublicKey ];
         secrets.raw = rawSecret;
-        # the seal: closed egress with one pinhole into the test network,
+        # the firewall: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
         allowedTCPDestinations = [ "192.168.1.2:8123" ];
@@ -159,7 +159,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
     };
 
     # a machine beside the host on the test network: the pinhole target on
-    # 8123, and a listener on 80 that the seal must keep unreachable
+    # 8123, and a listener on 80 that the firewall must keep unreachable
     nodes.target = {
       networking.firewall.allowedTCPPorts = [
         80
@@ -188,7 +188,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       target.wait_for_unit("target-80.service")
       host.wait_for_unit("fencr-sbx.service", timeout=1200)
       # the guest at its address: the exposed port answers, the other one
-      # and everything else the host tries is dropped by the seal's output
+      # and everything else the host tries is dropped by the firewall's output
       # chain before it leaves the host
       host.wait_until_succeeds("curl --fail --silent http://10.30.1.2:9119 | grep -Fx 'fencr ingress'", timeout=120)
       host.fail("curl --silent --max-time 3 http://10.30.1.2:9120")
@@ -219,8 +219,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
       host.wait_until_succeeds(f"{ssh} 'cat /var/lib/fencr-probe' | grep -Fx survives", timeout=300)
 
-      # the seal, probed with real packets from inside the vm. every probe
-      # carries a timeout: a hang here means the seal swallowed the reply
+      # the firewall, probed with real packets from inside the vm. every probe
+      # carries a timeout: a hang here means the firewall swallowed the reply
       # and the test should say so rather than wait
       host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'", timeout=60)

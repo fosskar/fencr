@@ -1,5 +1,5 @@
 //! the road out for a vm with allowedDomains or credentials: on the bridge
-//! address it answers every dns name with itself and, on the port the seal
+//! address it answers every dns name with itself and, on the port the firewall
 //! redirects 443 to, reads the server name from the tls client hello. a
 //! credential's domain goes to that credential's proxy on its unix socket,
 //! which holds the certificate; an allowed name is spliced to the real host

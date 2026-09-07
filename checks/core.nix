@@ -1,7 +1,7 @@
 _self: pkgs:
 
 # Probes the builders in modules/core without a host: instance derivation,
-# the seal text and the host units. Nothing is built.
+# the firewall text and the host units. Nothing is built.
 let
   inherit (pkgs) lib;
   core = import ../modules/core { inherit lib; };
@@ -64,8 +64,11 @@ let
       22100
     ];
   };
-  seal = lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf resolved));
-  occurrences = needle: lib.length (lib.splitString needle seal) - 1;
+  tables = core.firewallOf resolved;
+  filterTable = tables."fencr-sbx".content;
+  natTable = tables."fencr-sbx-nat".content;
+  rendered = filterTable + natTable;
+  occurrences = needle: lib.length (lib.splitString needle rendered) - 1;
 in
 assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
 assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
@@ -113,7 +116,7 @@ assert lib.assertMsg (lib.all (
   lib.hasInfix net (
     lib.concatStrings (lib.mapAttrsToList (_: table: table.content) (core.firewallOf longName))
   )
-) core.specialUseNetworks.v4) "core check: open egress does not seal every special-use range";
+) core.specialUseNetworks.v4) "core check: open egress does not block every special-use range";
 assert lib.assertMsg (
   !(units.services."fencr-sbx-egress-proxy".serviceConfig ? AmbientCapabilities)
   &&
@@ -135,7 +138,7 @@ assert lib.assertMsg (
   occurrences "priority filter - 1;" == 3
   && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
   && occurrences ''oifname "br-sbx" meta nfproto ipv6 drop'' == 1
-) "core check: seal chain priority or v6 drop drifted";
+) "core check: chain priority or v6 drop drifted";
 assert lib.assertMsg (
   unknownCredential.errors == [ "sbx: credential \"nope\" is not declared in fencr.credentials" ]
 ) "core check: unknown credential accepted";
