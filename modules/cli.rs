@@ -67,7 +67,7 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("  list             declared vms");
     eprintln!("  ssh <vm> [cmd]   open a shell (or run a command) in a vm");
-    eprintln!("  status [vm]      vm health and traffic [--watch]; --full for systemctl");
+    eprintln!("  status [vm]      vm health and traffic [--watch]; --full <vm> for systemctl");
     eprintln!("  dashboard        alias for status --watch [--once]");
     eprintln!();
     eprintln!(
@@ -362,9 +362,6 @@ fn render(s: &Style, only: Option<&str>) -> Vec<String> {
     {
         render_vm(vm, &ruleset, &kernel, s, &mut out);
     }
-    if VMS.is_empty() {
-        out.push("(no vms declared)".to_string());
-    }
     out
 }
 
@@ -412,27 +409,23 @@ fn main() {
         Some("list") => print_list(),
         Some("dashboard") => show(None, !args.iter().any(|a| a == "--once")),
         Some("ssh") => {
+            // the module's Host <vm> alias carries the address, root and
+            // the host key policy
             let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-            let vm = find(name);
             fail(
                 Command::new(SSH)
-                    .arg("-o")
-                    .arg("StrictHostKeyChecking=accept-new")
-                    .arg(format!("root@{}", vm.ip))
+                    .arg(find(name).name)
                     .args(&args[2..])
                     .exec(),
             );
         }
         Some("status") => {
-            let name = args
+            let vm = args
                 .get(1)
                 .filter(|arg| !arg.starts_with('-'))
-                .map(String::as_str);
-            if let Some(name) = name {
-                find(name);
-            }
+                .map(|name| find(name));
             if args.iter().any(|a| a == "--full") {
-                let vm = name.map(find).unwrap_or_else(|| usage());
+                let vm = vm.unwrap_or_else(|| usage());
                 let units = PROXIED
                     .iter()
                     .chain(CREDENTIALS)
@@ -447,7 +440,7 @@ fn main() {
                         .exec(),
                 );
             }
-            show(name, args.iter().any(|a| a == "--watch"));
+            show(vm.map(|vm| vm.name), args.iter().any(|a| a == "--watch"));
         }
         _ => usage(),
     }
