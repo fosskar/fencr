@@ -5,6 +5,7 @@ let
     vsockOf
     powerPort
     secretsPort
+    guestTrust
     trustVariables
     guestPortsOf
     ;
@@ -23,6 +24,10 @@ in
       pkgs,
       ...
     }:
+    let
+      # a vm with a credential trusts the host's authority
+      trusted = agentSandbox.credentialDomains != [ ];
+    in
     {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
       networking.hostName = lib.mkDefault agentSandbox.name;
@@ -102,7 +107,7 @@ in
       system.etc.overlay.enable = true;
       services.userborn.enable = true;
       systemd.services = lib.mkMerge [
-        (lib.mkIf (agentSandbox.secretNames != [ ] || agentSandbox.credentialDomains != [ ]) {
+        (lib.mkIf (agentSandbox.secretNames != [ ] || trusted) {
           # the vsock device comes up with udev; the fetch waits for it
           fencr-secrets = {
             description = "Materialize fencr secrets in volatile guest storage";
@@ -120,14 +125,13 @@ in
                 isExecutable = true;
                 replacements = {
                   inherit (pkgs) runtimeShell;
+                  inherit (guestTrust) member cert bundle;
                   socat = "${pkgs.socat}/bin/socat";
                   tar = "${pkgs.gnutar}/bin/tar";
                   port = toString secretsPort;
-                  first = lib.head (agentSandbox.secretNames ++ [ "fencr-ca.crt" ]);
+                  first = lib.head (agentSandbox.secretNames ++ [ guestTrust.member ]);
                   # empty for a vm without a credential: no authority to install
-                  storeBundle = lib.optionalString (
-                    agentSandbox.credentialDomains != [ ]
-                  ) config.security.pki.caBundle;
+                  storeBundle = lib.optionalString trusted config.security.pki.caBundle;
                 };
               };
             };
@@ -156,14 +160,14 @@ in
         nftables.enable = true;
         # a credential's domain is the host, where its proxy answers with a
         # certificate from the host's authority
-        hosts = lib.mkIf (agentSandbox.credentialDomains != [ ]) {
+        hosts = lib.mkIf trusted {
           ${agentSandbox.hostIp} = agentSandbox.credentialDomains;
         };
       };
       # the system trust store, fetched at boot with the host's authority in
       # it, on every path the store bundle sits on; python's certifi and
       # node carry bundles of their own and read only these variables
-      environment.etc = lib.mkIf (agentSandbox.credentialDomains != [ ]) (
+      environment.etc = lib.mkIf trusted (
         lib.genAttrs
           [
             "ssl/certs/ca-certificates.crt"
@@ -171,11 +175,11 @@ in
             "pki/tls/certs/ca-bundle.crt"
           ]
           (_: {
-            source = lib.mkForce "/run/fencr/ca-bundle.crt";
+            source = lib.mkForce guestTrust.bundle;
           })
       );
-      environment.sessionVariables = lib.mkIf (agentSandbox.credentialDomains != [ ]) trustVariables;
-      systemd.globalEnvironment = lib.mkIf (agentSandbox.credentialDomains != [ ]) trustVariables;
+      environment.sessionVariables = lib.mkIf trusted trustVariables;
+      systemd.globalEnvironment = lib.mkIf trusted trustVariables;
       # virtio gives unpredictable enp0sN names, so match the mac we assigned.
       # v4 only: no RA-assigned v6 for the host's v4 forward rules to miss
       systemd.network.networks."10-lan" = {

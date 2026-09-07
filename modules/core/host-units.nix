@@ -7,6 +7,7 @@ let
     secretsPort
     caUnit
     caCert
+    guestTrust
     forwardHardening
     egressProxyServiceConfig
     credentialServiceConfig
@@ -56,7 +57,7 @@ in
           serviceConfig = forwardHardening // {
             LoadCredential =
               lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
-              ++ lib.optional (instance.credentials != [ ]) "fencr-ca.crt:${caCert}";
+              ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCert}";
             ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
               exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
             '';

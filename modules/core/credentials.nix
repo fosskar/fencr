@@ -4,6 +4,7 @@ let
     caDir
     caCert
     caKey
+    guestTrust
     proxyHardening
     specialUseNetworks
     upstreamHost
@@ -23,9 +24,17 @@ in
   caCert = "${caDir}/root.crt";
   caKey = "${caDir}/root.key";
 
+  # what a vm with a credential fetches beside its secrets, and where the
+  # guest installs it: the authority alone for node, the store bundle with
+  # the authority appended for everything else
+  guestTrust = {
+    member = "fencr-ca.crt";
+    cert = "/run/fencr/ca.crt";
+    bundle = "/run/fencr/ca-bundle.crt";
+  };
   trustVariables = {
-    NIX_SSL_CERT_FILE = "/run/fencr/ca-bundle.crt";
-    NODE_EXTRA_CA_CERTS = "/run/fencr/ca.crt";
+    NIX_SSL_CERT_FILE = guestTrust.bundle;
+    NODE_EXTRA_CA_CERTS = guestTrust.cert;
   };
 
   caService = pkgs: hostName: {
