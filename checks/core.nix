@@ -79,7 +79,23 @@ assert lib.assertMsg (
   && !longName.proxy
   && longName.guest.dns == "9.9.9.9"
 ) "core check: the egress proxy is not the guest's resolver";
-assert lib.assertMsg (longName.errors != [ ]) "core check: long interface name accepted";
+assert lib.assertMsg (
+  longName.errors
+  == [ "vm name \"coding-agent-1\" is too long: \"tap-coding-agent-1\" exceeds IFNAMSIZ" ]
+) "core check: long interface name accepted";
+assert lib.assertMsg (
+  (resolve "sbx" {
+    id = 0;
+    egress = "open";
+    dns = null;
+  }).errors == [ "sbx: egress = \"open\" needs dns, the resolver the forward chain admits" ]
+  && (resolve "sbx" { id = 0; }).guest.dns == "9.9.9.9"
+  &&
+    (core.resolveInstance {
+      name = "sbx";
+      options.id = 0;
+    }).guest.dns == null
+) "core check: dns is not optional where nothing admits it";
 assert lib.assertMsg (
   samePort.errors == [ "sbx: expose port 22100 declared twice" ]
 ) "core check: repeated expose port accepted";

@@ -102,7 +102,6 @@ in
     id = 0;
     vcpu = 2;
     mem = 1024;
-    dns = "9.9.9.9";
     hostPorts = [ 443 ];
     allowedTCPDestinations = [ "192.168.1.50:8123" ];
     expose = [
@@ -123,7 +122,6 @@ in
     id = 1;
     vcpu = 1;
     mem = 512;
-    dns = "9.9.9.9";
     allowedDomains = [
       "github.com"
       "*.github.com"

@@ -32,6 +32,7 @@ in
     cpuQuota = "400%";
     stateSize = 32768;
     egress = "closed";
+    dns = null;
     prefixLength = 24;
     credentials = [ ];
     allowedDomains = [ ];
@@ -165,6 +166,9 @@ in
         ++ lib.optional (
           options.allowedDomains != [ ] && options.egress != "closed"
         ) "${name}: allowedDomains requires egress = \"closed\""
+        ++ lib.optional (
+          options.egress == "open" && options.dns == null
+        ) "${name}: egress = \"open\" needs dns, the resolver the forward chain admits"
         ++ map (error: "${name}: invalid allowedDomains ${error}") (
           domainPatternErrors options.allowedDomains
         )

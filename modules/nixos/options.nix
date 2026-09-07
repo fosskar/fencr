@@ -1,5 +1,5 @@
 # the options of fencr: what a host declares, what a vm may be given
-{ lib, ... }@host:
+{ lib, ... }:
 let
   core = import ../core { inherit lib; };
   exposeType = lib.types.coercedTo lib.types.str core.parseExpose lib.types.port;
@@ -226,9 +226,14 @@ in
             };
 
             dns = lib.mkOption {
-              type = lib.types.str;
-              default = builtins.head host.config.networking.nameservers;
-              defaultText = "the host's first resolver";
+              type = lib.types.nullOr lib.types.str;
+              default = core.defaults.dns;
+              example = "9.9.9.9";
+              description = ''
+                the guest's resolver, which egress = "open" admits through
+                the forward chain and requires. with allowedDomains the host
+                is the resolver; closed egress reaches none.
+              '';
             };
           };
         }

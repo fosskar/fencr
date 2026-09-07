@@ -187,7 +187,7 @@ in
         networkConfig = {
           Address = "${agentSandbox.ip}/${toString agentSandbox.prefixLength}";
           Gateway = agentSandbox.hostIp;
-          DNS = agentSandbox.dns;
+          DNS = lib.mkIf (agentSandbox.dns != null) agentSandbox.dns;
           IPv6AcceptRA = false;
           LinkLocalAddressing = "ipv4";
         };

@@ -49,9 +49,7 @@ Replace the example public key with your own and add your agent's NixOS
 module to `services`. Each VM needs a unique `id` between `0` and `8`.
 
 The host requires `/dev/kvm` and systemd-networkd. The module enables
-nftables and disables kernel same-page
-merging (KSM). It uses the host's first `networking.nameservers` entry by
-default; set `fencr.vms.<name>.dns` if the host has no resolver listed there.
+nftables and disables kernel same-page merging (KSM).
 
 By default, each VM has:
 
@@ -77,7 +75,7 @@ Network permissions are configured per VM:
 | --- | --- |
 | `allowedTCPDestinations = [ "192.168.1.50:8123" ];` | Allow TCP to an IPv4 address or subnet and port, including an explicitly permitted private destination. |
 | `allowedDomains = [ "github.com" "*.github.com" ];` | Allow TLS connections on port 443 by server name, without TLS interception or proxy environment variables. Requires `egress = "closed"`. |
-| `egress = "open";` | Allow public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly permitted. |
+| `egress = "open"; dns = "9.9.9.9";` | Allow public IPv4 internet access and the named resolver. Private and other special-use ranges remain blocked unless explicitly permitted. |
 | `expose = [ 8080 ];` | Let the host reach guest port 8080 at the VM's address, `fencr.vms.<name>.ip`. The service inside must listen on that address. Every other guest port is unreachable from the host. |
 | `hostPorts = [ 8123 ];` | Allow access to a host TCP port over the VM's bridge. |
 
