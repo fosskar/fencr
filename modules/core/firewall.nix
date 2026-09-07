@@ -11,44 +11,47 @@ let
     inputRules
     outputRules
     ;
+  # every counted rule's comment and every drop's log prefix carry
+  # "fencr:<vm>:<kind>", which `fencr status` sums and lists; a kind
+  # ending in blocked is a drop
+  tag = cfg: kind: "fencr:${cfg.name}:${kind}";
+  drop = cfg: match: kind: ''
+    ${match} limit rate 5/second log prefix "${tag cfg kind}: "
+    ${match} counter drop comment "${tag cfg kind}"
+  '';
 in
 {
   # forward chain: what the guest reaches beyond the bridge. egress "open":
   # dns and declared pinholes plus the internet, every other private range
   # dropped. egress "closed": nothing but the declared pinholes, dns
   # included in nothing. replies to whatever was allowed flow back either
-  # way. counters and comments feed `fencr dashboard`; drops also log with a
-  # rate limit so the journal shows who knocked without flooding
+  # way. drops log with a rate limit so the journal shows who knocked
+  # without flooding
   forwardRules =
     cfg:
     let
-      tag = kind: ''comment "fencr:${cfg.name}:${kind}"'';
       blocked = "{ ${lib.concatStringsSep ", " specialUseNetworks.v4} }";
     in
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
     ''
     + lib.optionalString (cfg.egress == "open") ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 counter accept ${tag "dns"}
-      iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 counter accept ${tag "dns-tcp"}
+      iifname "${cfg.bridge}" ip daddr ${cfg.dns} udp dport 53 counter accept comment "${tag cfg "dns"}"
+      iifname "${cfg.bridge}" ip daddr ${cfg.dns} tcp dport 53 counter accept comment "${tag cfg "dns-tcp"}"
     ''
     + lib.concatMapStringsSep "\n" (
       destination:
-      ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} counter accept ${tag "pin-${destination.address}-${toString destination.port}"}''
+      ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} counter accept comment "${tag cfg "pin-${destination.address}-${toString destination.port}"}"''
     ) cfg.allowedTCPDestinations
     + "\n"
     + (
       if cfg.egress == "open" then
-        ''
-          iifname "${cfg.bridge}" ip daddr ${blocked} limit rate 5/second log prefix "fencr-${cfg.name}-blocked: "
-          iifname "${cfg.bridge}" ip daddr ${blocked} counter drop ${tag "blocked-private"}
-          iifname "${cfg.bridge}" counter accept ${tag "internet"}
+        drop cfg ''iifname "${cfg.bridge}" ip daddr ${blocked}'' "private-blocked"
+        + ''
+          iifname "${cfg.bridge}" counter accept comment "${tag cfg "internet"}"
         ''
       else
-        ''
-          iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-blocked: "
-          iifname "${cfg.bridge}" counter drop ${tag "blocked"}
-        ''
+        drop cfg ''iifname "${cfg.bridge}"'' "blocked"
     )
     + ''
       oifname "${cfg.bridge}" ct state established,related accept
@@ -81,18 +84,15 @@ in
     + lib.optionalString (cfg.hostPorts != [ ]) ''
       iifname "${cfg.bridge}" tcp dport { ${
         lib.concatMapStringsSep ", " toString cfg.hostPorts
-      } } counter accept comment "fencr:${cfg.name}:host"
+      } } counter accept comment "${tag cfg "host"}"
     ''
     + lib.optionalString cfg.dnsProxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString proxyDnsPort} counter accept comment "fencr:${cfg.name}:egress-dns"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString proxyDnsPort} counter accept comment "${tag cfg "egress-dns"}"
     ''
     + lib.optionalString cfg.proxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString proxyTlsPort} counter accept comment "fencr:${cfg.name}:egress-tls"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString proxyTlsPort} counter accept comment "${tag cfg "egress-tls"}"
     ''
-    + ''
-      iifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-host-blocked: "
-      iifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:host-blocked"
-    '';
+    + drop cfg ''iifname "${cfg.bridge}"'' "host-blocked";
 
   # output chain: what the host itself may open toward the guest, its sshd
   # and its exposed ports and nothing else; replies to what the guest
@@ -109,12 +109,9 @@ in
     + lib.optionalString (ports != [ ]) ''
       oifname "${cfg.bridge}" ip daddr ${cfg.ip} tcp dport { ${
         lib.concatMapStringsSep ", " toString ports
-      } } counter accept comment "fencr:${cfg.name}:guest"
+      } } counter accept comment "${tag cfg "guest"}"
     ''
-    + ''
-      oifname "${cfg.bridge}" limit rate 5/second log prefix "fencr-${cfg.name}-guest-blocked: "
-      oifname "${cfg.bridge}" counter drop comment "fencr:${cfg.name}:guest-blocked"
-    '';
+    + drop cfg ''oifname "${cfg.bridge}"'' "guest-blocked";
 
   # the vm's firewall as complete nftables tables for
   # networking.nftables.tables. they stand on their own so no host chain

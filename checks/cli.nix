@@ -44,9 +44,9 @@ let
   journalctl = pkgs.writeShellScriptBin "journalctl" ''
     case "$1" in
       -k)
-        printf 'fencr-sbx-blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
-        printf 'fencr-sbx-blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
-        printf 'fencr-sbx-guest-blocked: IN= OUT=br-sbx SRC=10.30.1.1 DST=10.30.1.2 PROTO=TCP DPT=9120\n'
+        printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.30.1.1 DST=10.30.1.2 PROTO=TCP DPT=9120\n'
         ;;
       -u)
         printf 'allow github.com\ndeny evil.test\nintercept api.test\n'

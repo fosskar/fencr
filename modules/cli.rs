@@ -9,9 +9,19 @@ use std::{thread, time};
 // the instance tables and tool paths are appended by cli.nix at build:
 // VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT
 
-/// what the firewall writes into every counted rule; the vm name and the
-/// kind follow, and a kind containing "blocked" is a drop
-const TAG: &str = "comment \"fencr:";
+/// the kind out of "fencr:<vm>:<kind>", which the firewall writes as every
+/// counted rule's comment and every drop's log prefix; a kind ending in
+/// blocked is a drop
+fn kind<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let rest = &line[line.find("fencr:")? + 6..];
+    let rest = rest.strip_prefix(name)?.strip_prefix(':')?;
+    let end = rest.find(['"', ':']).unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+fn dropped(kind: &str) -> bool {
+    kind.ends_with("blocked")
+}
 
 struct Vm {
     name: &'static str,
@@ -133,24 +143,13 @@ fn traffic(ruleset: &str, name: &str) -> (u64, u64) {
     let mut allowed = 0;
     let mut blocked = 0;
     for line in ruleset.lines() {
-        let Some(pos) = line.find(TAG) else {
+        let Some(kind) = kind(line, name) else {
             continue;
         };
-        let tag = &line[pos + TAG.len()..];
-        let Some(end) = tag.find('"') else { continue };
-        let Some((vm, kind)) = tag[..end].split_once(':') else {
-            continue;
-        };
-        if vm != name {
-            continue;
-        }
-        let packets = line
-            .find("packets ")
-            .map(|p| &line[p + 8..])
-            .and_then(|rest| rest.split_whitespace().next())
+        let packets = field(line, "packets ")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0);
-        if kind.contains("blocked") {
+        if dropped(kind) {
             blocked += packets;
         } else {
             allowed += packets;
@@ -159,20 +158,11 @@ fn traffic(ruleset: &str, name: &str) -> (u64, u64) {
     (allowed, blocked)
 }
 
-/// the kernel's log lines for the vm's drop rules on every chain: their
-/// prefixes are `fencr-<vm>-blocked: `, `-host-blocked: ` and
-/// `-guest-blocked: `
+/// the kernel's log lines for the vm's drop rules on every chain
 fn recent_denied(kernel: &str, name: &str) -> Option<String> {
-    let prefix = format!("fencr-{name}-");
     let mut hits: BTreeMap<String, u64> = BTreeMap::new();
     for line in kernel.lines() {
-        let Some(after) = line.find(&prefix).map(|pos| &line[pos + prefix.len()..]) else {
-            continue;
-        };
-        if !after.starts_with("blocked: ")
-            && !after.starts_with("host-blocked: ")
-            && !after.starts_with("guest-blocked: ")
-        {
+        if !kind(line, name).is_some_and(dropped) {
             continue;
         }
         let dst = field(line, "DST=").unwrap_or("?");
@@ -340,7 +330,7 @@ fn render(s: &Style, only: Option<&str>) -> Vec<String> {
             "400",
             "--no-pager",
             "-g",
-            "fencr-",
+            "fencr:",
             "-o",
             "cat",
         ],
