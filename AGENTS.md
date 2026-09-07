@@ -46,7 +46,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 
 - Egress defaults to closed, including DNS. Explicit `allowedTCPDestinations`
   are exceptions; open egress still seals other special-use ranges. IPv6 is
-  dropped on the bridge. The seal's nftables chains run at `filter - 1`, before
+  dropped on the bridge. The seal's nftables filter chains run at `filter - 1`, before
   the host firewall; preserve both the seal and host firewall integration.
 - `allowedDomains` requires closed egress. The host answers guest DNS with its
   bridge address and authorizes TLS by SNI without decrypting it or using proxy
@@ -59,8 +59,8 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   credential's header. The guest fetches the authority
   beside its secrets and rebuilds the system trust store at boot in
   `/run/fencr`. Raw `secrets` instead enter guest `/run/agent-secrets`, fetched
-  at boot over vsock port 5 from a socket unit that serves the VM unit's
-  systemd credentials; they are readable by guest root. Never put real secret
+  at boot over vsock port 5 from a socket-activated relay service that serves its
+  own systemd credentials; they are readable by guest root. Never put real secret
   values in the Nix store.
 - SSH combines `fencr.adminKeys` and per-VM `authorizedKeys`; no keys means no
   SSH listener and no output-chain pinhole for it. Guest root is the intended
@@ -71,8 +71,8 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   VM users.
 - Hosts need KVM and systemd-networkd. KSM is disabled. The VM unit runs as
   the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices and
-  `UMask=0007`, which is what lets group `kvm` open its vsock; a CPU template
-  hides vmx and svm from the guest. Stopping presses the guest's vsock power
+  `UMask=0007`, which is what lets group `kvm` open its vsock; on x86_64, a CPU
+  template hides vmx and svm from the guest. Stopping presses the guest's vsock power
   button (port 4), which reboots, because Firecracker exits on CPU reset.
 
 ## development and verification
@@ -100,8 +100,8 @@ nix flake check
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.
 - `checks/nixos-boot.nix` runs a Firecracker guest inside a NixOS test VM,
-  requiring nested KVM; the test VM uses `-cpu host` because Firecracker needs
-  `KVM_CAP_XCRS`. It checks SSH, raw secrets, persistent state, ingress, denied
+  requiring nested KVM; on x86_64 the test VM uses `-cpu host` because Firecracker
+  needs `KVM_CAP_XCRS`; on aarch64 it uses `-cpu cortex-a72`. It checks SSH, raw secrets, persistent state, ingress, denied
   traffic, domain egress, credential injection, and a clean stop. Its timeout
   is 1800 seconds; `nix flake check` includes this integration test.
 - `effects.nix` defines nixbot's scheduled flake-input updates.
