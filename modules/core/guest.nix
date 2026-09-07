@@ -16,7 +16,6 @@ in
   # the environment itself: hardware shape, network posture, and a /var/lib
   # that survives reboots so whatever is installed inside keeps its state.
   guestBase =
-    _microvmSrc:
     {
       agentSandbox,
       config,
@@ -117,7 +116,6 @@ in
             after = [ "local-fs.target" ];
             requires = [ "local-fs.target" ];
             unitConfig.DefaultDependencies = false;
-            path = [ pkgs.coreutils ];
             serviceConfig = {
               Type = "oneshot";
               RemainAfterExit = true;

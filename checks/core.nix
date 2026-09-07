@@ -226,7 +226,6 @@ assert lib.assertMsg (
   && units.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
   && units.sockets."fencr-sbx-secrets".socketConfig.SocketUser == "fencr-sbx"
   && units.sockets."fencr-sbx-secrets".socketConfig.SocketMode == "0600"
-  && units.sockets."fencr-sbx-secrets".socketConfig.TriggerLimitIntervalSec == 0
 ) "unit check: host sockets drifted";
 assert lib.assertMsg (
   units.services."fencr-sbx-secrets@".after == [

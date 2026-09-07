@@ -40,7 +40,7 @@ let
       };
       modules = [
         inputs.microvm.nixosModules.microvm
-        (core.guestBase inputs.microvm)
+        core.guestBase
       ]
       ++ cfg.services;
     }

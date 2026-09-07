@@ -44,7 +44,6 @@ in
             SocketMode = "0600";
             Accept = true;
             MaxConnections = 4;
-            TriggerLimitIntervalSec = 0;
           };
         };
         service."${units.secrets}@" = {

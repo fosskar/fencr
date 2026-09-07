@@ -49,7 +49,7 @@ in
           # guest gets to unmount its state; a guest that never answers is
           # killed at the stop timeout
           ExecStop = pkgs.writeShellScript "fencr-${instance.name}-stop" ''
-            printf 'CONNECT ${toString powerPort}\n' | ${pkgs.socat}/bin/socat -t 1 - UNIX-CONNECT:${vsockOf instance.name} || true
+            printf 'CONNECT ${toString powerPort}\n' | ${pkgs.socat}/bin/socat -t 1 - UNIX-CONNECT:${vsockOf instance.name}
             while [ -d /proc/$MAINPID ]; do sleep 0.5; done
           '';
           TimeoutStopSec = 60;

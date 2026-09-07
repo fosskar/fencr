@@ -80,8 +80,8 @@ in
   # systemd credentials, so they touch neither the store nor a disk
   secretsPort = 5;
 
-  # "<ipv4[/prefix]>:<port>" sugar for destination entries. hostnames need
-  # runtime resolution and stay unsupported until name-based egress exists.
+  # "<ipv4[/prefix]>:<port>" sugar for destination entries; a name goes in
+  # allowedDomains
   parseDestination =
     value:
     if builtins.isAttrs value then
@@ -91,7 +91,7 @@ in
         matched = builtins.match "([0-9./]+):([0-9]+)" value;
       in
       if matched == null then
-        throw "fencr: destination \"${value}\" is not <ipv4[/prefix]>:<port>; hostnames are not supported yet"
+        throw "fencr: destination \"${value}\" is not <ipv4[/prefix]>:<port>; a name goes in allowedDomains"
       else
         {
           address = builtins.elemAt matched 0;
