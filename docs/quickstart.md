@@ -22,7 +22,7 @@ What this gives you, with no further options:
 - the vm has no network egress, including dns
 - nothing reaches the vm except `ssh myagent` (your key) and port 9119 at
   the vm's address (its web ui); the address is `fencr.vms.myagent.ip`
-- `/var/lib` inside the vm survives reboots and rebuilds
+- the vm's disk survives reboots and rebuilds; only `/nix/store` is replaced
 - 4 vcpus, 4 GiB with a hard cap the agent cannot exceed
 
 Each further line is one permission or one limit:

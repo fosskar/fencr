@@ -129,7 +129,7 @@ in
               type = lib.types.int;
               default = core.defaults.stateSize;
               description = ''
-                size in MiB of the vm's /var/lib, a sparse disk image at
+                size in MiB of the vm's root filesystem, a sparse disk image at
                 /var/lib/fencr-vms/<name>/state.img. a larger value grows the
                 image and its filesystem on the next start; it never shrinks.
               '';

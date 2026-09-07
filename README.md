@@ -58,8 +58,8 @@ By default, each VM has:
   are configured;
 - 4 vCPUs, 4096 MiB of guest memory, a systemd `MemoryMax` 512 MiB above
   it and `400%` `CPUQuota`;
-- a 32768 MiB sparse disk image mounted at `/var/lib`, stored on the host at
-  `/var/lib/fencr-vms/<name>/state.img`;
+- a 32768 MiB sparse disk image as its root filesystem, stored on the host
+  at `/var/lib/fencr-vms/<name>/state.img`;
 - a read-only image containing its Nix store closure, without a host store
   share.
 

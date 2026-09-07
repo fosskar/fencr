@@ -97,7 +97,7 @@ in
         && config.users.users."fencr-sbx".group == "kvm"
         && config.systemd.services."fencr-sbx".serviceConfig.CapabilityBoundingSet == ""
         && config.systemd.services."fencr-sbx".serviceConfig.RestrictSUIDSGID
-        && guestConfig.fileSystems."/var/lib".device == "/dev/disk/by-label/fencr-state";
+        && guestConfig.fileSystems."/".device == "/dev/disk/by-label/fencr-state";
       message = "nixos module check: hypervisor unit drifted";
     }
     {

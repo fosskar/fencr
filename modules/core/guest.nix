@@ -87,19 +87,20 @@ in
             inherit (agentSandbox) mac;
           }
         ];
-        # the state tree is a disk image the runner creates on first start;
-        # no share, so no file server faces the guest and without a host
-        # store share the guest's closure becomes an erofs image
+        # the root filesystem is a disk image the runner creates on first
+        # start, so the whole guest persists like an ordinary machine; no
+        # share, so no file server faces the guest and without a host store
+        # share the guest's closure becomes an erofs image
         volumes = [
           {
             image = stateImageOf agentSandbox.name;
             label = "fencr-state";
-            mountPoint = "/var/lib";
+            mountPoint = "/";
             size = agentSandbox.stateSize;
           }
         ];
       };
-      fileSystems."/var/lib".autoResize = true;
+      fileSystems."/".autoResize = true;
       system.switch.enable = false;
       # perl-free activation, as the perlless profile sets it; the profile's
       # ban on perl in the closure is not taken, payloads may need it
@@ -193,9 +194,6 @@ in
       };
       # no sshd on vsock from systemd-ssh-generator: the door is the bridge
       boot.kernelParams = [ "systemd.ssh_auto=0" ];
-      # /etc is rebuilt on every boot, so keep the host key on the state
-      # volume; otherwise the host's known_hosts breaks each time
-      systemd.tmpfiles.rules = [ "d /var/lib/ssh 0700 root root - -" ];
       # socket-activated on the guest's address; the socket binds before
       # networkd assigns it
       systemd.sockets.sshd.socketConfig.FreeBind = lib.mkIf (agentSandbox.sshKeys != [ ]) true;
@@ -212,7 +210,7 @@ in
         settings.PasswordAuthentication = false;
         hostKeys = [
           {
-            path = "/var/lib/ssh/ssh_host_ed25519_key";
+            path = "/etc/ssh/ssh_host_ed25519_key";
             type = "ed25519";
           }
         ];
@@ -223,7 +221,7 @@ in
       environment.systemPackages = [ ];
       nix.enable = lib.mkDefault false;
       programs.nano.enable = false;
-      # /var/lib persists, so stateful defaults are pinned to the release the
+      # the disk persists, so stateful defaults are pinned to the release the
       # state image first shipped under rather than following the nixpkgs pin
       system.stateVersion = lib.mkDefault "26.11";
     };

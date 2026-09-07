@@ -225,15 +225,16 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # the test host exposes svm and vmx; the guest must not see either
       host.fail(f"{ssh} 'grep -qwE \"svm|vmx\" /proc/cpuinfo'", timeout=60)
       host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
-      # the state tree is one image owned by the vm's user, and it outlives
-      # the vm: what the guest writes is there again after a restart
+      # the root filesystem is one image owned by the vm's user, and it
+      # outlives the vm: what the guest writes, root's home included, is
+      # there again after a restart
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
-      host.succeed(f"{ssh} 'findmnt -n -o SOURCE /var/lib' | grep -Fx /dev/vdb", timeout=60)
-      host.succeed(f"{ssh} 'echo survives > /var/lib/fencr-probe'", timeout=60)
+      host.succeed(f"{ssh} 'findmnt -n -o SOURCE /' | grep -Fx /dev/vdb", timeout=60)
+      host.succeed(f"{ssh} 'echo survives > ~/fencr-probe'", timeout=60)
       host.succeed("systemctl restart fencr-sbx.service")
       # a clean stop, not a kill after the stop timeout
       host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
-      host.wait_until_succeeds(f"{ssh} 'cat /var/lib/fencr-probe' | grep -Fx survives", timeout=300)
+      host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
 
       # the firewall, probed with real packets from inside the vm. every probe
       # carries a timeout: a hang here means the firewall swallowed the reply
