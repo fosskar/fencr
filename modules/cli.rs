@@ -24,7 +24,8 @@ fn dropped(kind: &str) -> bool {
 
 /// where a grant's use shows: the counter of the rule tagged with the kind,
 /// or the proxy log's lines for hosts a pattern covers or a credential's
-/// domain
+/// domain. a host's table may use no grant of some source
+#[allow(dead_code)]
 enum Source {
     Counter(&'static str),
     Domain(&'static str),
