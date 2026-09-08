@@ -63,7 +63,7 @@ in
         })
         (
           lib.concatMap (instance: instance.errors) (lib.attrValues resolvedInstances)
-          ++ core.fleetErrors resolvedInstances
+          ++ core.hostErrors resolvedInstances
         )
       ++ [
         {

@@ -234,7 +234,7 @@ assert lib.assertMsg (
   samePort.errors == [ "sbx: inbound port 22100 declared twice" ]
 ) "core check: repeated inbound port accepted";
 assert lib.assertMsg (
-  core.fleetErrors {
+  core.hostErrors {
     first = resolved;
     second = resolved;
   } == [ "instance id 0 is shared by first, second; set id on one of them" ]

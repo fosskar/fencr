@@ -21,7 +21,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `specialArgs.agentSandbox`.
 - `modules/core/` holds the pure builders, one file per concern, joined by
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
-  (`defaults`, derived names, `resolveInstance`, `fleetErrors`),
+  (`defaults`, derived names, `resolveInstance`, `hostErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
   (`vmService`), `egress.nix` (the egress proxy binary and its service
   settings; it listens on two bridge ports, `proxyDnsPort` and

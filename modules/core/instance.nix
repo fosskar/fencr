@@ -274,7 +274,7 @@ in
       credentials = granted;
     };
 
-  fleetErrors =
+  hostErrors =
     instances:
     map (
       id:
