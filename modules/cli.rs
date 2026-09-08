@@ -293,8 +293,22 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
             continue;
         };
         let dst = field(line, "DST=").unwrap_or("?");
+        // multicast is link chatter (igmp reports, mdns); no grant applies
+        if dst
+            .split('.')
+            .next()
+            .and_then(|octet| octet.parse::<u8>().ok())
+            .is_some_and(|octet| (224..=239).contains(&octet))
+        {
+            continue;
+        }
         let proto = field(line, "PROTO=").unwrap_or("?").to_lowercase();
         let port = field(line, "DPT=");
+        // a reply toward the host's ephemeral range: the connection the host
+        // opened is no longer tracked, so its replies miss ct state
+        let ephemeral = port
+            .and_then(|port| port.parse::<u16>().ok())
+            .is_some_and(|port| port >= 32768);
         let peer = |target: &str| match port {
             Some(port) => format!("{target}:{port}/{proto}"),
             None => format!("{target}/{proto}"),
@@ -308,6 +322,10 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
             ("host-blocked", Some("53")) if dst == vm.host_ip => (
                 format!("guest \u{2192} {}", peer("host")),
                 "outbound \"internet\" or a domain".to_string(),
+            ),
+            ("host-blocked", Some(_)) if ephemeral => (
+                format!("guest \u{2192} {}", peer("host")),
+                "reply to a connection the host no longer tracks".to_string(),
             ),
             ("host-blocked", Some(port)) if proto == "tcp" => (
                 format!("guest \u{2192} {}", peer("host")),
@@ -379,15 +397,34 @@ fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
     }
 }
 
-fn render_vm(
-    vm: &Vm,
-    ruleset: &Result<String, String>,
-    kernel: &Result<String, String>,
-    s: &Style,
-    out: &mut Vec<String>,
-) {
-    let p = props(vm.unit, "LoadState,ActiveState,MemoryCurrent");
+/// the kernel's drop log since the vm unit last started, or the last 400
+/// lines when the unit reports no start
+fn kernel_log(started: Option<&str>) -> Result<String, String> {
+    let mut args = vec!["-k", "-q", "--no-pager", "-g", "fencr:", "-o", "cat"];
+    match started {
+        Some(started) => args.extend(["--since", started]),
+        None => args.extend(["-n", "400"]),
+    }
+    // journalctl exits 1 when -g matches nothing: no denials, not a failure
+    match output(JOURNALCTL, &args) {
+        Err(reason) if reason == "exit status: 1" => Ok(String::new()),
+        kernel => kernel,
+    }
+}
+
+fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec<String>) {
+    let p = props(
+        vm.unit,
+        "LoadState,ActiveState,MemoryCurrent,ActiveEnterTimestamp",
+    );
     let state = unit_health(&p, s);
+    let kernel = kernel_log(
+        p.as_ref()
+            .ok()
+            .and_then(|p| p.get("ActiveEnterTimestamp"))
+            .filter(|value| !value.is_empty())
+            .map(String::as_str),
+    );
     let memory = p
         .as_ref()
         .ok()
@@ -413,7 +450,7 @@ fn render_vm(
     }
     out.push(String::new());
     out.push("Blocked (journal):".to_string());
-    match kernel {
+    match &kernel {
         Ok(kernel) => {
             let proxy = match &proxy {
                 Some(Ok(log)) => Some(log.as_str()),
@@ -442,30 +479,11 @@ fn render_vm(
 fn render(s: &Style, only: Option<&str>) -> Vec<String> {
     let mut out = Vec::new();
     let ruleset = output(NFT, &["list", "ruleset"]);
-    let kernel = output(
-        JOURNALCTL,
-        &[
-            "-k",
-            "-q",
-            "-n",
-            "400",
-            "--no-pager",
-            "-g",
-            "fencr:",
-            "-o",
-            "cat",
-        ],
-    );
-    // journalctl exits 1 when -g matches nothing: no denials, not a failure
-    let kernel = match kernel {
-        Err(reason) if reason == "exit status: 1" => Ok(String::new()),
-        kernel => kernel,
-    };
     for vm in VMS
         .iter()
         .filter(|vm| only.map(|name| name == vm.name).unwrap_or(true))
     {
-        render_vm(vm, &ruleset, &kernel, s, &mut out);
+        render_vm(vm, &ruleset, s, &mut out);
     }
     out
 }

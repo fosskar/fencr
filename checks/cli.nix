@@ -53,7 +53,7 @@ let
       unavailable) exit 1 ;;
       missing) printf 'LoadState=not-found\n'; exit 0 ;;
     esac
-    printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\n' "$TEST_STATE"
+    printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\nActiveEnterTimestamp=Tue 2026-09-08 05:11:18 UTC\n' "$TEST_STATE"
   '';
   # the ruleset the command parses is the one core renders, as nft lists it
   # back: every counter at three packets, and the burst nft adds to a rate
@@ -68,9 +68,11 @@ let
   nft = pkgs.writeShellScriptBin "nft" ''
     cat ${ruleset}
   '';
-  # the kernel log for recent denials, on every drop chain; the proxy's
-  # own log for domains
+  # the kernel log for denials since the vm started, on every drop chain,
+  # with the host's igmp report and a stale reply; the proxy's own log for
+  # domains
   journalctl = pkgs.writeShellScriptBin "journalctl" ''
+    printf '%s\n' "$*" >> "$TEST_LOG"
     case "$1" in
       -k)
         # -g with no match exits 1 and prints nothing
@@ -78,6 +80,8 @@ let
         printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
         printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
         printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.11.0.1 DST=10.11.0.2 PROTO=TCP DPT=9120\n'
+        printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.11.0.1 DST=224.0.0.22 PROTO=2\n'
+        printf 'fencr:sbx:host-blocked: IN=br-sbx OUT= SRC=10.11.0.2 DST=10.11.0.1 PROTO=TCP SPT=33627 DPT=58836\n'
         ;;
       -u)
         printf 'allow github.com\ndeny evil.test\nintercept api.test\n'
@@ -115,6 +119,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   Blocked (journal):
     ✗ guest → 1.2.3.4:443/tcp           x2     outbound "1.2.3.4:443"
     ✗ guest → evil.test:443/tls         x1     outbound "evil.test"
+    ✗ guest → host:58836/tcp            x1     reply to a connection the host no longer tracks
     ✗ host  → guest:9120/tcp            x1     inbound 9120
 
   Services: egress proxy RUNNING, credential RUNNING
@@ -122,7 +127,9 @@ pkgs.runCommand "fencr-cli-check" { } ''
   EOF
   diff -u expected actual
   cat > expected-queries <<'EOF'
-  show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent
+  show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent,ActiveEnterTimestamp
+  -k -q --no-pager -g fencr: -o cat --since Tue 2026-09-08 05:11:18 UTC
+  -u fencr-sbx-egress-proxy.service -q -n 400 --no-pager -o cat
   show fencr-sbx-egress-proxy.service --property=LoadState,ActiveState
   show fencr-sbx-credentials.service --property=LoadState,ActiveState
   EOF
