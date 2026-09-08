@@ -33,6 +33,9 @@ in
       networking.hostName = lib.mkDefault agentSandbox.name;
       microvm = {
         hypervisor = "firecracker";
+        # nixpkgs' glibc build embeds an empty seccomp policy: firecracker
+        # ships syscall allowlists for its musl targets only
+        firecracker.package = pkgs.pkgsStatic.firecracker;
         inherit (agentSandbox) vcpu mem;
         vsock.cid = agentSandbox.cid;
         # the runner's own vsock path lives in the working directory and is
