@@ -1,5 +1,5 @@
 # the options of fencr: what a host declares, what a vm may be given
-{ lib, ... }:
+{ lib, ... }@host:
 let
   core = import ../core { inherit lib; };
 in
@@ -65,12 +65,19 @@ in
     description = "sealed agent microvms, keyed by vm name.";
     type = lib.types.attrsOf (
       lib.types.submodule (
-        { config, ... }:
+        { config, name, ... }:
         {
           options = {
             id = lib.mkOption {
-              type = lib.types.ints.between 0 8;
-              description = "unique instance index; derives bridge, subnet, tap, mac and vsock cid.";
+              type = lib.types.ints.between 0 (core.idRange - 1);
+              default = core.idOf (lib.attrNames host.config.fencr.vms) name;
+              defaultText = "position of the name among fencr.vms";
+              description = ''
+                unique instance index; derives subnet, mac and vsock cid.
+                by default the vm's position in name order, so adding a vm
+                whose name sorts earlier moves the ones after it; set it to
+                keep a vm's address fixed.
+              '';
             };
 
             ip = lib.mkOption {

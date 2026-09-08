@@ -36,7 +36,6 @@ as the flake input:
   networking.useNetworkd = true;
 
   fencr.vms.myagent = {
-    id = 0;
     authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
     services = [
       { environment.systemPackages = [ pkgs.ripgrep ]; }
@@ -46,7 +45,10 @@ as the flake input:
 ```
 
 Replace the example public key with your own and add your agent's NixOS
-module to `services`. Each VM needs a unique `id` between `0` and `8`.
+module to `services`. Each VM gets an `id` from its position in name
+order, which derives its subnet `10.11.<id>.0/26`, mac and vsock cid;
+adding a VM whose name sorts earlier moves the ones after it, so set `id`
+to pin one.
 
 The host requires `/dev/kvm` and systemd-networkd. The module enables
 nftables and disables kernel same-page merging (KSM).
@@ -172,7 +174,7 @@ address (`fencr list` prints it):
 
 ```sshconfig
 Host myagent
-  HostName 10.30.1.2
+  HostName 10.11.0.2
   User root
   ProxyJump server
 ```

@@ -75,9 +75,9 @@ let
       -k)
         # -g with no match exits 1 and prints nothing
         [ "''${TEST_QUIET-}" = 1 ] && exit 1
-        printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
-        printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.30.1.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
-        printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.30.1.1 DST=10.30.1.2 PROTO=TCP DPT=9120\n'
+        printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
+        printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.11.0.1 DST=10.11.0.2 PROTO=TCP DPT=9120\n'
         ;;
       -u)
         printf 'allow github.com\ndeny evil.test\nintercept api.test\n'
@@ -105,7 +105,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   export TEST_STATE=active
   ${cli}/bin/fencr status sbx > actual
   cat > expected <<'EOF'
-  sbx  RUNNING  10.30.1.2  memory 1M
+  sbx  RUNNING  10.11.0.2  memory 1M
   Inbound (from host):
     TCP 22 (SSH; authorized keys)
     TCP 33627
@@ -115,7 +115,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
 
   Traffic:
     allowed  9 packets
-    blocked  9 packets  (recent: 1.2.3.4:443/tcp x2, 10.30.1.2:9120/tcp x1)
+    blocked  9 packets  (recent: 1.2.3.4:443/tcp x2, 10.11.0.2:9120/tcp x1)
 
   Domains: ✓ api.test (1, credential)  ✗ evil.test (1)  ✓ github.com (1)
   Services: egress proxy RUNNING, credential RUNNING
@@ -141,7 +141,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   grep -Fx '  api.test TLS 443 (credential api; key stays on host)' actual
   if grep -F 'github.com TLS 443' actual; then exit 1; fi
   ${cli}/bin/fencr list > actual
-  grep -E '^sealed +1 +4 +10.30.2.2 +denied / denied$' actual
+  grep -E '^sealed +1 +4 +10.11.1.2 +denied / denied$' actual
   grep -F 'TCP 22 (SSH; authorized keys), TCP 33627 / github.com TLS 443, api.test TLS 443 (credential api; key stays on host)' actual
   for state in failed inactive missing unavailable; do
     export TEST_STATE="$state"
@@ -152,7 +152,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
       unavailable) health="unavailable: exit status: 1" ;;
     esac
     ${cli}/bin/fencr status sbx > actual
-    grep -F "sbx  $health  10.30.1.2" actual
+    grep -F "sbx  $health  10.11.0.2" actual
     grep -Fx "Services: egress proxy $health, credential $health" actual
   done
   touch "$out"

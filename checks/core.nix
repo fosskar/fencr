@@ -197,7 +197,7 @@ assert lib.assertMsg (
   )).success
 ) "core check: inbound accepted a string port";
 assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
-assert lib.assertMsg (resolved.ip == "10.30.1.2") "core check: wrong guest address";
+assert lib.assertMsg (resolved.ip == "10.11.0.2") "core check: wrong guest address";
 assert lib.assertMsg (resolved.expose == [ 33627 ]) "core check: inbound was not resolved";
 assert lib.assertMsg (
   resolved.memoryMax == "4608M"
@@ -214,10 +214,10 @@ assert lib.assertMsg (
 ) "core check: the unit's cap does not follow the guest's memory";
 assert lib.assertMsg (
   resolved.proxy
-  && resolved.guest.dns == "10.30.1.1"
+  && resolved.guest.dns == "10.11.0.1"
   && !longName.proxy
   && longName.hostDns
-  && longName.guest.dns == "10.30.2.1"
+  && longName.guest.dns == "10.11.1.1"
   && !(resolve "sbx" { id = 0; }).hostDns
   && (resolve "sbx" { id = 0; }).guest.dns == null
 ) "core check: the host is not the guest's resolver";
@@ -226,7 +226,7 @@ assert lib.assertMsg (
   == [ "vm name \"coding-agent-1\" is too long: \"tap-coding-agent-1\" exceeds IFNAMSIZ" ]
 ) "core check: long interface name accepted";
 assert lib.assertMsg (
-  lib.hasInfix ''ip daddr 10.30.2.1 udp dport 53 counter accept comment "fencr:coding-agent-1:dns"''
+  lib.hasInfix ''ip daddr 10.11.1.1 udp dport 53 counter accept comment "fencr:coding-agent-1:dns"''
     (core.firewallOf longName)."fencr-coding-agent-1".content
   && !lib.hasInfix "dport 53 " filterTable
 ) "core check: open egress does not admit the host's resolver on the bridge";
@@ -234,13 +234,30 @@ assert lib.assertMsg (
   samePort.errors == [ "sbx: inbound port 22100 declared twice" ]
 ) "core check: repeated inbound port accepted";
 assert lib.assertMsg (
-  lib.length (
-    core.fleetErrors {
-      first = resolved;
-      second = resolved;
-    }
-  ) == 1
+  core.fleetErrors {
+    first = resolved;
+    second = resolved;
+  } == [ "instance id 0 is shared by first, second; set id on one of them" ]
 ) "core check: duplicate instance id accepted";
+assert lib.assertMsg (
+  let
+    names = [
+      "zed"
+      "alpha"
+      "mid"
+    ];
+    last = resolve "zed" { id = core.idOf names "zed"; };
+    top = resolve "top" { id = 255; };
+  in
+  core.idOf names "alpha" == 0
+  && core.idOf names "mid" == 1
+  && last.id == 2
+  && last.ip == "10.11.2.2"
+  && last.mac == "02:00:00:00:20:02"
+  && top.mac == "02:00:00:00:20:ff"
+  && top.cid == 258
+  && (resolve "sbx" { id = 256; }).errors == [ "sbx: id must be between 0 and 255" ]
+) "core check: id from name order";
 assert lib.assertMsg (
   builtins.attrNames resolved.guest == [
     "bridge"
@@ -269,25 +286,25 @@ assert lib.assertMsg (lib.all (
 assert lib.assertMsg (
   !(units.services."fencr-sbx-egress-proxy".serviceConfig ? AmbientCapabilities)
   &&
-    lib.hasPrefix "${core.egressProxyBin pkgs}/bin/fencr-egress-proxy 10.30.1.1:33053 10.30.1.1:33443 "
+    lib.hasPrefix "${core.egressProxyBin pkgs}/bin/fencr-egress-proxy 10.11.0.1:33053 10.11.0.1:33443 "
       units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart
   &&
     units.services."fencr-sbx-egress-proxy".serviceConfig.IPAddressAllow == [
       "127.0.0.53/32"
-      "10.30.1.0/24"
+      "10.11.0.0/26"
     ]
   && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-credentials".serviceConfig.IPAddressAllow
   && occurrences ''iifname "br-sbx" tcp dport { 443 } counter accept comment "fencr:sbx:host"'' == 1
   &&
     occurrences ''iifname "br-sbx" ip daddr 192.168.1.50 tcp dport 8123 counter accept comment "fencr:sbx:pin-192.168.1.50-8123"''
     == 1
-  && occurrences "ip daddr 10.30.1.1 udp dport 53 redirect to :33053" == 1
-  && occurrences "ip daddr 10.30.1.1 tcp dport 443 redirect to :33443" == 1
+  && occurrences "ip daddr 10.11.0.1 udp dport 53 redirect to :33053" == 1
+  && occurrences "ip daddr 10.11.0.1 tcp dport 443 redirect to :33443" == 1
   &&
-    occurrences ''ip daddr 10.30.1.1 udp dport 33053 counter accept comment "fencr:sbx:egress-dns"''
+    occurrences ''ip daddr 10.11.0.1 udp dport 33053 counter accept comment "fencr:sbx:egress-dns"''
     == 1
   &&
-    occurrences ''ip daddr 10.30.1.1 tcp dport 33443 counter accept comment "fencr:sbx:egress-tls"''
+    occurrences ''ip daddr 10.11.0.1 tcp dport 33443 counter accept comment "fencr:sbx:egress-tls"''
     == 1
 ) "unit check: egress proxy is not the vm's road out";
 assert lib.assertMsg (
@@ -354,7 +371,7 @@ assert lib.assertMsg (
       "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
     ]
   &&
-    lib.hasInfix ''ip daddr 10.30.3.1 tcp dport 33443 counter accept comment "fencr:keyed:egress-tls"''
+    lib.hasInfix ''ip daddr 10.11.2.1 tcp dport 33443 counter accept comment "fencr:keyed:egress-tls"''
       (core.firewallOf keyed)."fencr-keyed".content
   && !lib.hasInfix "egress-dns" (core.firewallOf keyed)."fencr-keyed".content
   && lib.hasInfix "tcp dport 443 redirect to :33443" (core.firewallOf keyed)."fencr-keyed-nat".content
@@ -376,7 +393,7 @@ assert lib.assertMsg (
   && units.services."fencr-sbx-secrets@".serviceConfig.DynamicUser
 ) "unit check: secrets relay drifted";
 assert lib.assertMsg (
-  occurrences ''oifname "br-sbx" ip daddr 10.30.1.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
+  occurrences ''oifname "br-sbx" ip daddr 10.11.0.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
   == 1
   && occurrences ''oifname "br-sbx" counter drop comment "fencr:sbx:guest-blocked"'' == 1
 ) "core check: the host is not held to the guest's sshd and exposed ports";

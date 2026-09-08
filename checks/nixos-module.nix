@@ -12,7 +12,7 @@ in
   assertions = [
     {
       assertion =
-        guestConfig.systemd.sockets.sshd.socketConfig.ListenStream == [ "10.30.1.2:22" ]
+        guestConfig.systemd.sockets.sshd.socketConfig.ListenStream == [ "10.11.0.2:22" ]
         && guestConfig.systemd.sockets.sshd.socketConfig.FreeBind
         &&
           guestConfig.networking.firewall.allowedTCPPorts == [
@@ -20,14 +20,14 @@ in
             22100
             33627
           ]
-        && config.fencr.vms.sbx.ip == "10.30.1.2"
-        && lib.hasInfix "HostName 10.30.1.2" config.programs.ssh.extraConfig;
+        && config.fencr.vms.sbx.ip == "10.11.0.2"
+        && lib.hasInfix "HostName 10.11.0.2" config.programs.ssh.extraConfig;
       message = "nixos module check: the guest is not reached at its bridge address";
     }
     {
       assertion =
         config.fencr.guestSystems.sealed.config.systemd.sockets.sshd.socketConfig.ListenStream
-        == [ "10.30.2.2:22" ];
+        == [ "10.11.1.2:22" ];
       message = "nixos module check: the admin keys did not open the second vm's ssh door";
     }
     {
@@ -42,7 +42,7 @@ in
       assertion =
         config.systemd.services ? fencr-ca
         && config.systemd.services ? fencr-sbx-credentials
-        && guestConfig.networking.hosts."10.30.1.1" == [ "api.anthropic.com" ]
+        && guestConfig.networking.hosts."10.11.0.1" == [ "api.anthropic.com" ]
         && guestConfig.environment.etc."ssl/certs/ca-certificates.crt".source == "/run/fencr/ca-bundle.crt"
         && guestConfig.systemd.globalEnvironment.NIX_SSL_CERT_FILE == "/run/fencr/ca-bundle.crt";
       message = "nixos module check: credential grant did not reach the guest";
@@ -50,7 +50,7 @@ in
     {
       assertion =
         config.fencr.guestSystems.sealed.config.systemd.network.networks."10-lan".networkConfig.DNS
-        == "10.30.2.1"
+        == "10.11.1.1"
         && config.systemd.services ? "fencr-sealed-egress-proxy"
         && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 33053 ]
         && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ]
@@ -64,8 +64,8 @@ in
     }
     {
       assertion =
-        guestConfig.systemd.network.networks."10-lan".networkConfig.DNS == "10.30.1.1"
-        && config.services.resolved.settings.Resolve.DNSStubListenerExtra == [ "10.30.1.1" ]
+        guestConfig.systemd.network.networks."10-lan".networkConfig.DNS == "10.11.0.1"
+        && config.services.resolved.settings.Resolve.DNSStubListenerExtra == [ "10.11.0.1" ]
         && config.networking.firewall.interfaces."br-sbx".allowedUDPPorts == [ 53 ];
       message = "nixos module check: open egress did not put the host's resolver on the bridge";
     }
@@ -122,7 +122,6 @@ in
     authorizedKeys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
     ];
-    id = 0;
     outbound = [
       "internet"
       "host:443"
@@ -143,7 +142,6 @@ in
   };
 
   fencr.vms.sealed = {
-    id = 1;
     outbound = [
       "github.com"
       "*.github.com"

@@ -9,6 +9,7 @@ let
     cidOf
     hostIpOf
     ipOf
+    idRange
     prefixLength
     subnetOf
     stateDirOf
@@ -45,12 +46,17 @@ in
 
   tapOf = name: "tap-${name}";
   bridgeOf = name: "br-${name}";
-  macOf = cfg: "02:00:00:00:20:0${toString (cfg.id + 1)}";
+  # a vm's default id is its position among the host's vm names, so a new
+  # name that sorts earlier moves the ones after it; `id` pins one in place
+  idRange = 256;
+  idOf =
+    names: name: lib.lists.findFirstIndex (other: other == name) null (lib.sort lib.lessThan names);
+  macOf = cfg: "02:00:00:00:20:${lib.toLower (lib.fixedWidthString 2 "0" (lib.toHexString cfg.id))}";
   cidOf = cfg: 3 + cfg.id;
-  hostIpOf = cfg: "10.30.${toString (cfg.id + 1)}.1";
-  ipOf = cfg: "10.30.${toString (cfg.id + 1)}.2";
-  prefixLength = 24;
-  subnetOf = cfg: "10.30.${toString (cfg.id + 1)}.0/${toString prefixLength}";
+  hostIpOf = cfg: "10.11.${toString cfg.id}.1";
+  ipOf = cfg: "10.11.${toString cfg.id}.2";
+  prefixLength = 26;
+  subnetOf = cfg: "10.11.${toString cfg.id}.0/${toString prefixLength}";
 
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
@@ -213,7 +219,9 @@ in
         secretNames = lib.attrNames options.secrets;
       };
       errors =
-        lib.optional (options.id < 0 || options.id > 8) "${name}: id must be between 0 and 8"
+        lib.optional (
+          options.id < 0 || options.id >= idRange
+        ) "${name}: id must be between 0 and ${toString (idRange - 1)}"
         ++ map (
           secretName:
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
@@ -268,7 +276,12 @@ in
 
   fleetErrors =
     instances:
-    lib.optional (
-      duplicates (map (instance: instance.id) (lib.attrValues instances)) != [ ]
-    ) "instance ids must be unique";
+    map (
+      id:
+      "instance id ${toString id} is shared by ${
+        lib.concatStringsSep ", " (
+          lib.attrNames (lib.filterAttrs (_: instance: instance.id == id) instances)
+        )
+      }; set id on one of them"
+    ) (duplicates (map (instance: instance.id) (lib.attrValues instances)));
 }

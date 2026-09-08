@@ -198,7 +198,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
     };
 
     testScript = ''
-      ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@10.30.1.2"
+      ssh = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@10.11.0.2"
 
       target.wait_for_unit("target-8123.service")
       target.wait_for_unit("target-80.service")
@@ -206,10 +206,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # the guest at its address: the exposed port answers, the other one
       # and everything else the host tries is dropped by the firewall's output
       # chain before it leaves the host
-      host.wait_until_succeeds("curl --fail --silent http://10.30.1.2:9119 | grep -Fx 'fencr ingress'", timeout=120)
-      host.fail("curl --silent --max-time 3 http://10.30.1.2:9120")
+      host.wait_until_succeeds("curl --fail --silent http://10.11.0.2:9119 | grep -Fx 'fencr ingress'", timeout=120)
+      host.fail("curl --silent --max-time 3 http://10.11.0.2:9120")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:guest-blocked\"' | grep -qv 'packets 0 '")
-      host.succeed("nc -z -w 2 10.30.1.2 22")
+      host.succeed("nc -z -w 2 10.11.0.2 22")
 
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
@@ -244,7 +244,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.2:80'", timeout=60)
       host.wait_for_unit("host-80.service")
       host.succeed("curl --fail --silent http://127.0.0.1:80 | grep -Fx 'fencr target'", timeout=60)
-      host.fail(f"{ssh} 'curl --silent --max-time 5 http://10.30.1.1:80'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --max-time 5 http://10.11.0.1:80'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.1:80'", timeout=60)
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:blocked\"' | grep -qv 'packets 0 '")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:host-blocked\"' | grep -qv 'packets 0 '")
@@ -254,7 +254,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # raw address on 443 hits the closed forward chain
       target.wait_for_unit("target-443.service")
       host.wait_for_unit("fencr-sbx-egress-proxy.service")
-      host.succeed(f"{ssh} 'getent hosts denied.test' | grep -q '^10.30.1.1 '", timeout=60)
+      host.succeed(f"{ssh} 'getent hosts denied.test' | grep -q '^10.11.0.1 '", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://allowed.test/' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://denied.test/'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
@@ -284,7 +284,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       # open egress: the guest resolves through the host, whose resolved
       # answers on the bridge
-      ssh_open = ssh.replace("10.30.1.2", "10.30.2.2")
+      ssh_open = ssh.replace("10.11.0.2", "10.11.1.2")
       host.wait_for_unit("fencr-open.service", timeout=600)
       host.wait_until_succeeds(f"{ssh_open} 'getent hosts allowed.test' | grep -q '^192.168.1.2 '", timeout=300)
     '';

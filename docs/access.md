@@ -25,7 +25,7 @@ address:
 
 ```
 Host myvm
-  HostName 10.30.1.2
+  HostName 10.11.0.2
   User root
   ProxyJump server
 ```

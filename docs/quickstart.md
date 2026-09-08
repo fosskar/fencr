@@ -10,7 +10,6 @@ inputs.fencr.url = "github:fosskar/fencr";
 imports = [ fencr.nixosModules.fencr ];
 
 fencr.vms.myagent = {
-  id = 0;
   services = [ my-agent-module ];                   # any nixos modules
   authorizedKeys = [ "ssh-ed25519 AAAA... you" ];   # ssh way in
   inbound = [ 9119 ];                               # web ui from the host
