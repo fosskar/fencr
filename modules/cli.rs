@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::env;
-use std::fmt::Write as _;
 use std::io::{IsTerminal, Write as _};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, exit};
@@ -23,13 +22,28 @@ fn dropped(kind: &str) -> bool {
     kind.ends_with("blocked")
 }
 
+/// where a grant's use shows: the counter of the rule tagged with the kind,
+/// or the proxy log's lines for hosts a pattern covers or a credential's
+/// domain
+enum Source {
+    Counter(&'static str),
+    Domain(&'static str),
+    Credential(&'static str),
+}
+
+struct Grant {
+    text: &'static str,
+    source: Source,
+}
+
 struct Vm {
     name: &'static str,
     id: u32,
     cid: u32,
     ip: &'static str,
-    inbound: &'static [&'static str],
-    outbound: &'static [&'static str],
+    host_ip: &'static str,
+    inbound: &'static [Grant],
+    outbound: &'static [Grant],
     unit: &'static str,
 }
 
@@ -108,11 +122,15 @@ fn unavailable(reason: &str, s: &Style) -> String {
     format!("{}unavailable: {reason}{}", s.dim, s.reset)
 }
 
-fn grant_summary(grants: &[&str]) -> String {
+fn grant_summary(grants: &[Grant]) -> String {
     if grants.is_empty() {
         "denied".to_string()
     } else {
-        grants.join(", ")
+        grants
+            .iter()
+            .map(|grant| grant.text)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -159,104 +177,167 @@ fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
         .and_then(|rest| rest.split_whitespace().next())
 }
 
-fn traffic(ruleset: &str, name: &str) -> (u64, u64) {
-    let mut allowed = 0;
-    let mut blocked = 0;
-    for line in ruleset.lines() {
-        let Some(kind) = kind(line, name) else {
-            continue;
-        };
-        let packets = field(line, "packets ")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0);
-        if dropped(kind) {
-            blocked += packets;
-        } else {
-            allowed += packets;
-        }
-    }
-    (allowed, blocked)
+/// the packet count of the vm's rule tagged with the kind
+fn packets(ruleset: &str, name: &str, tag: &str) -> u64 {
+    ruleset
+        .lines()
+        .filter(|line| kind(line, name) == Some(tag))
+        .filter_map(|line| field(line, "packets "))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .sum()
 }
 
-/// the kernel's log lines for the vm's drop rules on every chain
-fn recent_denied(kernel: &str, name: &str) -> Option<String> {
-    let mut hits: BTreeMap<String, u64> = BTreeMap::new();
+/// "*.example.com" covers the names below example.com, not example.com
+fn covers(pattern: &str, host: &str) -> bool {
+    match pattern.strip_prefix("*.") {
+        Some(suffix) => host
+            .strip_suffix(suffix)
+            .is_some_and(|rest| rest.ends_with('.') && rest.len() > 1),
+        None => pattern == host,
+    }
+}
+
+/// the egress proxy logs one line per connection: "allow <host>",
+/// "intercept <host>" for a credential's domain, "deny <host>", or
+/// "deny: <reason>" when there was no server name
+fn proxy_log(name: &str) -> Option<Result<String, String>> {
+    let (_, unit) = PROXIED.iter().find(|p| p.0 == name)?;
+    Some(output(
+        JOURNALCTL,
+        &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"],
+    ))
+}
+
+fn connections(log: &str, verb: &str, matches: impl Fn(&str) -> bool) -> u64 {
+    log.lines()
+        .filter_map(|line| line.strip_prefix(verb))
+        .filter(|host| matches(host))
+        .count() as u64
+}
+
+fn plural(count: u64, unit: &str) -> String {
+    if count == 1 {
+        format!("{count} {unit}")
+    } else {
+        format!("{count} {unit}s")
+    }
+}
+
+fn grant_line(grant: &Grant, use_count: Result<u64, String>, unit: &str, s: &Style) -> String {
+    match use_count {
+        Ok(0) => format!("  {}\u{b7} {:<40}  unused{}", s.dim, grant.text, s.reset),
+        Ok(count) => format!(
+            "  {}\u{2713}{} {:<40}  {}",
+            s.green,
+            s.reset,
+            grant.text,
+            plural(count, unit)
+        ),
+        Err(reason) => format!("  \u{b7} {:<40}  {}", grant.text, unavailable(&reason, s)),
+    }
+}
+
+fn grant_lines(
+    vm: &Vm,
+    grants: &[Grant],
+    ruleset: &Result<String, String>,
+    proxy: &Option<Result<String, String>>,
+    s: &Style,
+    out: &mut Vec<String>,
+) {
+    for grant in grants {
+        let line = match &grant.source {
+            Source::Counter(tag) => grant_line(
+                grant,
+                ruleset
+                    .as_ref()
+                    .map(|ruleset| packets(ruleset, vm.name, tag))
+                    .map_err(Clone::clone),
+                "packet",
+                s,
+            ),
+            Source::Domain(pattern) => grant_line(
+                grant,
+                proxy
+                    .as_ref()
+                    .expect("a domain grant runs the egress proxy")
+                    .as_ref()
+                    .map(|log| connections(log, "allow ", |host| covers(pattern, host)))
+                    .map_err(Clone::clone),
+                "connection",
+                s,
+            ),
+            Source::Credential(domain) => grant_line(
+                grant,
+                proxy
+                    .as_ref()
+                    .expect("a credential runs the egress proxy")
+                    .as_ref()
+                    .map(|log| connections(log, "intercept ", |host| host == *domain))
+                    .map_err(Clone::clone),
+                "connection",
+                s,
+            ),
+        };
+        out.push(line);
+    }
+}
+
+/// what the firewall and the proxy refused, by peer, with the grant that
+/// would admit it
+fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
+    let mut hits: BTreeMap<(String, String), u64> = BTreeMap::new();
     for line in kernel.lines() {
-        if !kind(line, name).is_some_and(dropped) {
+        let Some(kind) = kind(line, vm.name).filter(|kind| dropped(kind)) else {
             continue;
-        }
+        };
         let dst = field(line, "DST=").unwrap_or("?");
         let proto = field(line, "PROTO=").unwrap_or("?").to_lowercase();
-        let key = match field(line, "DPT=") {
-            Some(port) => format!("{dst}:{port}/{proto}"),
-            None => format!("{dst}/{proto}"),
+        let port = field(line, "DPT=");
+        let peer = |target: &str| match port {
+            Some(port) => format!("{target}:{port}/{proto}"),
+            None => format!("{target}/{proto}"),
         };
+        let (flow, hint) = match (kind, port) {
+            ("guest-blocked", Some(port)) => (
+                format!("host  \u{2192} {}", peer("guest")),
+                format!("inbound {port}"),
+            ),
+            ("guest-blocked", None) => (format!("host  \u{2192} {}", peer("guest")), String::new()),
+            ("host-blocked", Some("53")) if dst == vm.host_ip => (
+                format!("guest \u{2192} {}", peer("host")),
+                "outbound \"internet\" or a domain".to_string(),
+            ),
+            ("host-blocked", Some(port)) if proto == "tcp" => (
+                format!("guest \u{2192} {}", peer("host")),
+                format!("outbound \"host:{port}\""),
+            ),
+            ("host-blocked", _) => (format!("guest \u{2192} {}", peer("host")), String::new()),
+            (_, Some(port)) if proto == "tcp" => (
+                format!("guest \u{2192} {}", peer(dst)),
+                format!("outbound \"{dst}:{port}\""),
+            ),
+            _ => (format!("guest \u{2192} {}", peer(dst)), String::new()),
+        };
+        *hits.entry((flow, hint)).or_default() += 1;
+    }
+    for host in proxy
+        .into_iter()
+        .flat_map(str::lines)
+        .filter_map(|line| line.strip_prefix("deny "))
+    {
+        let key = (
+            format!("guest \u{2192} {host}:443/tls"),
+            format!("outbound \"{host}\""),
+        );
         *hits.entry(key).or_default() += 1;
     }
     let mut sorted: Vec<_> = hits.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
-    if sorted.is_empty() {
-        None
-    } else {
-        let mut result = String::new();
-        for (index, (peer, count)) in sorted.iter().take(3).enumerate() {
-            if index > 0 {
-                result.push_str(", ");
-            }
-            let _ = write!(result, "{peer} x{count}");
-        }
-        Some(result)
-    }
-}
-
-fn domains(name: &str, s: &Style) -> String {
-    let Some((_, unit)) = PROXIED.iter().find(|p| p.0 == name) else {
-        return format!("{}none declared{}", s.dim, s.reset);
-    };
-    let log = match output(
-        JOURNALCTL,
-        &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"],
-    ) {
-        Ok(log) => log,
-        Err(reason) => return unavailable(&reason, s),
-    };
-    // the egress proxy logs one line per connection: "allow <host>",
-    // "intercept <host>" for a credential's domain, "deny <host>", or
-    // "deny: <reason>" when there was no server name
-    let mut seen: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
-    for line in log.lines() {
-        if let Some(host) = line.strip_prefix("allow ") {
-            seen.entry(host.to_string()).or_default().0 += 1;
-        } else if let Some(host) = line.strip_prefix("intercept ") {
-            seen.entry(host.to_string()).or_default().1 += 1;
-        } else if let Some(host) = line.strip_prefix("deny ") {
-            seen.entry(host.to_string()).or_default().2 += 1;
-        }
-    }
-    if seen.is_empty() {
-        return format!("{}no requests observed{}", s.dim, s.reset);
-    }
-    let mut result = String::new();
-    for (host, (allowed, intercepted, refused)) in &seen {
-        if *allowed > 0 {
-            let _ = write!(
-                result,
-                "{}\u{2713} {host} ({allowed}){}  ",
-                s.green, s.reset
-            );
-        }
-        if *intercepted > 0 {
-            let _ = write!(
-                result,
-                "{}\u{2713} {host} ({intercepted}, credential){}  ",
-                s.green, s.reset
-            );
-        }
-        if *refused > 0 {
-            let _ = write!(result, "{}\u{2717} {host} ({refused}){}  ", s.red, s.reset);
-        }
-    }
-    result.trim_end().to_string()
+    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    sorted
+        .into_iter()
+        .map(|((flow, hint), count)| (format!("{flow:<32}  x{count:<4}  {hint}"), count))
+        .collect()
 }
 
 fn unit_health(p: &Result<BTreeMap<String, String>, String>, s: &Style) -> String {
@@ -317,6 +398,7 @@ fn render_vm(
         "{}{}{}  {state}  {}{memory}",
         s.bold, vm.name, s.reset, vm.ip
     ));
+    let proxy = proxy_log(vm.name);
     for (heading, grants) in [
         ("Inbound (from host)", vm.inbound),
         ("Outbound (otherwise denied)", vm.outbound),
@@ -325,33 +407,33 @@ fn render_vm(
         if grants.is_empty() {
             out.push("  denied".to_string());
         } else {
-            out.extend(grants.iter().map(|grant| format!("  {grant}")));
+            grant_lines(vm, grants, ruleset, &proxy, s, out);
         }
     }
     out.push(String::new());
-    out.push("Traffic:".to_string());
-    match ruleset {
-        Ok(ruleset) => {
-            let (allowed, blocked) = traffic(ruleset, vm.name);
-            out.push(format!(
-                "  {}allowed{}  {allowed} packets",
-                s.green, s.reset
-            ));
-            let recent = match kernel {
-                Ok(kernel) => recent_denied(kernel, vm.name)
-                    .map(|peers| format!("  (recent: {peers})"))
-                    .unwrap_or_default(),
-                Err(reason) => format!("  (recent: {})", unavailable(reason, s)),
+    out.push("Blocked (journal):".to_string());
+    match kernel {
+        Ok(kernel) => {
+            let proxy = match &proxy {
+                Some(Ok(log)) => Some(log.as_str()),
+                _ => None,
             };
-            out.push(format!(
-                "  {}blocked{}  {blocked} packets{recent}",
-                s.red, s.reset
-            ));
+            let hits = blocked(vm, kernel, proxy);
+            if hits.is_empty() {
+                out.push(format!("  {}none{}", s.dim, s.reset));
+            }
+            for (entry, _) in hits.iter().take(8) {
+                out.push(format!(
+                    "  {}\u{2717}{} {}",
+                    s.red,
+                    s.reset,
+                    entry.trim_end()
+                ));
+            }
         }
         Err(reason) => out.push(format!("  {}", unavailable(reason, s))),
     }
     out.push(String::new());
-    out.push(format!("Domains: {}", domains(vm.name, s)));
     service_lines(vm.name, s, out);
     out.push(String::new());
 }

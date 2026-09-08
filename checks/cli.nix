@@ -107,17 +107,16 @@ pkgs.runCommand "fencr-cli-check" { } ''
   cat > expected <<'EOF'
   sbx  RUNNING  10.11.0.2  memory 1M
   Inbound (from host):
-    TCP 22 (SSH; authorized keys)
-    TCP 33627
+    ✓ TCP 22, 33627 (22: ssh)                   3 packets
   Outbound (otherwise denied):
-    github.com TLS 443
-    api.test TLS 443 (credential api; key stays on host)
+    ✓ github.com TLS 443                        1 connection
+    ✓ api.test TLS 443 (credential api)         1 connection
 
-  Traffic:
-    allowed  9 packets
-    blocked  9 packets  (recent: 1.2.3.4:443/tcp x2, 10.11.0.2:9120/tcp x1)
+  Blocked (journal):
+    ✗ guest → 1.2.3.4:443/tcp           x2     outbound "1.2.3.4:443"
+    ✗ guest → evil.test:443/tls         x1     outbound "evil.test"
+    ✗ host  → guest:9120/tcp            x1     inbound 9120
 
-  Domains: ✓ api.test (1, credential)  ✗ evil.test (1)  ✓ github.com (1)
   Services: egress proxy RUNNING, credential RUNNING
 
   EOF
@@ -128,21 +127,24 @@ pkgs.runCommand "fencr-cli-check" { } ''
   show fencr-sbx-credentials.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
-  TEST_QUIET=1 ${cli}/bin/fencr status sbx | grep -Fx '  blocked  9 packets'
+  TEST_QUIET=1 ${cli}/bin/fencr status sbx > actual
+  grep -Fx '  ✗ guest → evil.test:443/tls         x1     outbound "evil.test"' actual
+  if grep -F '1.2.3.4' actual; then exit 1; fi
   ${cli}/bin/fencr status sbx --full > /dev/null
   grep -Fx "status fencr-sbx.service fencr-sbx-egress-proxy.service fencr-sbx-credentials.service --no-pager" "$TEST_LOG"
   ${cli}/bin/fencr status sealed > actual
   test "$(grep -c '^  denied$' actual)" = 2
   ${cli}/bin/fencr status open > actual
-  grep -Fx '  public IPv4 internet and DNS (special-use ranges excluded)' actual
-  grep -Fx '  host TCP 8080' actual
-  grep -Fx '  192.168.20.0/24 TCP 1234' actual
+  grep -Fx '  · public IPv4 internet and DNS (special-use ranges excluded)  unused' actual
+  grep -Fx '  · host TCP 8080                             unused' actual
+  grep -Fx '  · 192.168.20.0/24 TCP 1234                  unused' actual
+  grep -Fx '  none' actual
   ${cli}/bin/fencr status keyed > actual
-  grep -Fx '  api.test TLS 443 (credential api; key stays on host)' actual
+  grep -Fx '  ✓ api.test TLS 443 (credential api)         1 connection' actual
   if grep -F 'github.com TLS 443' actual; then exit 1; fi
   ${cli}/bin/fencr list > actual
   grep -E '^sealed +1 +4 +10.11.1.2 +denied / denied$' actual
-  grep -F 'TCP 22 (SSH; authorized keys), TCP 33627 / github.com TLS 443, api.test TLS 443 (credential api; key stays on host)' actual
+  grep -F 'TCP 22, 33627 (22: ssh) / github.com TLS 443, api.test TLS 443 (credential api)' actual
   for state in failed inactive missing unavailable; do
     export TEST_STATE="$state"
     case "$state" in

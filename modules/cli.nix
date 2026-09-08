@@ -10,28 +10,39 @@
 }:
 let
   core = import ./core { inherit lib; };
-  rustStringSlice = values: "&[" + lib.concatMapStringsSep ", " builtins.toJSON values + "]";
+  # a grant's text and where its use shows: a counted rule's tag, or the
+  # proxy log's host lines for a domain pattern or a credential's domain
+  grant = text: source: "Grant { text: ${builtins.toJSON text}, source: ${source} },";
+  counted = text: tag: grant text ''Source::Counter("${tag}")'';
+  ports = lib.concatMapStringsSep ", " toString;
   inbound =
     cfg:
-    map (
-      port:
-      "TCP ${toString port}"
-      + lib.optionalString (port == 22 && cfg.sshKeys != [ ]) " (SSH; authorized keys)"
-    ) (lib.unique (core.guestPortsOf cfg));
+    let
+      opened = lib.unique (core.guestPortsOf cfg);
+    in
+    lib.optional (opened != [ ]) (
+      counted (
+        "TCP ${ports opened}" + lib.optionalString (lib.elem 22 opened && cfg.sshKeys != [ ]) " (22: ssh)"
+      ) "guest"
+    );
   outbound =
     cfg:
-    lib.optional (cfg.egress == "open") "public IPv4 internet and DNS (special-use ranges excluded)"
-    ++ map (port: "host TCP ${toString port}") cfg.hostPorts
+    lib.optional (cfg.egress == "open") (
+      counted "public IPv4 internet and DNS (special-use ranges excluded)" "internet"
+    )
+    ++ lib.optional (cfg.hostPorts != [ ]) (counted "host TCP ${ports cfg.hostPorts}" "host")
     ++ map (
-      destination: "${destination.address} TCP ${toString destination.port}"
+      destination:
+      counted "${destination.address} TCP ${toString destination.port}" "pin-${destination.address}-${toString destination.port}"
     ) cfg.allowedTCPDestinations
-    ++ map (domain: "${domain} TLS 443") cfg.allowedDomains
+    ++ map (domain: grant "${domain} TLS 443" ''Source::Domain("${domain}")'') cfg.allowedDomains
     ++ map (
-      credential: "${credential.domain} TLS 443 (credential ${credential.name}; key stays on host)"
+      credential:
+      grant "${credential.domain} TLS 443 (credential ${credential.name})" ''Source::Credential("${credential.domain}")''
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", inbound: ${rustStringSlice (inbound cfg)}, outbound: ${rustStringSlice (outbound cfg)}, unit: "${units.${name}.unitNames.vm}" },'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${units.${name}.unitNames.vm}" },'';
 
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
