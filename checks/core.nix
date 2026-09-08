@@ -291,6 +291,20 @@ assert lib.assertMsg (
     == 1
 ) "unit check: egress proxy is not the vm's road out";
 assert lib.assertMsg (
+  units.services."fencr-sbx-egress-proxy".serviceConfig.SystemCallFilter == [
+    "@system-service"
+    "~@privileged"
+    "~@resources"
+  ]
+  &&
+    units.services."fencr-sbx-credentials".serviceConfig.SystemCallFilter == [
+      "@system-service"
+      "~@privileged"
+      "~@resources"
+    ]
+  && !((core.vmService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
+) "core check: syscall filter drifted";
+assert lib.assertMsg (
   occurrences "priority filter - 1;" == 3
   && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
   && occurrences ''oifname "br-sbx" meta nfproto ipv6 drop'' == 1

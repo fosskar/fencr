@@ -28,11 +28,14 @@ in
       description = "fencr sandbox ${instance.name}";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+      # firecracker installs its own per-thread allowlist, tighter than
+      # @system-service and including mincore, which that group lacks
       serviceConfig =
         removeAttrs hardened [
           "PrivateDevices"
           "ProcSubset"
           "ProtectProc"
+          "SystemCallFilter"
         ]
         // {
           # firecracker leaves its vsock socket behind and refuses to bind

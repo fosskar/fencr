@@ -24,6 +24,11 @@ in
     RestrictNamespaces = true;
     RestrictRealtime = true;
     RestrictSUIDSGID = true;
+    SystemCallFilter = [
+      "@system-service"
+      "~@privileged"
+      "~@resources"
+    ];
     SystemCallArchitectures = "native";
     UMask = "0077";
   };
