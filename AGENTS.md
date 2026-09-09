@@ -15,7 +15,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 
 ## architecture
 
-- `modules/fencr/options.nix` declares the options; `modules/fencr/default.nix`
+- `modules/options.nix` declares the options; `modules/default.nix`
   composes host networking, systemd units, users, and guest evaluations. Guests
   use the host's `pkgs`; payloads receive the resolved contract through
   `specialArgs.agentSandbox`.

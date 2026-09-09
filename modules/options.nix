@@ -1,7 +1,7 @@
 # the options of fencr: what a host declares, what a vm may be given
 { lib, ... }@host:
 let
-  core = import ../../lib { inherit lib; };
+  core = import ../lib { inherit lib; };
 in
 {
   options.fencr.guestSystems = lib.mkOption {

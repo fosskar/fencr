@@ -184,7 +184,7 @@ assert lib.assertMsg (
     builtins.deepSeq
       (lib.evalModules {
         modules = [
-          ../modules/fencr/options.nix
+          ../modules/options.nix
           {
             fencr.vms.sbx = {
               id = 0;
