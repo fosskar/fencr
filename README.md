@@ -208,7 +208,7 @@ forwarding. See [access](docs/access.md) for other connection methods.
 ## Implementation and design
 
 The NixOS module lives in `modules/`, the pure builders it composes
-in `lib/`, and the `fencr` command and the egress proxy in `pkgs/`. Flake
+in `modules/core/`, and the `fencr` command and the egress proxy in `pkgs/`. Flake
 checks cover the NixOS module, the builders, the CLI, the egress proxy and
 NixOS boot integration. Firecracker replaced crosvm, which had replaced
 QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds the

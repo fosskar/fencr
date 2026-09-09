@@ -19,7 +19,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   composes host networking, systemd units, users, and guest evaluations. Guests
   use the host's `pkgs`; payloads receive the resolved contract through
   `specialArgs.agentSandbox`.
-- `lib/` holds the pure builders, one file per concern, joined by
+- `modules/core/` holds the pure builders, one file per concern, joined by
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `hostErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`

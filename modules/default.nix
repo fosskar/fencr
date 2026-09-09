@@ -18,7 +18,7 @@
 let
   instances = config.fencr.vms;
   sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
-  core = import ../lib { inherit lib; };
+  core = import ./core { inherit lib; };
   resolvedInstances = lib.mapAttrs (
     name: options:
     core.resolveInstance {

@@ -4,7 +4,7 @@ _self: pkgs:
 # the firewall text and the host units. Nothing is built.
 let
   inherit (pkgs) lib;
-  core = import ../lib { inherit lib; };
+  core = import ../modules/core { inherit lib; };
   resolve =
     name: options:
     core.resolveInstance {

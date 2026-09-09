@@ -32,7 +32,7 @@ in
   proxyDnsPort = 33053;
   proxyTlsPort = 33443;
 
-  egressProxyBin = pkgs: pkgs.callPackage ../pkgs/egress-proxy { };
+  egressProxyBin = pkgs: pkgs.callPackage ../../pkgs/egress-proxy { };
 
   # listens on the bridge address only, so the guest's subnet is allowed in
   # beside the internet

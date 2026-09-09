@@ -1,7 +1,7 @@
 _self: pkgs:
 let
   inherit (pkgs) lib;
-  core = import ../lib { inherit lib; };
+  core = import ../modules/core { inherit lib; };
   credentials.api = {
     upstream = "http://127.0.0.1:8764";
     domain = "api.test";
