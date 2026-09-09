@@ -32,15 +32,7 @@ in
   proxyDnsPort = 33053;
   proxyTlsPort = 33443;
 
-  egressProxyBin =
-    pkgs:
-    pkgs.writers.writeRustBin "fencr-egress-proxy" {
-      rustcArgs = [
-        "-O"
-        "--edition"
-        "2024"
-      ];
-    } ../pkgs/egress-proxy/egress-proxy.rs;
+  egressProxyBin = pkgs: pkgs.callPackage ../pkgs/egress-proxy { };
 
   # listens on the bridge address only, so the guest's subnet is allowed in
   # beside the internet

@@ -23,8 +23,7 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `hostErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
-  (`vmService`), `egress.nix` (the egress proxy binary and its service
-  settings; it listens on two bridge ports, `proxyDnsPort` and
+  (`vmService`), `egress.nix` (the egress proxy's service settings; it listens on two bridge ports, `proxyDnsPort` and
   `proxyTlsPort`, which `redirectRules` reaches from the guest's 53 and 443),
   `firewall.nix` (the vm's nftables tables: `forwardRules`, `inputRules`,
   `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
@@ -42,7 +41,8 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   answers DNS
   queries, hands credential domains to their proxies by TLS SNI and applies the
   allowlist to the rest. Both use `pkgs.writers.writeRustBin` with Rust edition
-  2024, not a Cargo workspace. `checks/cli.nix` feeds the command a ruleset
+  2024, not a Cargo workspace; `nix build .#egress-proxy` builds the proxy
+  on its own. `checks/cli.nix` feeds the command a ruleset
   rendered by `firewallOf` and canned journal lines, so its parsers run on the
   text the firewall writes.
 - The bridge is the road between host and guest: the guest's sshd and its

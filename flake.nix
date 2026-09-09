@@ -40,6 +40,10 @@
         default = self.nixosModules.fencr;
       };
 
+      packages = forAllSystems (pkgs: {
+        egress-proxy = pkgs.callPackage ./pkgs/egress-proxy { };
+      });
+
       herculesCI = import ./effects.nix {
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
         inherit nixbot;
