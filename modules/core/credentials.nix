@@ -58,6 +58,27 @@ in
     '';
   };
 
+  # the apis a credential names by provider instead of by upstream and
+  # header. the proxy works per host, so one row serves every path under it
+  providers = {
+    anthropic = {
+      upstream = "https://api.anthropic.com";
+      header = "x-api-key";
+    };
+    openai = {
+      upstream = "https://api.openai.com";
+      header = "Authorization";
+    };
+    openrouter = {
+      upstream = "https://openrouter.ai";
+      header = "Authorization";
+    };
+    opencode = {
+      upstream = "https://opencode.ai";
+      header = "Authorization";
+    };
+  };
+
   # a credential's domain is the name the vm calls; it defaults to the
   # upstream's host, which a loopback upstream cannot supply
   upstreamHost =

@@ -14,39 +14,55 @@ in
     default = { };
     description = "credentials a vm may use without ever seeing the value, granted by name in fencr.vms.<name>.credentials.";
     type = lib.types.attrsOf (
-      lib.types.submodule {
-        options = {
-          upstream = lib.mkOption {
-            type = lib.types.str;
-            example = "https://api.anthropic.com";
-            description = ''
-              where requests go, with the credential injected: a public
-              https api or a plain http port on host loopback. private
-              ranges are refused.
-            '';
+      lib.types.submodule (
+        { config, name, ... }:
+        {
+          options = {
+            provider = lib.mkOption {
+              type = lib.types.nullOr (lib.types.enum (lib.attrNames core.providers));
+              default = if core.providers ? ${name} then name else null;
+              defaultText = "the credential's name when it names a provider";
+              description = ''
+                a known api, which supplies upstream and header:
+                ${lib.concatStringsSep ", " (lib.attrNames core.providers)}.
+              '';
+            };
+            upstream = lib.mkOption {
+              type = lib.types.str;
+              example = "https://api.anthropic.com";
+              description = ''
+                where requests go, with the credential injected: a public
+                https api or a plain http port on host loopback. private
+                ranges are refused. required without a provider.
+              '';
+            };
+            domain = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              example = "mcp.fencr";
+              description = ''
+                the name a vm calls. it resolves to the host, where the
+                credential's proxy answers with a certificate from the
+                host's own authority, which the vm trusts. defaults to the
+                upstream's host; an upstream on host loopback needs one.
+              '';
+            };
+            header = lib.mkOption {
+              type = lib.types.str;
+              default = "Authorization";
+              description = "request header that carries the credential.";
+            };
+            secretFile = lib.mkOption {
+              type = lib.types.path;
+              description = "host file with the raw header value, for example \"Bearer x\"; never enters a vm.";
+            };
           };
-          domain = lib.mkOption {
-            type = lib.types.nullOr lib.types.str;
-            default = null;
-            example = "mcp.fencr";
-            description = ''
-              the name a vm calls. it resolves to the host, where the
-              credential's proxy answers with a certificate from the
-              host's own authority, which the vm trusts. defaults to the
-              upstream's host; an upstream on host loopback needs one.
-            '';
+          config = lib.mkIf (config.provider != null) {
+            upstream = lib.mkDefault core.providers.${config.provider}.upstream;
+            header = lib.mkDefault core.providers.${config.provider}.header;
           };
-          header = lib.mkOption {
-            type = lib.types.str;
-            default = "Authorization";
-            description = "request header that carries the credential.";
-          };
-          secretFile = lib.mkOption {
-            type = lib.types.path;
-            description = "host file with the raw header value, for example \"Bearer x\"; never enters a vm.";
-          };
-        };
-      }
+        }
+      )
     );
   };
 

@@ -49,6 +49,16 @@ in
     }
     {
       assertion =
+        config.fencr.credentials.anthropic.upstream == "https://api.anthropic.com"
+        && config.fencr.credentials.anthropic.header == "x-api-key"
+        && config.fencr.credentials.sbx-openrouter.provider == "openrouter"
+        && config.fencr.credentials.sbx-openrouter.upstream == "https://openrouter.ai"
+        && config.fencr.credentials.sbx-openrouter.header == "X-Custom"
+        && config.fencr.credentials.local.provider == null;
+      message = "nixos module check: provider defaults did not apply";
+    }
+    {
+      assertion =
         config.fencr.guestSystems.sealed.config.systemd.network.networks."10-lan".networkConfig.DNS
         == "10.11.1.1"
         && config.systemd.services ? "fencr-sealed-egress-proxy"
@@ -135,10 +145,18 @@ in
     secrets.raw = "/run/secrets/raw";
   };
 
-  fencr.credentials.anthropic = {
-    upstream = "https://api.anthropic.com";
-    header = "x-api-key";
-    secretFile = "/run/secrets/anthropic";
+  fencr.credentials = {
+    anthropic.secretFile = "/run/secrets/anthropic";
+    sbx-openrouter = {
+      provider = "openrouter";
+      header = "X-Custom";
+      secretFile = "/run/secrets/openrouter";
+    };
+    local = {
+      upstream = "http://127.0.0.1:8764";
+      domain = "local.fencr";
+      secretFile = "/run/secrets/local";
+    };
   };
 
   fencr.vms.sealed = {

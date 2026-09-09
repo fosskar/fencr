@@ -121,13 +121,22 @@ A granted credential lets a VM call an HTTPS API with the secret header
 added on the host:
 
 ```nix
-fencr.credentials.anthropic = {
-  upstream = "https://api.anthropic.com";
-  header = "x-api-key";
-  secretFile = "/run/secrets/anthropic";
-};
+fencr.credentials.anthropic.secretFile = "/run/secrets/anthropic";
 
 fencr.vms.myagent.credentials = [ "anthropic" ];
+```
+
+A credential named `anthropic`, `openai`, `openrouter` or `opencode` takes
+its `upstream` and `header` from that provider; `provider = "openrouter"`
+does the same under another name, and `upstream` and `header` remain
+settable for any other API:
+
+```nix
+fencr.credentials.mine = {
+  upstream = "https://api.example.com";
+  header = "x-api-key";
+  secretFile = "/run/secrets/example";
+};
 ```
 
 The workload calls `https://api.anthropic.com` as it would anywhere. Inside
