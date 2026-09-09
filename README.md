@@ -17,6 +17,19 @@ repositories or mount host working trees. `fencr.vms.<name>.services`
 accepts ordinary NixOS modules that install and configure the workload.
 Those modules are also responsible for getting code into the VM.
 
+## Highlights
+
+- API keys never enter the VM: the host terminates the API's TLS and injects
+  the header; a compromised agent can spend a key but not read it.
+- Deny by default, including DNS. Grants are single strings: a server name,
+  a host port, an address and port, or `"internet"` without private ranges.
+- One Firecracker microVM per agent, run by its own unprivileged user.
+- Plain NixOS configuration, deployed with `nixos-rebuild`; no daemon, no
+  database.
+- The guest persists like a machine; only its Nix store is replaced.
+- `fencr status` shows what each grant carried and what was blocked, with
+  the entry that would allow it.
+
 ## Configuration
 
 Add the flake input:
@@ -194,15 +207,18 @@ forwarding. See [access](docs/access.md) for other connection methods.
 
 ## Implementation and design
 
-The NixOS module, CLI, network and credential proxies are implemented in this
-repository. Flake checks cover the NixOS module, core configuration logic,
-the CLI, the egress proxy's parsers and NixOS boot integration. Firecracker replaced crosvm, which had
-replaced QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds
-the history and the costs.
+The NixOS module lives in `modules/`, the pure builders it composes
+in `lib/`, and the `fencr` command and the egress proxy in `pkgs/`. Flake
+checks cover the NixOS module, the builders, the CLI, the egress proxy and
+NixOS boot integration. Firecracker replaced crosvm, which had replaced
+QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds the
+history and the costs.
 
 The design decisions explain the scope and security model:
 
 - [Sandbox only, no agent](docs/decisions/sandbox-only-scope.md)
 - [System-scoped identity](docs/decisions/system-scoped-identity.md)
 - [SSH access model](docs/decisions/ssh-access-model.md)
+- [Domain egress](docs/decisions/domain-egress-proxy.md)
+- [Credentials](docs/decisions/credentials.md)
 - [Hypervisor](docs/decisions/hypervisor.md)
