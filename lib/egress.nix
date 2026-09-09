@@ -40,7 +40,7 @@ in
         "--edition"
         "2024"
       ];
-    } ./egress-proxy.rs;
+    } ../pkgs/egress-proxy/egress-proxy.rs;
 
   # listens on the bridge address only, so the guest's subnet is allowed in
   # beside the internet

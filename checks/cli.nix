@@ -1,7 +1,7 @@
 _self: pkgs:
 let
   inherit (pkgs) lib;
-  core = import ../modules/core { inherit lib; };
+  core = import ../lib { inherit lib; };
   credentials.api = {
     upstream = "http://127.0.0.1:8764";
     domain = "api.test";
@@ -88,7 +88,7 @@ let
         ;;
     esac
   '';
-  cli = import ../modules/cli.nix {
+  cli = import ../pkgs/cli {
     inherit lib;
     pkgs = pkgs // {
       systemd = pkgs.symlinkJoin {

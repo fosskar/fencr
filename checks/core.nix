@@ -4,7 +4,7 @@ _self: pkgs:
 # the firewall text and the host units. Nothing is built.
 let
   inherit (pkgs) lib;
-  core = import ../modules/core { inherit lib; };
+  core = import ../lib { inherit lib; };
   resolve =
     name: options:
     core.resolveInstance {
@@ -184,7 +184,7 @@ assert lib.assertMsg (
     builtins.deepSeq
       (lib.evalModules {
         modules = [
-          ../modules/nixos/options.nix
+          ../modules/fencr/options.nix
           {
             fencr.vms.sbx = {
               id = 0;

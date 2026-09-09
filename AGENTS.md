@@ -15,11 +15,11 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
 
 ## architecture
 
-- `modules/nixos/options.nix` declares the options; `modules/nixos/default.nix`
+- `modules/fencr/options.nix` declares the options; `modules/fencr/default.nix`
   composes host networking, systemd units, users, and guest evaluations. Guests
   use the host's `pkgs`; payloads receive the resolved contract through
   `specialArgs.agentSandbox`.
-- `modules/core/` holds the pure builders, one file per concern, joined by
+- `lib/` holds the pure builders, one file per concern, joined by
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `hostErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
@@ -37,8 +37,9 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `resolveInstance` classifies public `inbound` and `outbound` grants into
   the internal fields `expose`, `egress`, `allowedDomains`, `hostPorts` and
   `allowedTCPDestinations`; firewall and proxy builders consume those fields.
-- `modules/cli.rs` is the fencr command; `modules/cli.nix` appends its instance
-  tables and tool paths at build. `modules/core/egress-proxy.rs` answers DNS
+- `pkgs/cli/cli.rs` is the fencr command; `pkgs/cli/default.nix` appends its
+  instance tables and tool paths at build. `pkgs/egress-proxy/egress-proxy.rs`
+  answers DNS
   queries, hands credential domains to their proxies by TLS SNI and applies the
   allowlist to the rest. Both use `pkgs.writers.writeRustBin` with Rust edition
   2024, not a Cargo workspace. `checks/cli.nix` feeds the command a ruleset

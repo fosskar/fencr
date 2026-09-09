@@ -18,7 +18,7 @@
 let
   instances = config.fencr.vms;
   sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
-  core = import ../core { inherit lib; };
+  core = import ../../lib { inherit lib; };
   resolvedInstances = lib.mapAttrs (
     name: options:
     core.resolveInstance {
@@ -73,7 +73,7 @@ in
       ];
 
     environment.systemPackages = lib.mkIf (instances != { }) [
-      (import ../cli.nix {
+      (import ../../pkgs/cli {
         inherit lib pkgs;
         instances = resolvedInstances;
         units = unitSets;

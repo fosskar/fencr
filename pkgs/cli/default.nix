@@ -9,7 +9,7 @@
   units,
 }:
 let
-  core = import ./core { inherit lib; };
+  core = import ../../lib { inherit lib; };
   # a grant's text and where its use shows: a counted rule's tag, or the
   # proxy log's host lines for a domain pattern or a credential's domain
   grant = text: source: "Grant { text: ${builtins.toJSON text}, source: ${source} },";
