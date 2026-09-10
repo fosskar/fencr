@@ -40,6 +40,11 @@ in
     diskBandwidth = null;
     networkBandwidth = null;
     maxConnections = 2048;
+    checkpoints = {
+      onStop = true;
+      interval = null;
+      keep = 5;
+    };
     credentials = [ ];
     inbound = [ ];
     outbound = [ ];
@@ -72,6 +77,7 @@ in
     proxy = "fencr-${name}-egress-proxy";
     credentials = "fencr-${name}-credentials";
     secrets = "fencr-${name}-secrets";
+    checkpoint = "fencr-${name}-checkpoint";
   };
   # firecracker's vsock on the host: one unix socket for connections into
   # the guest, and one per port, "<vsock>_<port>", for connections out of
@@ -305,6 +311,7 @@ in
         id
         cpuQuota
         maxConnections
+        checkpoints
         egress
         allowedDomains
         deniedDomains

@@ -6,7 +6,7 @@ use std::process::{Command, exit};
 use std::{thread, time};
 
 // the instance tables and tool paths are appended by cli.nix at build:
-// VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT
+// VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP
 
 /// the kind out of "fencr:<vm>:<kind>", which the firewall writes as every
 /// counted rule's comment and every drop's log prefix; a kind ending in
@@ -48,6 +48,8 @@ struct Vm {
     inbound: &'static [Grant],
     outbound: &'static [Grant],
     unit: &'static str,
+    checkpoint_unit: &'static str,
+    state_dir: &'static str,
 }
 
 struct Style {
@@ -85,6 +87,12 @@ fn usage() -> ! {
     eprintln!("  ssh <vm> [cmd]   open a shell (or run a command) in a vm");
     eprintln!("  status [vm]      vm health and traffic [--watch]; --full <vm> for systemctl");
     eprintln!("  dashboard        alias for status --watch [--once]");
+    eprintln!("  checkpoint <vm> [name]");
+    eprintln!("                   copy the vm's disk now, paused for the instant it takes");
+    eprintln!("  checkpoints <vm> [--rm <name>]");
+    eprintln!("                   list the vm's checkpoints, or remove one");
+    eprintln!("  restore <vm> <name>");
+    eprintln!("                   stop the vm, replace its disk with the checkpoint, start it");
     eprintln!();
     eprintln!(
         "  -H <host>        run the command on <host> over ssh (fencr must be installed there)"
@@ -599,6 +607,78 @@ fn show(only: Option<&str>, watch: bool) {
     }
 }
 
+/// a checkpoint's file, or why the name is no checkpoint of this vm
+fn checkpoint_file(vm: &Vm, name: &str) -> Result<std::path::PathBuf, String> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    {
+        return Err(format!("\"{name}\" is not a checkpoint name"));
+    }
+    let file = std::path::Path::new(vm.state_dir)
+        .join("checkpoints")
+        .join(format!("{name}.img"));
+    if file.is_file() {
+        Ok(file)
+    } else {
+        Err(format!("{} has no checkpoint \"{name}\"", vm.name))
+    }
+}
+
+/// name, allocated size and time of every checkpoint, newest first
+fn checkpoints(vm: &Vm) -> Vec<(String, u64, std::time::SystemTime)> {
+    use std::os::unix::fs::MetadataExt;
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(std::path::Path::new(vm.state_dir).join("checkpoints"))
+    else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let Some(name) = file.to_str().and_then(|file| file.strip_suffix(".img")) else {
+            continue;
+        };
+        if let Ok(meta) = entry.metadata() {
+            found.push((
+                name.to_owned(),
+                meta.blocks() * 512,
+                meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+            ));
+        }
+    }
+    found.sort_by(|a, b| b.2.cmp(&a.2));
+    found
+}
+
+fn print_checkpoints(vm: &Vm) {
+    let found = checkpoints(vm);
+    if found.is_empty() {
+        println!("{} has no checkpoints", vm.name);
+    }
+    for (name, bytes, time) in found {
+        let age = time.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+        let age = match age {
+            s if s < 3600 => format!("{}m ago", s / 60),
+            s if s < 86400 => format!("{}h ago", s / 3600),
+            s => format!("{}d ago", s / 86400),
+        };
+        println!("{name:<32}  {:>8}  {age}", human(bytes));
+    }
+}
+
+/// runs a tool that must succeed, with its own stderr
+fn run(cmd: &str, args: &[&str]) {
+    match Command::new(cmd).args(args).status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            eprintln!("fencr: {cmd} {}: {status}", args.join(" "));
+            exit(1)
+        }
+        Err(error) => fail(error),
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("-H") {
@@ -652,6 +732,67 @@ fn main() {
                 );
             }
             show(vm.map(|vm| vm.name), args.iter().any(|a| a == "--watch"));
+        }
+        Some("checkpoint") => {
+            // the unit does the work as the vm's user in the vm's own
+            // root; a bad name is the unit's error, shown here
+            let vm = find(args.get(1).map(String::as_str).unwrap_or_else(|| usage()));
+            let name = args.get(2).map(String::as_str).unwrap_or("manual");
+            let unit = format!("{}{name}.service", vm.checkpoint_unit);
+            if let Err(reason) = output(SYSTEMCTL, &["start", &unit]) {
+                eprintln!("fencr: checkpoint failed: {reason}");
+                if let Ok(log) = output(
+                    JOURNALCTL,
+                    &["-u", &unit, "-q", "-n", "5", "--no-pager", "-o", "cat"],
+                ) {
+                    eprint!("{log}");
+                }
+                exit(1)
+            }
+            print_checkpoints(vm);
+        }
+        Some("checkpoints") => {
+            let vm = find(args.get(1).map(String::as_str).unwrap_or_else(|| usage()));
+            match args.get(2).map(String::as_str) {
+                None => print_checkpoints(vm),
+                Some("--rm") => {
+                    let name = args.get(3).map(String::as_str).unwrap_or_else(|| usage());
+                    match checkpoint_file(vm, name)
+                        .and_then(|file| std::fs::remove_file(file).map_err(|e| e.to_string()))
+                    {
+                        Ok(()) => println!("removed {name}"),
+                        Err(reason) => {
+                            eprintln!("fencr: {reason}");
+                            exit(1)
+                        }
+                    }
+                }
+                _ => usage(),
+            }
+        }
+        Some("restore") => {
+            // the stop leaves a stop checkpoint of what is replaced, when
+            // onStop is set; the copy keeps the vm's ownership
+            let vm = find(args.get(1).map(String::as_str).unwrap_or_else(|| usage()));
+            let name = args.get(2).map(String::as_str).unwrap_or_else(|| usage());
+            let file = checkpoint_file(vm, name).unwrap_or_else(|reason| {
+                eprintln!("fencr: {reason}");
+                exit(1)
+            });
+            let image = format!("{}/state.img", vm.state_dir);
+            run(SYSTEMCTL, &["stop", vm.unit]);
+            run(
+                CP,
+                &[
+                    "--reflink=auto",
+                    "--sparse=always",
+                    "--preserve=mode,ownership",
+                    file.to_str().unwrap_or_else(|| usage()),
+                    &image,
+                ],
+            );
+            run(SYSTEMCTL, &["start", vm.unit]);
+            println!("{} restored from {name}", vm.name);
         }
         _ => usage(),
     }

@@ -120,6 +120,9 @@ in
       "d /var/lib/fencr-vms 0710 root kvm -"
     ]
     ++ map (name: "d ${core.stateDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances)
+    ++ map (name: "d ${core.checkpointDirOf name} 0700 ${core.userOf name} kvm -") (
+      lib.attrNames instances
+    )
     ++ map (name: "d ${core.runDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances);
 
     systemd.services = lib.mkMerge (
@@ -137,6 +140,8 @@ in
     );
 
     systemd.sockets = lib.mkMerge (map (units: units.sockets) (lib.attrValues unitSets));
+
+    systemd.timers = lib.mkMerge (map (units: units.timers) (lib.attrValues unitSets));
 
     # masquerade by the vm's source address instead of networking.nat, so
     # the module needs no knowledge of the host's uplink interface

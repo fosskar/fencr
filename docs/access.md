@@ -70,6 +70,38 @@ state image, console and the hypervisor process.
 `adminKeys` gives that fact an auditable ssh-shaped form. For every
 other host account, the key check is the real gate.
 
+## the state image is never mounted on the host
+
+`/var/lib/fencr-vms/<name>/state.img` is a filesystem guest root wrote.
+Mounting it on the host (`mount -o loop`) hands that filesystem to the
+host kernel's ext4 parser, which is the one attack a compromised guest
+gets at the host's kernel from its disk. Inspect a stopped vm's disk in
+userspace instead, or boot it in a throwaway vm:
+
+```console
+# debugfs -R 'ls -l /root' /var/lib/fencr-vms/<name>/state.img
+# debugfs -R 'cat /root/notes.md' /var/lib/fencr-vms/<name>/state.img
+```
+
+The same holds for every file under `checkpoints/`.
+
+## checkpoints
+
+A checkpoint is a copy of the state image beside it, taken by
+`fencr checkpoint <vm> [name]` while the vm runs, after every clean stop
+(`checkpoints.onStop`, on by default, named `stop-<utc stamp>`) and on
+an optional timer (`checkpoints.interval`, named `timer-<utc stamp>`).
+`fencr checkpoints <vm>` lists them, `fencr restore <vm> <name>` stops
+the vm, puts the copy in the image's place and starts it again; the
+stop leaves a checkpoint of what was replaced. Automatic kinds keep the
+last `checkpoints.keep`; named ones stay until
+`fencr checkpoints <vm> --rm <name>`.
+
+The copy is a reflink, instant and sharing blocks with the image until
+either side writes; btrfs, xfs and OpenZFS 2.3 with `block_cloning`
+have them. Without reflinks only stop checkpoints are taken, as plain
+sparse copies.
+
 ## reusing root's authorized keys as adminKeys
 
 Deliberately not automatic. Root's authorized list may contain

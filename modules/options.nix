@@ -206,6 +206,36 @@ in
                 a port scan or a leaking tool.
               '';
             };
+            checkpoints = {
+              onStop = lib.mkOption {
+                type = lib.types.bool;
+                default = core.defaults.checkpoints.onStop;
+                description = ''
+                  copy the state image after every clean stop, so a rebuild
+                  or a restore leaves the state it replaced behind as
+                  "stop-<utc stamp>".
+                '';
+              };
+              interval = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = core.defaults.checkpoints.interval;
+                example = "hourly";
+                description = ''
+                  a systemd calendar expression; at each tick a running vm
+                  is paused for the instant the copy takes and the result
+                  is "timer-<utc stamp>". null for none.
+                '';
+              };
+              keep = lib.mkOption {
+                type = lib.types.ints.positive;
+                default = core.defaults.checkpoints.keep;
+                description = ''
+                  how many of each automatic kind to keep; older ones are
+                  removed when a new one lands. manual checkpoints from
+                  `fencr checkpoint` stay until removed.
+                '';
+              };
+            };
             secrets = lib.mkOption {
               type = lib.types.attrsOf lib.types.path;
               default = core.defaults.secrets;

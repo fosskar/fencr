@@ -550,4 +550,43 @@ assert lib.assertMsg (
       };
     }).errors == [ "sbx: credential \"api\": allow entry \"GET\": expected \"<methods> <path>\"" ]
 ) "unit check: credential allow entries are not rendered or validated";
+# checkpoints: the template unit runs the script as the vm's user in the
+# vm's empty root with reflink copies only; the timer exists only with an
+# interval; the vm unit copies after a clean stop unless told not to
+assert lib.assertMsg (
+  let
+    template = units.services."fencr-sbx-checkpoint@".serviceConfig;
+    script = builtins.readFile (core.checkpointScript pkgs resolved);
+    hourly = resolve "sbx" {
+      id = 0;
+      checkpoints.interval = "hourly";
+      checkpoints.keep = 3;
+    };
+    timed = core.hostUnits pkgs hourly;
+    silent = core.vmService pkgs (resolve "sbx" {
+      id = 0;
+      checkpoints.onStop = false;
+    }) "/run/x";
+  in
+  template.User == "fencr-sbx"
+  && template.TemporaryFileSystem == "/:ro"
+  && lib.elem "/var/lib/fencr-vms/sbx" template.BindPaths
+  && template.RestrictAddressFamilies == [ "AF_UNIX" ]
+  && lib.hasSuffix " %i" template.ExecStart
+  && lib.hasInfix "cp --reflink=always " script
+  && lib.hasInfix "head -n -5 " script
+  && lib.hasInfix "curl --silent --fail --unix-socket \"$socket\" http://localhost/" script
+  && lib.hasInfix "/run/fencr-sbx/api.sock" script
+  && units.timers == { }
+  &&
+    timed.timers.fencr-sbx-checkpoint.timerConfig == {
+      OnCalendar = "hourly";
+      Unit = "fencr-sbx-checkpoint@timer.service";
+    }
+  && lib.hasInfix "head -n -3 " (builtins.readFile (core.checkpointScript pkgs hourly))
+  &&
+    lib.any (lib.hasSuffix " stop")
+      (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost
+  && silent.serviceConfig.ExecStopPost == [ ]
+) "unit check: checkpoints are not wired";
 pkgs.writeText "fencr-core-check" (builtins.toJSON units.unitNames)

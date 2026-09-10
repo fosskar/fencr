@@ -3,6 +3,7 @@ let
   inherit (core)
     stateImageOf
     vsockOf
+    apiSocketOf
     powerPort
     secretsPort
     prefixLength
@@ -50,6 +51,9 @@ in
         # the runner's own vsock path lives in the working directory and is
         # wiped on every start; the secrets socket beside it must not be
         firecracker.extraConfig.vsock.uds_path = vsockOf agentSandbox.name;
+        # the api socket by a fixed name: the runner's default follows the
+        # guest's host name, which a payload may set
+        socket = apiSocketOf agentSandbox.name;
         # the runner's drives ignore guest flushes (firecracker's Unsafe
         # cache): a host crash loses the state image's journal. lists are
         # replaced, not merged, so the runner's two drives are restated

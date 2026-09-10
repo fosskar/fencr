@@ -45,7 +45,9 @@ let
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${units.${name}.unitNames.vm}" },'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${units.${name}.unitNames.vm}", checkpoint_unit: "${
+      units.${name}.unitNames.checkpoint
+    }", state_dir: "${core.stateDirOf name}" },'';
 
   proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
 
@@ -81,5 +83,6 @@ pkgs.writers.writeRustBin "fencr"
       const SYSTEMCTL: &str = "${pkgs.systemd}/bin/systemctl";
       const JOURNALCTL: &str = "${pkgs.systemd}/bin/journalctl";
       const NFT: &str = "${pkgs.nftables}/bin/nft";
+      const CP: &str = "${pkgs.coreutils}/bin/cp";
     ''
   )

@@ -172,6 +172,19 @@ pkgs.runCommand "fencr-cli-check" { } ''
   grep -Fx '  · host TCP 8080                             unused' actual
   grep -Fx '  · 192.168.20.0/24 TCP 1234                  unused' actual
   grep -Fx '  none' actual
+  # checkpoints: the command starts the template unit with the name as
+  # instance; without a state directory here there is nothing to list,
+  # a restore of an unknown name stops nothing, a bad name is refused
+  ${cli}/bin/fencr checkpoint sbx before-agent > actual
+  grep -Fx 'start fencr-sbx-checkpoint@before-agent.service' "$TEST_LOG"
+  grep -Fx 'sbx has no checkpoints' actual
+  ${cli}/bin/fencr checkpoint sbx > /dev/null
+  grep -Fx 'start fencr-sbx-checkpoint@manual.service' "$TEST_LOG"
+  if ${cli}/bin/fencr restore sbx before-agent 2> actual; then exit 1; fi
+  grep -Fx 'fencr: sbx has no checkpoint "before-agent"' actual
+  if grep -F 'stop fencr-sbx.service' "$TEST_LOG"; then exit 1; fi
+  if ${cli}/bin/fencr checkpoints sbx --rm '../state' 2> actual; then exit 1; fi
+  grep -Fx 'fencr: "../state" is not a checkpoint name' actual
   ${cli}/bin/fencr status keyed > actual
   grep -Fx '  ✓ api.test TLS 443 (credential api)         1 connection' actual
   if grep -F 'github.com TLS 443' actual; then exit 1; fi

@@ -73,6 +73,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       ];
       virtualisation.diskSize = 4096;
       virtualisation.memorySize = 2048;
+      # the state images on a filesystem with reflinks, as checkpoints need
+      virtualisation.emptyDiskImages = [ 2048 ];
+      virtualisation.fileSystems."/var/lib/fencr-vms" = {
+        device = "/dev/vdb";
+        fsType = "btrfs";
+        autoFormat = true;
+      };
 
       networking.useNetworkd = true;
       networking.nameservers = [ "9.9.9.9" ];
@@ -264,6 +271,24 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # a clean stop, not a kill after the stop timeout
       host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
       host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
+
+      # checkpoints: the clean stop above left one; a manual one is taken
+      # while the vm runs, then a file written after it vanishes on
+      # restore while the earlier probe stays. the restore's own stop
+      # leaves a second stop checkpoint, and the copies belong to the vm
+      host.succeed("fencr checkpoints sbx | grep '^stop-'")
+      host.succeed("fencr checkpoint sbx before-agent | grep '^before-agent '")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/checkpoints/before-agent.img)\" = fencr-sbx:600")
+      host.succeed(f"{ssh} 'test -f ~/fencr-probe && echo after > ~/fencr-after && sync'", timeout=60)
+      host.succeed("fencr restore sbx before-agent")
+      host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
+      host.fail(f"{ssh} 'test -e ~/fencr-after'", timeout=60)
+      host.succeed("test \"$(fencr checkpoints sbx | grep -c '^stop-')\" = 2")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
+      host.succeed("fencr checkpoints sbx --rm before-agent | grep -Fx 'removed before-agent'")
+      host.fail("fencr checkpoints sbx | grep -q before-agent")
+      # a reserved name is the unit's error, relayed by the command
+      host.fail("fencr checkpoint sbx stop-now")
 
       # the firewall, probed with real packets from inside the vm. every probe
       # carries a timeout: a hang here means the firewall swallowed the reply

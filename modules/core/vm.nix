@@ -1,4 +1,4 @@
-{ core, ... }:
+{ lib, core, ... }:
 let
   inherit (core)
     stateDirOf
@@ -8,6 +8,7 @@ let
     vsockOf
     powerPort
     hardened
+    checkpointScript
     ;
 in
 {
@@ -61,6 +62,10 @@ in
             while [ -d /proc/$MAINPID ]; do sleep 0.5; done
           '';
           TimeoutStopSec = 60;
+          # after a clean stop the image is quiescent: copy it, as the
+          # vm's user in this same root. "-": a filesystem without
+          # reflinks must not fail the unit
+          ExecStopPost = lib.optional instance.checkpoints.onStop "-${checkpointScript pkgs instance} stop";
           User = userOf instance.name;
           WorkingDirectory = runDir;
           Restart = "on-failure";

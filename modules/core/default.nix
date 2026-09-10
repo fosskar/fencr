@@ -13,6 +13,7 @@ lib.fix (
     ./egress.nix
     ./firewall.nix
     ./credentials.nix
+    ./checkpoint.nix
     ./host-units.nix
     ./guest.nix
   ]

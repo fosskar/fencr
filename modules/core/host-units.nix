@@ -11,6 +11,7 @@ let
     hardened
     egressProxyServiceConfig
     credentialServiceConfig
+    checkpointUnits
     ;
 in
 {
@@ -22,6 +23,7 @@ in
       vmUnit = "${units.vm}.service";
       caService = "${caUnit}.service";
       credentialUnits = lib.optional (instance.credentials != [ ]) "${units.credentials}.service";
+      checkpoints = checkpointUnits pkgs instance;
       credentialServices = lib.optionalAttrs (instance.credentials != [ ]) {
         ${units.credentials} = {
           description = "credentials for ${instance.name}";
@@ -72,6 +74,7 @@ in
     {
       services =
         credentialServices
+        // checkpoints.services
         // secretsUnits.service or { }
         // lib.optionalAttrs instance.proxy {
           ${units.proxy} = {
@@ -83,8 +86,10 @@ in
           };
         };
       sockets = secretsUnits.socket or { };
+      inherit (checkpoints) timers;
       unitNames = {
         vm = vmUnit;
+        checkpoint = "${units.checkpoint}@";
         proxy = lib.optional instance.proxy "${units.proxy}.service";
         credentials = credentialUnits;
       };
