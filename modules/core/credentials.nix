@@ -14,6 +14,7 @@ let
     credentialSocketOf
     credentialCaddyfile
     credentialExec
+    parseAllow
     ;
 in
 {
@@ -116,6 +117,41 @@ in
     else
       null;
 
+  # an allow entry, "<methods> <path>": the methods caddy's matcher takes
+  # (none for "*"), the path pattern (none for "*"), or the reason it is
+  # malformed
+  parseAllow =
+    entry:
+    let
+      words = lib.filter (word: word != "") (lib.splitString " " entry);
+      methods = lib.head words;
+      path = lib.last words;
+    in
+    if lib.length words != 2 then
+      {
+        error = "\"${entry}\": expected \"<methods> <path>\"";
+      }
+    else if methods != "*" && builtins.match "[A-Z]+(,[A-Z]+)*" methods == null then
+      {
+        error = "\"${entry}\": methods are upper-case names separated by commas, or \"*\"";
+      }
+    else if path != "*" && !lib.hasPrefix "/" path then
+      {
+        error = "\"${entry}\": the path starts with \"/\", or is \"*\"";
+      }
+    else
+      {
+        methods = lib.optionals (methods != "*") (lib.splitString "," methods);
+        path = if path == "*" then null else path;
+        error = null;
+      };
+
+  credentialAllowErrors =
+    credential:
+    map (rule: "credential \"${credential.name}\": allow entry ${rule.error}") (
+      lib.filter (rule: rule.error != null) (map parseAllow (credential.allow or [ ]))
+    );
+
   # the vm's credential proxy: the guest calls a credential's domain as
   # usual and lands here, where one caddy per vm holds a certificate for
   # each granted domain from the host's authority, ends the tls, injects
@@ -147,29 +183,66 @@ in
       }
     ''
     + lib.concatStrings (
-      lib.imap0 (index: credential: ''
-        https://${credential.domain} {
-          bind unix/${socket}|0660
-          tls internal
-          # every request the credential rode on, method, path and status,
-          # to the journal; headers are dropped from the record since the
-          # guest's own header sits there
-          log {
-            output stderr
-            format filter {
-              wrap json
-              fields {
-                request>headers delete
-                resp_headers delete
+      lib.imap0 (
+        index: credential:
+        let
+          rules = map parseAllow (credential.allow or [ ]);
+          indent =
+            depth: lines: lib.concatMapStrings (line: "${lib.fixedWidthString depth " " ""}${line}\n") lines;
+          proxy = [
+            "reverse_proxy ${credential.upstream} {"
+            "  header_up Host {upstream_hostport}"
+            "  header_up ${credential.header} \"{$FENCR_CREDENTIAL_${toString index}}\""
+            "}"
+          ];
+          # one named matcher per allow entry, a handle for each; the
+          # bare handle answers what none admitted. a matcher's methods
+          # and paths are each a disjunction, the two are conjoined
+          matcher =
+            i: rule:
+            indent 2 (
+              [ "@allow${toString i} {" ]
+              ++ lib.optional (rule.methods != [ ]) "  method ${lib.concatStringsSep " " rule.methods}"
+              ++ lib.optional (rule.path != null) "  path ${rule.path}"
+              ++ [
+                "}"
+                "handle @allow${toString i} {"
+              ]
+            )
+            + indent 4 proxy
+            + indent 2 [ "}" ];
+        in
+        ''
+          https://${credential.domain} {
+            bind unix/${socket}|0660
+            tls internal
+            # every request the credential rode on, method, path and status,
+            # to the journal; headers are dropped from the record since the
+            # guest's own header sits there
+            log {
+              output stderr
+              format filter {
+                wrap json
+                fields {
+                  request>headers delete
+                  resp_headers delete
+                }
               }
             }
-          }
-          reverse_proxy ${credential.upstream} {
-            header_up Host {upstream_hostport}
-            header_up ${credential.header} "{$FENCR_CREDENTIAL_${toString index}}"
-          }
-        }
-      '') credentials
+        ''
+        + (
+          if rules == [ ] then
+            indent 2 proxy
+          else
+            lib.concatStrings (lib.imap0 matcher rules)
+            + indent 2 [
+              "handle {"
+              "  respond \"fencr: request not allowed for credential ${credential.name}\" 403"
+              "}"
+            ]
+        )
+        + "}\n"
+      ) credentials
     );
 
   credentialExec =

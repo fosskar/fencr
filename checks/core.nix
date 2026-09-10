@@ -497,5 +497,57 @@ assert lib.assertMsg (
   && lib.hasInfix "reverse_proxy https://api.example.com" caddyfile
   && lib.hasInfix ''header_up Authorization "{$FENCR_CREDENTIAL_0}"'' caddyfile
   && lib.hasInfix ''header_up x-key "{$FENCR_CREDENTIAL_1}"'' caddyfile
+  && !lib.hasInfix "handle" caddyfile
 ) "unit check: credential proxy does not end tls for every granted domain with its own header";
+# allow entries: one handle per entry carrying the proxy, a 403 for the
+# rest; malformed entries are rejected at evaluation
+assert lib.assertMsg (
+  let
+    caddyfile = core.credentialCaddyfile "/run/x/credentials.sock" [
+      {
+        name = "gh";
+        domain = "api.github.com";
+        upstream = "https://api.github.com";
+        header = "Authorization";
+        allow = [
+          "GET,HEAD *"
+          "POST /repos/*/pulls"
+          "* /user"
+        ];
+      }
+    ];
+  in
+  lib.hasInfix "  @allow0 {\n    method GET HEAD\n  }\n  handle @allow0 {\n    reverse_proxy https://api.github.com {" caddyfile
+  && lib.hasInfix "  @allow1 {\n    method POST\n    path /repos/*/pulls\n  }\n" caddyfile
+  && lib.hasInfix "  @allow2 {\n    path /user\n  }\n" caddyfile
+  && lib.hasInfix "  handle @allow2 {" caddyfile
+  && lib.hasInfix ''respond "fencr: request not allowed for credential gh" 403'' caddyfile
+  && lib.length (lib.splitString ''header_up Authorization "{$FENCR_CREDENTIAL_0}"'' caddyfile) == 4
+  &&
+    (core.parseAllow "GET /x") == {
+      methods = [ "GET" ];
+      path = "/x";
+      error = null;
+    }
+  &&
+    (core.parseAllow "get /x").error
+    == "\"get /x\": methods are upper-case names separated by commas, or \"*\""
+  && (core.parseAllow "GET x").error == "\"GET x\": the path starts with \"/\", or is \"*\""
+  && (core.parseAllow "GET").error == "\"GET\": expected \"<methods> <path>\""
+  &&
+    (core.resolveInstance {
+      name = "sbx";
+      credentials.api = {
+        upstream = "https://api.example.com";
+        domain = null;
+        header = "Authorization";
+        secretFile = "/run/secrets/api-token";
+        allow = [ "GET" ];
+      };
+      options = {
+        id = 0;
+        credentials = [ "api" ];
+      };
+    }).errors == [ "sbx: credential \"api\": allow entry \"GET\": expected \"<methods> <path>\"" ]
+) "unit check: credential allow entries are not rendered or validated";
 pkgs.writeText "fencr-core-check" (builtins.toJSON units.unitNames)

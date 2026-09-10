@@ -56,6 +56,21 @@ in
               type = lib.types.path;
               description = "host file with the raw header value, for example \"Bearer x\"; never enters a vm.";
             };
+            allow = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [
+                "GET,HEAD *"
+                "POST /repos/*/pulls"
+              ];
+              description = ''
+                requests the credential may ride on, as "<methods> <path>":
+                methods comma-separated or "*", a path with "*" standing
+                for any characters or "*" alone for any path. a request
+                matching no entry is answered 403 by the host and never
+                reaches the upstream. empty allows every request.
+              '';
+            };
           };
           config = lib.mkIf (config.provider != null) {
             upstream = lib.mkDefault core.providers.${config.provider}.upstream;

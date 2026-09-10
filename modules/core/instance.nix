@@ -20,6 +20,7 @@ let
     proxyOf
     credentialsOf
     credentialDomainError
+    credentialAllowErrors
     credentialId
     caMembers
     guestTrust
@@ -289,6 +290,7 @@ in
         ) (lib.filter (credential: caMembers ? ${credential.name}) granted)
         ++ map (error: "${name}: ${error}") (
           lib.filter (error: error != null) (map credentialDomainError granted)
+          ++ lib.concatMap credentialAllowErrors granted
         )
         ++ map (domain: "${name}: credential domain ${domain} granted twice") (
           duplicates (map (credential: credential.domain) granted)

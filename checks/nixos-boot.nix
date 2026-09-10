@@ -158,6 +158,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         upstream = "http://127.0.0.1:8765";
         domain = "api.test";
         secretFile = credentialFile;
+        # the credential rides on GET / and nothing else
+        allow = [ "GET /" ];
       };
 
       # a second vm with open egress: the host's resolved answers it on the
@@ -320,6 +322,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("journalctl -u fencr-sbx-credentials.service -o cat | grep -F 'handled request' | grep -F '\"method\":\"GET\"' | grep -F '\"host\":\"api.test\"' | grep -F '\"uri\":\"/\"' | grep -qF '\"status\":200'")
       host.fail("journalctl -u fencr-sbx-credentials.service -o cat | grep -qiF 'placeholder'")
       host.succeed("fencr status sbx | grep -F 'GET api.test/ \u2192 200'")
+      # outside the allow entries the host answers 403 itself: the upstream
+      # would have echoed the header, so its absence shows nothing reached it
+      host.succeed(f"{ssh} 'curl --silent --max-time 10 -o /dev/null -w %{{http_code}} -X POST https://api.test/' | grep -Fx 403", timeout=60)
+      host.succeed(f"{ssh} 'curl --silent --max-time 10 -X POST https://api.test/other' | grep -Fx \"fencr: request not allowed for credential api\"", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --max-time 10 https://api.test/other' | grep -F authorization", timeout=60)
+      host.succeed("fencr status sbx | grep -F 'POST api.test/ \u2192 403'")
 
       # open egress: the guest resolves through the host, whose resolved
       # answers on the bridge
