@@ -55,7 +55,7 @@ root can use the forwarded agent while connected).
 On the host itself the same tool covers the day-to-day reads:
 
 ```console
-fencr list        # declared vms: id, cid, ip, inbound and outbound grants
+fencr list        # declared vms: id, ip, inbound and outbound grants
 fencr ssh sbx     # shell in the vm
 fencr status sbx  # the vm unit plus its proxy and credential units
 ```

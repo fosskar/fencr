@@ -42,7 +42,6 @@ struct Grant {
 struct Vm {
     name: &'static str,
     id: u32,
-    cid: u32,
     ip: &'static str,
     host_ip: &'static str,
     inbound: &'static [Grant],
@@ -86,7 +85,6 @@ fn usage() -> ! {
     eprintln!("  list             declared vms");
     eprintln!("  ssh <vm> [cmd]   open a shell (or run a command) in a vm");
     eprintln!("  status [vm]      vm health and traffic [--watch]; --full <vm> for systemctl");
-    eprintln!("  dashboard        alias for status --watch [--once]");
     eprintln!("  checkpoint <vm> [name]");
     eprintln!("                   copy the vm's disk now, paused for the instant it takes");
     eprintln!("  checkpoints <vm> [--rm <name>]");
@@ -146,16 +144,12 @@ fn grant_summary(grants: &[Grant]) -> String {
 }
 
 fn print_list() {
-    println!(
-        "{:<16} {:<3} {:<4} {:<12} INBOUND / OUTBOUND",
-        "NAME", "ID", "CID", "IP"
-    );
+    println!("{:<16} {:<3} {:<12} INBOUND / OUTBOUND", "NAME", "ID", "IP");
     for vm in VMS {
         println!(
-            "{:<16} {:<3} {:<4} {:<12} {} / {}",
+            "{:<16} {:<3} {:<12} {} / {}",
             vm.name,
             vm.id,
-            vm.cid,
             vm.ip,
             grant_summary(vm.inbound),
             grant_summary(vm.outbound)
@@ -698,7 +692,6 @@ fn main() {
     }
     match args.first().map(String::as_str) {
         Some("list") => print_list(),
-        Some("dashboard") => show(None, !args.iter().any(|a| a == "--once")),
         Some("ssh") => {
             // the module's Host <vm> alias carries the address, root and
             // the host key policy

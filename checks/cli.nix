@@ -188,7 +188,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   grep -Fx '  ✓ api.test TLS 443 (credential api)         1 connection' actual
   if grep -F 'github.com TLS 443' actual; then exit 1; fi
   ${cli}/bin/fencr list > actual
-  grep -E '^sealed +1 +4 +10.11.1.2 +denied / denied$' actual
+  grep -E '^sealed +1 +10.11.1.2 +denied / denied$' actual
   grep -F 'TCP 22, 33627 (22: ssh) / github.com TLS 443, *.github.com TLS 443, !gist.github.com TLS 443 (denied), api.test TLS 443 (credential api)' actual
   for state in failed inactive missing unavailable; do
     export TEST_STATE="$state"

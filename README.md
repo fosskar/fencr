@@ -182,7 +182,7 @@ The module installs the `fencr` command on the host:
 ```console
 fencr list
 fencr status myagent
-fencr dashboard
+fencr status --watch
 ssh myagent
 ```
 

@@ -42,7 +42,7 @@ let
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${(core.unitsOf name).vm}.service", checkpoint_unit: "${(core.unitsOf name).checkpoint}@", state_dir: "${core.stateDirOf name}" },'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${(core.unitsOf name).vm}.service", checkpoint_unit: "${(core.unitsOf name).checkpoint}@", state_dir: "${core.stateDirOf name}" },'';
 
   # the proxy and credential units a vm runs, for the journals the
   # command reads
