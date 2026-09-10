@@ -360,6 +360,30 @@ assert lib.assertMsg (
     ]
   && !((core.vmService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
 ) "core check: syscall filter drifted";
+# the hypervisor unit: the vm's own user, no capabilities, the empty
+# root, and the process hiding the jailer's chroot gave
+assert lib.assertMsg (
+  let
+    vm = (core.vmService pkgs resolved "/nix/store/runner").serviceConfig;
+  in
+  vm.User == "fencr-sbx"
+  && vm.CapabilityBoundingSet == ""
+  && vm.RestrictSUIDSGID
+  && vm.PrivateIPC
+  && vm.TemporaryFileSystem == "/:ro"
+  && vm.BindReadOnlyPaths == [ "/nix/store" ]
+  &&
+    vm.BindPaths == [
+      "/run/fencr-sbx"
+      "/var/lib/fencr-vms/sbx"
+    ]
+  && vm.ProtectProc == "invisible"
+  && vm.ProcSubset == "pid"
+  && !(vm ? ProtectSystem)
+  && !(vm ? ProtectHome)
+  && vm.DevicePolicy == "closed"
+  && vm.IPAddressDeny == "any"
+) "core check: hypervisor unit drifted";
 assert lib.assertMsg (
   occurrences "priority filter - 1;" == 3
   && occurrences ''iifname "br-sbx" meta nfproto ipv6 drop'' == 2
