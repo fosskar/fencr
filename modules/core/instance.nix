@@ -107,15 +107,10 @@ in
         inherit error;
         text = entry;
       };
-      decimal =
-        text: maximum:
-        let
-          matched = builtins.match "0*([1-9][0-9]*|0)" text;
-          digits = builtins.head matched;
-        in
-        matched != null
-        && lib.stringLength digits <= lib.stringLength (toString maximum)
-        && lib.toIntBase10 digits <= maximum;
+      # a number written plainly: digits without a leading zero, at most
+      # the maximum. "010" is refused rather than read as ten or eight
+      number =
+        text: maximum: builtins.match "0|[1-9][0-9]{0,9}" text != null && lib.toIntBase10 text <= maximum;
       parts = lib.splitString ":" entry;
       address = builtins.head parts;
       port = lib.last parts;
@@ -124,10 +119,8 @@ in
       portError =
         if port == "" then
           "missing port"
-        else if builtins.match "[0-9]+" port == null then
-          "port must be a decimal integer"
-        else if !decimal port 65535 || lib.toIntBase10 port < 1 then
-          "port must be between 1 and 65535"
+        else if !number port 65535 || port == "0" then
+          "port must be between 1 and 65535, written without leading zeros"
         else
           null;
     in
@@ -150,17 +143,15 @@ in
     else if builtins.match "[0-9./]+:.*" entry != null then
       if lib.length octets != 4 || !lib.all (octet: builtins.match "[0-9]+" octet != null) octets then
         invalid "expected a dotted-quad IPv4 address"
-      else if !lib.all (octet: decimal octet 255) octets then
-        invalid "octet out of range"
-      else if lib.length network > 2 || (lib.length network == 2 && !decimal (lib.last network) 32) then
-        invalid "prefix must be between 0 and 32"
+      else if !lib.all (octet: number octet 255) octets then
+        invalid "octet out of range or written with a leading zero"
+      else if lib.length network > 2 || (lib.length network == 2 && !number (lib.last network) 32) then
+        invalid "prefix must be between 0 and 32, written without leading zeros"
       else if portError != null then
         invalid portError
       else
         valid "tcp" {
-          address =
-            lib.concatMapStringsSep "." (octet: toString (lib.toIntBase10 octet)) octets
-            + lib.optionalString (lib.length network == 2) "/${toString (lib.toIntBase10 (lib.last network))}";
+          inherit address;
           port = lib.toIntBase10 port;
         }
     else if

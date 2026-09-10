@@ -100,20 +100,23 @@ assert (
   invalidOutbound "host" "host needs a port; expected host:<port>"
   && invalidOutbound "1.2.3.4" "an address needs a port"
   && invalidOutbound "example.123" "an address needs a port"
-  && invalidOutbound "300.1.1.1:80" "octet out of range"
+  && invalidOutbound "300.1.1.1:80" "octet out of range or written with a leading zero"
   && invalidOutbound "1.2.3:80" "expected a dotted-quad IPv4 address"
-  && invalidOutbound "1.2.3.4/33:80" "prefix must be between 0 and 32"
-  && invalidOutbound "1.2.3.4/24/1:80" "prefix must be between 0 and 32"
-  && lib.all (entry: invalidOutbound entry "port must be between 1 and 65535") [
-    "host:0"
-    "host:65536"
-    "1.2.3.4:0"
-    "1.2.3.4:65536"
-  ]
-  && lib.all (entry: invalidOutbound entry "port must be a decimal integer") [
-    "host:no"
-    "1.2.3.4:no"
-  ]
+  && invalidOutbound "1.2.3.4/33:80" "prefix must be between 0 and 32, written without leading zeros"
+  && invalidOutbound "1.2.3.4/24/1:80" "prefix must be between 0 and 32, written without leading zeros"
+  &&
+    lib.all
+      (entry: invalidOutbound entry "port must be between 1 and 65535, written without leading zeros")
+      [
+        "host:0"
+        "host:65536"
+        "host:080"
+        "host:00000000000000000000080"
+        "host:no"
+        "1.2.3.4:0"
+        "1.2.3.4:65536"
+        "1.2.3.4:no"
+      ]
   && lib.all (entry: invalidOutbound entry "missing port") [
     "host:"
     "1.2.3.4:"
@@ -122,8 +125,11 @@ assert (
     "host:8080:1"
     "1.2.3.4:80:1"
   ]
-  && invalidOutbound "1.2.3.4/99999999999999999999:80" "prefix must be between 0 and 32"
-  && invalidOutbound "99999999999999999999.1.1.1:80" "octet out of range"
+  && invalidOutbound "1.2.3.4/99999999999999999999:80" "prefix must be between 0 and 32, written without leading zeros"
+  && invalidOutbound "99999999999999999999.1.1.1:80" "octet out of range or written with a leading zero"
+  && invalidOutbound "010.001.002.003/08:080" "octet out of range or written with a leading zero"
+  && invalidOutbound "0255.1.1.1:80" "octet out of range or written with a leading zero"
+  && invalidOutbound "1.2.3.4/08:80" "prefix must be between 0 and 32, written without leading zeros"
   && invalidOutbound "localhost" ''"localhost": not a hostname pattern; expected "example.com" or "*.example.com"''
   && invalidOutbound "github.com:443" "expected host:<port> or <ipv4[/prefix]>:<port>; domains use TLS on 443 without a port"
 );
@@ -142,16 +148,6 @@ assert (
     address = "192.168.20.0/24";
     port = 1234;
   }
-  && outboundValue "010.001.002.003/08:080" {
-    address = "10.1.2.3/8";
-    port = 80;
-  }
-  && outboundValue "host:080" 80
-  && outboundValue "0255.1.1.1:80" {
-    address = "255.1.1.1";
-    port = 80;
-  }
-  && outboundValue "host:00000000000000000000080" 80
   && outboundKind "example.host" "domain"
   && outboundKind "*.github.com" "domain"
   && outboundKind "0.0.0.0/0:1" "tcp"
