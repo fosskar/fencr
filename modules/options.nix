@@ -179,6 +179,7 @@ in
               example = [
                 "github.com"
                 "*.github.com"
+                "!gist.github.com"
                 "host:8080"
                 "192.168.1.0/24:8123"
               ];
@@ -188,7 +189,8 @@ in
                 grants TCP to that address or subnet, including private ranges.
                 "internet" grants public IPv4 internet access and DNS, excluding
                 special-use ranges; it cannot accompany domain grants.
-                "*.github.com" does not include "github.com". domains use the
+                "*.github.com" does not include "github.com". "!name" refuses
+                a name a wildcard grant would otherwise admit. domains use the
                 host's SNI proxy, without TLS interception or external DNS.
                 empty means no explicit grants, including DNS. credential
                 grants enable their own access independently.

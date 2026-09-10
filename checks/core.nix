@@ -178,7 +178,50 @@ assert (
   && outboundKind "*.github.com" "domain"
   && outboundKind "0.0.0.0/0:1" "tcp"
   && outboundKind "255.255.255.255/32:65535" "tcp"
+  && outboundKind "!gist.github.com" "deny"
+  && outboundValue "!*.raw.github.com" "*.raw.github.com"
 );
+# a deny narrows a grant: it must sit under one, and not equal one
+assert check "deny entries under a wildcard grant"
+  (resolve "sbx" {
+    id = 0;
+    outbound = [
+      "*.github.com"
+      "github.com"
+      "!gist.github.com"
+      "!*.raw.github.com"
+    ];
+  }).deniedDomains
+  [
+    "gist.github.com"
+    "*.raw.github.com"
+  ];
+assert check "deny entries no grant covers"
+  (resolve "sbx" {
+    id = 0;
+    outbound = [
+      "github.com"
+      "!gist.github.com"
+      "!github.com"
+      "!*github.com"
+    ];
+  }).errors
+  [
+    "sbx: outbound entry \"!*github.com\": a deny entry names a domain pattern; \"*github.com\": a wildcard must be its own label (\"*.example.com\"); \"*example.com\" also matches evilexample.com"
+    "sbx: outbound entry \"!github.com\" denies the whole grant \"github.com\""
+    "sbx: outbound entry \"!gist.github.com\" denies nothing: no domain grant covers gist.github.com"
+  ];
+assert check "deny entry with internet"
+  (resolve "sbx" {
+    id = 0;
+    outbound = [
+      "internet"
+      "!gist.github.com"
+    ];
+  }).errors
+  [
+    "sbx: outbound entry \"!gist.github.com\" denies nothing: no domain grant covers gist.github.com"
+  ];
 assert lib.assertMsg (
   !(builtins.tryEval (
     builtins.deepSeq

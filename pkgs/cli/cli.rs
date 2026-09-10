@@ -23,12 +23,14 @@ fn dropped(kind: &str) -> bool {
 }
 
 /// where a grant's use shows: the counter of the rule tagged with the kind,
-/// or the proxy log's lines for hosts a pattern covers or a credential's
-/// domain. a host's table may use no grant of some source
+/// or the proxy log's lines for hosts a pattern covers, a deny pattern
+/// refused or a credential's domain. a host's table may use no grant of
+/// some source
 #[allow(dead_code)]
 enum Source {
     Counter(&'static str),
     Domain(&'static str),
+    Denied(&'static str),
     Credential(&'static str),
 }
 
@@ -268,6 +270,17 @@ fn grant_lines(
                 "connection",
                 s,
             ),
+            Source::Denied(pattern) => grant_line(
+                grant,
+                proxy
+                    .as_ref()
+                    .expect("a deny entry runs the egress proxy")
+                    .as_ref()
+                    .map(|log| connections(log, "deny ", |host| covers(pattern, host)))
+                    .map_err(Clone::clone),
+                "connection",
+                s,
+            ),
             Source::Credential(domain) => grant_line(
                 grant,
                 proxy
@@ -345,9 +358,18 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
         .flat_map(str::lines)
         .filter_map(|line| line.strip_prefix("deny "))
     {
+        // a host a deny entry refused is listed under that entry, not as
+        // a missing grant
+        let denied = vm.outbound.iter().find_map(|grant| match grant.source {
+            Source::Denied(pattern) if covers(pattern, host) => Some(pattern),
+            _ => None,
+        });
         let key = (
             format!("guest \u{2192} {host}:443/tls"),
-            format!("outbound \"{host}\""),
+            match denied {
+                Some(pattern) => format!("denied by outbound \"!{pattern}\""),
+                None => format!("outbound \"{host}\""),
+            },
         );
         *hits.entry(key).or_default() += 1;
     }

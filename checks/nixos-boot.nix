@@ -110,10 +110,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # the firewall: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
-        # private.test resolves to a private address the proxy unit denies
+        # private.test resolves to a private address the proxy unit denies.
+        # the wildcard admits every name under allowed.test except the
+        # one the deny entry names
         outbound = [
           "192.168.1.2:8123"
           "allowed.test"
+          "*.allowed.test"
+          "!sub.allowed.test"
           "private.test"
         ];
         # the web ui: reachable from the host at the guest's address, on
@@ -164,6 +168,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       networking.hosts."192.168.1.2" = [
         "allowed.test"
+        "other.allowed.test"
         "denied.test"
       ];
       networking.hosts."192.168.1.1" = [ "private.test" ];
@@ -278,6 +283,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
+      # the deny entry inside the wildcard grant: a sibling name passes,
+      # the named one is refused before any connect
+      host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://other.allowed.test/' | grep -Fx 'fencr target'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://sub.allowed.test/'", timeout=60)
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow other.allowed.test'")
+      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny sub.allowed.test'")
       # an allowed name that resolves into the lan: the proxy admits the
       # name, the unit's deny list drops the syn, so the connect times out;
       # the squatter listens on that address and would otherwise have

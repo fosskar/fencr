@@ -37,6 +37,9 @@ let
     ) cfg.allowedTCPDestinations
     ++ map (domain: grant "${domain} TLS 443" ''Source::Domain("${domain}")'') cfg.allowedDomains
     ++ map (
+      domain: grant "!${domain} TLS 443 (denied)" ''Source::Denied("${domain}")''
+    ) cfg.deniedDomains
+    ++ map (
       credential:
       grant "${credential.domain} TLS 443 (credential ${credential.name})" ''Source::Credential("${credential.domain}")''
     ) cfg.credentials;

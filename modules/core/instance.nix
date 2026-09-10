@@ -24,6 +24,7 @@ let
     caMembers
     guestTrust
     domainPatternError
+    domainCovers
     duplicates
     ;
 in
@@ -123,6 +124,14 @@ in
     in
     if entry == "internet" then
       valid "internet" entry
+    else if lib.hasPrefix "!" entry then
+      let
+        pattern = lib.removePrefix "!" entry;
+      in
+      if domainPatternError pattern != null then
+        invalid "a deny entry names a domain pattern; ${domainPatternError pattern}"
+      else
+        valid "deny" pattern
     else if entry == "host" then
       invalid "host needs a port; expected host:<port>"
     else if lib.length parts > 2 then
@@ -160,6 +169,15 @@ in
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
 
+  # "*.example.com" covers the names below example.com, not example.com;
+  # a deny pattern is covered when the name its wildcard stands under is
+  domainCovers =
+    pattern: host:
+    if lib.hasPrefix "*." pattern then
+      lib.hasSuffix (lib.removePrefix "*" pattern) host
+    else
+      pattern == host;
+
   # secrets and credentials become systemd credential ids on the host
   credentialId = value: builtins.match "[A-Za-z0-9_.-]+" value != null;
 
@@ -194,6 +212,7 @@ in
       options = declared // {
         egress = if values "internet" != [ ] then "open" else "closed";
         allowedDomains = values "domain";
+        deniedDomains = values "deny";
         allowedTCPDestinations = values "tcp";
         hostPorts = values "host";
       };
@@ -236,6 +255,23 @@ in
         ++ map (entry: "${name}: outbound entry \"${entry.text}\": ${entry.error}") (
           lib.filter (entry: entry.error != null) entries
         )
+        # a deny narrows a domain grant; one that no grant covers denies
+        # nothing and is a typo, one that equals a grant empties it
+        ++ map (pattern: "${name}: outbound entry \"!${pattern}\" denies the whole grant \"${pattern}\"") (
+          lib.filter (pattern: lib.elem pattern options.allowedDomains) options.deniedDomains
+        )
+        ++
+          map
+            (
+              pattern: "${name}: outbound entry \"!${pattern}\" denies nothing: no domain grant covers ${pattern}"
+            )
+            (
+              lib.filter (
+                pattern:
+                !lib.elem pattern options.allowedDomains
+                && !lib.any (allowed: domainCovers allowed (lib.removePrefix "*." pattern)) options.allowedDomains
+              ) options.deniedDomains
+            )
         ++ map (credential: "${name}: credential \"${credential}\" is not declared in fencr.credentials") (
           lib.filter (credential: !(credentials ? ${credential})) options.credentials
         )
@@ -263,6 +299,7 @@ in
         cpuQuota
         egress
         allowedDomains
+        deniedDomains
         hostPorts
         secrets
         allowedTCPDestinations

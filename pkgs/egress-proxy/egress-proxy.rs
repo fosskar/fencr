@@ -3,7 +3,7 @@
 //! redirects 443 to, reads the server name from the tls client hello. a
 //! credential's domain goes to the vm's credentials proxy on its unix
 //! socket, which holds the certificate; an allowed name is spliced to the
-//! real host unread; the rest is refused.
+//! real host unread, unless a deny pattern names it; the rest is refused.
 use std::io::{self, Read, Write};
 use std::net::{
     Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
@@ -16,7 +16,7 @@ use std::time::Duration;
 
 /// `*.example.com` matches any name ending in `.example.com`; anything
 /// else matches itself, case-insensitively
-fn allowed(patterns: &[String], host: &str) -> bool {
+fn matches(patterns: &[String], host: &str) -> bool {
     let host = host.to_ascii_lowercase();
     patterns
         .iter()
@@ -28,6 +28,11 @@ fn allowed(patterns: &[String], host: &str) -> bool {
             }
             None => host == *pattern,
         })
+}
+
+/// a name some allow pattern matches and no deny pattern does
+fn allowed(patterns: &[String], denied: &[String], host: &str) -> bool {
+    !matches(denied, host) && matches(patterns, host)
 }
 
 /// the server name of a tls client hello, or why there is none
@@ -166,6 +171,7 @@ fn splice<S: Server>(mut client: TcpStream, mut server: S) -> io::Result<()> {
 fn serve_tls(
     mut client: TcpStream,
     patterns: &[String],
+    denied: &[String],
     intercepts: &[String],
     socket: &str,
 ) -> io::Result<()> {
@@ -185,7 +191,7 @@ fn serve_tls(
         eprintln!("intercept {host}");
         return relay(client, &hello, UnixStream::connect(socket)?);
     }
-    if !allowed(patterns, &host) {
+    if !allowed(patterns, denied, &host) {
         eprintln!("deny {host}");
         return Ok(());
     }
@@ -258,16 +264,25 @@ fn lines(path: &str) -> io::Result<Vec<String>> {
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
-    let (Some(dns_address), Some(tls_address), Some(allowlist), Some(interceptlist), Some(socket)) = (
+    let (
+        Some(dns_address),
+        Some(tls_address),
+        Some(allowlist),
+        Some(denylist),
+        Some(interceptlist),
+        Some(socket),
+    ) = (
         args.next(),
         args.next(),
         args.next(),
         args.next(),
         args.next(),
-    ) else {
+        args.next(),
+    )
+    else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: fencr-egress-proxy <dns address:port> <tls address:port> <allowlist file> <intercept file> <credentials socket>",
+            "usage: fencr-egress-proxy <dns address:port> <tls address:port> <allowlist file> <denylist file> <intercept file> <credentials socket>",
         ));
     };
     let invalid = |what: &str| {
@@ -280,6 +295,7 @@ fn run() -> io::Result<()> {
     let tls_address: SocketAddrV4 = tls_address.parse().map_err(|_| invalid("tls address"))?;
     let answer = *dns_address.ip();
     let patterns: Arc<Vec<String>> = Arc::new(lines(&allowlist)?);
+    let denied: Arc<Vec<String>> = Arc::new(lines(&denylist)?);
     let intercepts: Arc<Vec<String>> = Arc::new(lines(&interceptlist)?);
     let socket: Arc<str> = Arc::from(socket);
     // the bridge gets its address from networkd; be there when it does
@@ -301,10 +317,11 @@ fn run() -> io::Result<()> {
     for client in listener.incoming() {
         let client = client?;
         let patterns = Arc::clone(&patterns);
+        let denied = Arc::clone(&denied);
         let intercepts = Arc::clone(&intercepts);
         let socket = Arc::clone(&socket);
         thread::spawn(move || {
-            if let Err(error) = serve_tls(client, &patterns, &intercepts, &socket) {
+            if let Err(error) = serve_tls(client, &patterns, &denied, &intercepts, &socket) {
                 eprintln!("relay: {error}");
             }
         });
@@ -378,12 +395,26 @@ mod tests {
     #[test]
     fn a_wildcard_matches_subdomains_only() {
         let patterns = vec!["*.github.com".to_string(), "example.com".to_string()];
-        assert!(allowed(&patterns, "api.github.com"));
-        assert!(allowed(&patterns, "API.GitHub.com"));
-        assert!(allowed(&patterns, "example.com"));
-        assert!(!allowed(&patterns, "github.com"));
-        assert!(!allowed(&patterns, "evilgithub.com"));
-        assert!(!allowed(&patterns, "www.example.com"));
+        assert!(allowed(&patterns, &[], "api.github.com"));
+        assert!(allowed(&patterns, &[], "API.GitHub.com"));
+        assert!(allowed(&patterns, &[], "example.com"));
+        assert!(!allowed(&patterns, &[], "github.com"));
+        assert!(!allowed(&patterns, &[], "evilgithub.com"));
+        assert!(!allowed(&patterns, &[], "www.example.com"));
+    }
+
+    #[test]
+    fn a_deny_pattern_wins_inside_a_grant() {
+        let patterns = vec!["*.github.com".to_string()];
+        let denied = vec![
+            "gist.github.com".to_string(),
+            "*.raw.github.com".to_string(),
+        ];
+        assert!(allowed(&patterns, &denied, "api.github.com"));
+        assert!(!allowed(&patterns, &denied, "gist.github.com"));
+        assert!(!allowed(&patterns, &denied, "GIST.github.com"));
+        assert!(allowed(&patterns, &denied, "raw.github.com"));
+        assert!(!allowed(&patterns, &denied, "x.raw.github.com"));
     }
 
     #[test]

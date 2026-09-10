@@ -45,6 +45,10 @@ in
           lib.concatMapStrings (domain: "${domain}\n") instance.allowedDomains
         )
       } ${
+        pkgs.writeText "fencr-egress-denied" (
+          lib.concatMapStrings (domain: "${domain}\n") instance.deniedDomains
+        )
+      } ${
         pkgs.writeText "fencr-egress-intercepts" (
           lib.concatMapStrings (credential: "${credential.domain}\n") instance.credentials
         )
