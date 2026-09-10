@@ -13,6 +13,9 @@ learned, not from their conclusions.
   (nixbox, one agent vm with three services and a migrated state tree)
 - 2026-09-06, the same day: Firecracker replaced crosvm, accepted after
   `checks.nixos-boot` passed with its assertions unchanged, under nested kvm
+- 2026-09-10: the host and guest configuration read against Firecracker's
+  `docs/prod-host-setup.md` and the other agent sandboxes on Firecracker;
+  what that changed is the last section
 
 ## qemu, the start
 
@@ -156,15 +159,16 @@ What the port changed:
   each start
 - the runner boots `vmlinux` from the kernel's `dev` output, 400 MiB with
   debug symbols; fencr strips it to 57 MiB. A bzImage needs Firecracker
-  1.17, unreleased (issue 10)
+  1.17, unreleased (issue 22)
 
 Removed with crosvm: the microvm.nix patch, the fw_cfg ssdt, the
 user-namespace assertion, the vhost-vsock device and the `vhost_vsock`
 module, the cid check in the relay.
 
-Carried over without a new test: `ProcSubset` and `ProtectProc` are still
-off on the vm unit. They were turned off for crosvm's device jails; whether
-Firecracker runs with them on has not been tried.
+Carried over without a new test at the time: `ProcSubset` and
+`ProtectProc` stayed off on the vm unit, as crosvm's device jails had
+needed. Tried on 2026-09-10 with the boot check: Firecracker runs with
+both, and they are on.
 
 Cost:
 
@@ -178,3 +182,62 @@ Cost:
 Why it was the better trade: fewer devices, one process, versioned
 releases, no patch to carry, and the hypervisor the field settled on.
 Against `main` the port removed more lines than it added.
+
+## 2026-09-10: the production host review
+
+Firecracker's `docs/prod-host-setup.md`, `design.md`, `jailer.md` and
+`block.md` read against the vm unit and the runner's defaults, and the
+setup compared with E2B, Fly Sprites, Docker Sandboxes and Claude Code's
+sandbox. Firecracker was 1.16.1 throughout; what needs 1.17 is filed
+(issues 21, 22, 23).
+
+Changed:
+
+- the state image honours flushes. microvm.nix's runner leaves
+  `cache_type` at Firecracker's default `Unsafe`, which does not advertise
+  the virtio flush feature: the guest's journal commits stayed in the
+  host page cache and a host crash could leave the persistent image
+  inconsistent. `Writeback` turns each guest flush into a host `fsync`.
+  The runner's drive list is restated in `firecracker.extraConfig.drives`
+  for it, since lists are replaced, not merged
+- the block engine stays `Async` (io_uring), the runner's default.
+  Firecracker calls it a developer preview because the io_uring workers
+  escaped the process's cgroup on its 5.10 host kernel; "starting with
+  kernel 5.12 the Firecracker cgroup is inherited", and every host fencr
+  runs on is past that. Faster on nvme, and only 1.17's `discard` needs
+  `Sync`
+- a virtio-rng: `firecracker.extraConfig.entropy`, so the guest's
+  randomness does not rest on rdrand and jitter alone
+- the vm unit runs in an empty read-only root: `TemporaryFileSystem=/:ro`
+  with the store, the run directory and the state directory bound in,
+  which is what the jailer builds with its chroot. The unit had seen the
+  whole host filesystem read-only. `ProtectSystem` and `ProtectHome`
+  silently win over the tmpfs and are off on this unit; the boot check
+  enters the process's mount namespace as the vm's user and finds no
+  `/etc`, no `/var/lib/fencr`, no `/proc/1`. `PrivateIPC` on every unit
+- per-vm caps beyond cpu and memory: `diskBandwidth` and
+  `networkBandwidth` as Firecracker's token buckets on the state drive
+  and the tap, off by default, filesystem-agnostic where the cgroup io
+  controller is not; `maxConnections` as a `ct count` rule in the vm's
+  forward and input chains, 2048 by default, so a port scan cannot fill
+  the host's conntrack table. The two chains count separately
+- a warning for a swap partition without random encryption: guest memory
+  is the hypervisor's memory and would outlive the vm on disk
+
+Considered and left:
+
+- disabling smt (`nosmt`) as Firecracker recommends for tenant
+  separation: a host-owner's call, not a module default, since it costs
+  the second thread of every core
+- the pci transport: microvm.nix passes `--enable-pci` to Firecracker
+  1.13 and later, so the virtio devices ride the newer, larger pci
+  transport rather than mmio, which fencr does not need. A flag cannot
+  be removed through `firecracker.extraArgs`; it needs an upstream option
+- the serial console: enabled by the runner, guest-controlled output into
+  the host journal, kept for now for boot debugging (issue 24)
+- the jailer itself: its effects are all present in the unit now, and
+  the unit is one place instead of two binaries
+
+Measured on the way: Firecracker 1.16 leaves host-to-guest vsock dead
+after a bare pause/resume (fixed in 1.17, `#6100`), which takes the
+power button with it; `checkpoints.md` has the consequence.

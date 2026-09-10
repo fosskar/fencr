@@ -48,13 +48,19 @@ forwarded agent while connected).
 On the host itself the same tool covers the day-to-day reads:
 
 ```console
-fencr list        # declared vms: id, ip, inbound and outbound grants
-fencr ssh sbx     # shell in the vm
-fencr status sbx  # the vm unit plus its proxy and credential units
+fencr list                    # declared vms: id, ip, inbound and outbound grants
+fencr ssh sbx                 # shell in the vm
+fencr status sbx              # grants and their use, blocked traffic, credential requests
+fencr status --watch          # the same, refreshed
+fencr checkpoint sbx [name]   # copy the vm's disk now
+fencr checkpoints sbx         # list the copies; --rm <name> removes one
+fencr restore sbx <name>      # stop, put the copy in place, start
 ```
 
-Every command but `ssh` is a read; changing a vm's configuration means
-changing the system configuration and running `nixos-rebuild`.
+`list` and `status` read; `ssh` runs as guest root; `checkpoint` and
+`restore` change the vm's state, not its configuration. Changing a vm's
+configuration means changing the system configuration and running
+`nixos-rebuild`.
 
 ## host root, stated plainly
 

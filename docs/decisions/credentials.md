@@ -28,9 +28,12 @@ Nothing here is a rule.
   borrow the credential through it. The unit denies private ranges, so an
   upstream name cannot resolve into the lan. An https upstream is tls the
   host originates
-- not yet: method or path scoping on an upstream, which is a matter of
-  options since the proxy sees the request; a credential shared by several
-  vms through one proxy process
+- `allow` entries scope a credential by method and path since 2026-09-10;
+  every request it rides on is on record. Not yet: a credential shared by
+  several vms through one proxy process; a secret that must sit in a URL
+  or a body rather than a header (issue 26); a value resolved from a
+  command or a vault at use time rather than read from `secretFile` at
+  unit start (issue 25)
 
 ## 2026-09-06, morning: a loopback port in the guest
 
@@ -100,3 +103,31 @@ authority, ends the tls, replaces the header and sends the request on.
 - the boot check calls `https://api.test/` from the guest without
   `--insecure` and sees the header replaced; the authority is trusted
   without the test saying so
+
+## 2026-09-10: what the proxy sees, it records and may refuse
+
+The credential proxy ends the tls, so it holds each request in the clear
+for the moment it forwards it. Two things followed from that, both
+compared against Docker Sandboxes, Claude Code's sandbox and Coder's
+`boundary`, which all sit in the same place:
+
+- `fencr.credentials.<name>.allow` lists `"<methods> <path>"` entries,
+  `"GET,HEAD *"`, `"POST /repos/*/pulls"`. The caddyfile renders one
+  matcher and handle per entry and answers 403 itself for the rest, so a
+  refused request never reaches the upstream. Empty keeps every request
+  admitted. A github token can then open pull requests and read, and not
+  delete a repository, whatever the token itself allows. For a model
+  provider with one endpoint it changes nothing
+- caddy's access log writes one json record per request to the journal,
+  method, host, path and status, with request and response headers
+  filtered out since the guest's own header sits there. `fencr status`
+  aggregates them under "Credential requests". Before this the only trace
+  was the egress proxy's `intercept <host>` line, which says a connection
+  went in and nothing about what it carried
+
+The same day the shell wrapper that read each secret into a
+`FENCR_CREDENTIAL_<n>` environment variable went: caddy's `{file.<path>}`
+placeholder reads the credential file at request time, strips the one
+trailing newline a secret file carries, and `{$CREDENTIALS_DIRECTORY}` is
+filled in when the caddyfile is parsed. The secret no longer sits in the
+process environment.

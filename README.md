@@ -20,15 +20,20 @@ Those modules are also responsible for getting code into the VM.
 ## Highlights
 
 - API keys never enter the VM: the host terminates the API's TLS and injects
-  the header; a compromised agent can spend a key but not read it.
+  the header; a compromised agent can spend a key but not read it, and
+  `allow` entries bound what it can spend it on.
 - Deny by default, including DNS. Grants are single strings: a server name,
-  a host port, an address and port, or `"internet"` without private ranges.
-- One Firecracker microVM per agent, run by its own unprivileged user.
+  a host port, an address and port, or `"internet"` without private ranges;
+  `"!name"` carves a name out of a wildcard grant.
+- One Firecracker microVM per agent, run by its own unprivileged user in an
+  empty root, with CPU, memory, disk, network and connection caps.
 - Plain NixOS configuration, deployed with `nixos-rebuild`; no daemon, no
   database.
-- The guest persists like a machine; only its Nix store is replaced.
-- `fencr status` shows what each grant carried and what was blocked, with
-  the entry that would allow it.
+- The guest persists like a machine; only its Nix store is replaced. A
+  checkpoint of its disk is taken after every clean stop, on demand, or on a
+  timer, and `fencr restore` puts one back.
+- `fencr status` shows what each grant carried, every request a credential
+  rode on, and what was blocked, with the entry that would allow it.
 
 ## Configuration
 
@@ -64,7 +69,9 @@ adding a VM whose name sorts earlier moves the ones after it, so set `id`
 to pin one.
 
 The host requires `/dev/kvm` and systemd-networkd. The module enables
-nftables and disables kernel same-page merging (KSM).
+nftables and disables kernel same-page merging (KSM). A swap partition
+without `randomEncryption` draws a warning at evaluation: guest memory is
+the hypervisor's memory and would land on it in plain text.
 
 By default, each VM has:
 
@@ -72,15 +79,20 @@ By default, each VM has:
 - SSH at the VM's address on its bridge, enabled only when authorized keys
   are configured;
 - 4 vCPUs, 4096 MiB of guest memory, a systemd `MemoryMax` 512 MiB above
-  it and `400%` `CPUQuota`;
+  it and `400%` `CPUQuota`; disk and network bandwidth unlimited; at most
+  2048 open connections;
 - a 32768 MiB sparse disk image as its root filesystem, stored on the host
-  at `/var/lib/fencr-vms/<name>/state.img`;
+  at `/var/lib/fencr-vms/<name>/state.img`, whose flushes reach the host
+  disk (Firecracker's `Writeback` cache), with a copy taken after every
+  clean stop and the last five kept;
 - a read-only image containing its Nix store closure, without a host store
   share.
 
-`vcpu`, `mem`, `memoryMax`, `cpuQuota` and `stateSize` configure these limits.
-Increasing `stateSize` grows the state image on the next start; it does not
-shrink existing images.
+`vcpu`, `mem`, `memoryMax`, `cpuQuota`, `stateSize`, `diskBandwidth`,
+`networkBandwidth` and `maxConnections` configure these limits;
+`checkpoints.onStop`, `checkpoints.interval` and `checkpoints.keep` the
+copies. Increasing `stateSize` grows the state image on the next start; it
+does not shrink existing images.
 
 ## Network access
 
@@ -108,6 +120,7 @@ Each `outbound` string grants one kind of access:
 | --- | --- |
 | `"github.com"` | TLS on port 443 to that server name. No port suffix. |
 | `"*.github.com"` | TLS on port 443 to subdomains, not bare `github.com`. |
+| `"!gist.github.com"` | Refuses a name a wildcard grant would otherwise admit. |
 | `"host:8123"` | TCP to port 8123 on the host, over the VM's bridge. |
 | `"192.168.20.0/24:1234"` | TCP to an IPv4 address or subnet and port, including private destinations. |
 | `"internet"` | Public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly granted. |
@@ -160,8 +173,27 @@ client that insists on a key can be given any placeholder. The VM's system
 trust store carries the authority; Python's `certifi` and Node read it
 through `NIX_SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`, which fencr sets. A
 client that pins the upstream's real certificate cannot use a credential.
-The agent can still exercise the API permissions the credential grants.
-Method and path restrictions are not implemented.
+
+The agent can exercise every API permission the credential grants unless
+`allow` narrows it to methods and paths; a request outside the list is
+answered 403 on the host and never reaches the upstream. Every request a
+credential rides on is logged with its method, path and status, which
+`fencr status` lists:
+
+```nix
+fencr.credentials.github = {
+  upstream = "https://api.github.com";
+  secretFile = "/run/secrets/github";
+  allow = [
+    "GET,HEAD *"
+    "POST /repos/*/pulls"
+  ];
+};
+```
+
+This works for any HTTPS API that takes its secret in a header, so `gh`,
+`npm` or an MCP server behind `domain = "mcp.fencr"` use it like a model
+provider does.
 
 An upstream on host loopback has no name a VM could call; give it one with
 `domain`, for example `domain = "mcp.fencr"` for
@@ -183,8 +215,16 @@ The module installs the `fencr` command on the host:
 fencr list
 fencr status myagent
 fencr status --watch
+fencr checkpoint myagent before-refactor
+fencr checkpoints myagent
+fencr restore myagent before-refactor
 ssh myagent
 ```
+
+A checkpoint is a copy of the VM's disk beside it, instant where the host
+filesystem has reflinks (btrfs, xfs, OpenZFS 2.3); `restore` stops the VM,
+puts the copy in place and starts it again. See
+[access](docs/access.md#checkpoints).
 
 `fencr.vms.<name>.authorizedKeys` authorizes root SSH access to one VM;
 `fencr.adminKeys` authorizes root SSH access to every VM. Host root remains
@@ -212,7 +252,10 @@ in `modules/core/`, and the `fencr` command and the egress proxy in `pkgs/`. Fla
 checks cover the NixOS module, the builders, the CLI, the egress proxy and
 NixOS boot integration. Firecracker replaced crosvm, which had replaced
 QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds the
-history and the costs.
+history, the costs, and what Firecracker's production host guidance
+changed: the hypervisor process runs in an empty read-only root as its
+jailer would build, guest flushes reach the host disk, and the guest has
+a virtio-rng.
 
 The design decisions explain the scope and security model:
 
@@ -222,3 +265,4 @@ The design decisions explain the scope and security model:
 - [Domain egress](docs/decisions/domain-egress-proxy.md)
 - [Credentials](docs/decisions/credentials.md)
 - [Hypervisor](docs/decisions/hypervisor.md)
+- [Checkpoints](docs/decisions/checkpoints.md)

@@ -6,8 +6,9 @@ fencr provides sealed Firecracker microVMs through `nixosModules.fencr` (also
 `nixosModules.default`). Payloads are NixOS modules supplied through
 `fencr.vms.<name>.services`; fencr ships no agent, repository cloning, or host
 working-tree mounts. `nixos-rebuild` is the control plane; the `fencr` CLI does
-not mutate host configuration, but `fencr ssh` can run commands as guest root.
-Instance and unit tables are compiled into its binary.
+not mutate host configuration, but `fencr ssh` can run commands as guest root
+and `fencr checkpoint`/`fencr restore` change a vm's disk state. Instance and
+unit tables are compiled into its binary.
 
 Design rationale lives in `docs/decisions/`. Consult the relevant record before
 changing a boundary. `hypervisor.md` holds the qemu, crosvm and Firecracker
@@ -27,9 +28,11 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   `proxyTlsPort`, which `redirectRules` reaches from the guest's 53 and 443),
   `firewall.nix` (the vm's nftables tables: `forwardRules`, `inputRules`,
   `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
-  `credentials.nix` (the authority and credential proxies), `host-units.nix`
-  (`hostUnits`, the secrets socket) and `guest.nix` (`guestBase`, with the
-  boot-time fetch in `guest-secrets.sh`). `guestPortsOf` in `instance.nix` is
+  `credentials.nix` (the authority and credential proxies, `parseAllow`),
+  `checkpoint.nix` (`checkpointScript`, `checkpointUnits`, `apiSocketOf`),
+  `host-units.nix` (`hostUnits`: services, sockets, timers) and `guest.nix`
+  (`guestBase`, with the boot-time fetch in `guest-secrets.sh`). `emptyRootOf`
+  in `hardening.nix` is the vm unit's and the checkpoint unit's sandbox. `guestPortsOf` in `instance.nix` is
   the one list of guest ports the host may reach; the guest firewall and the
   output chain both take it. Keep shared defaults in `core.defaults` and
   derivation logic here rather than duplicating it in the module or CLI.
@@ -42,8 +45,8 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   answers DNS
   queries, hands credential domains to their proxies by TLS SNI and applies the
   allowlist to the rest. Both use `pkgs.writers.writeRustBin` with Rust edition
-  2024, not a Cargo workspace; `nix build .#egress-proxy` builds the proxy
-  on its own. `checks/cli.nix` feeds the command a ruleset
+  2024, not a Cargo workspace, and both get `pkgs/domain.rs` (`covers`, the
+  one wildcard rule) appended to their source at build; `nix build .#egress-proxy` builds the proxy on its own. `checks/cli.nix` feeds the command a ruleset
   rendered by `firewallOf` and canned journal lines, so its parsers run on the
   text the firewall writes.
 - The bridge is the road between host and guest: the guest's sshd and its
@@ -122,7 +125,11 @@ nix flake check
   builds the resulting NixOS toplevel, not just evaluation.
 - `checks/nixos-boot.nix` runs a Firecracker guest inside a NixOS test VM,
   requiring nested KVM; on x86_64 the test VM uses `-cpu host` because Firecracker
-  needs `KVM_CAP_XCRS`; on aarch64 it uses `-cpu cortex-a72`. It checks SSH, raw secrets, persistent state, ingress, denied
-  traffic, domain egress, credential injection, and a clean stop. Its timeout
-  is 1800 seconds; `nix flake check` includes this integration test.
+  needs `KVM_CAP_XCRS`; on aarch64 it uses `-cpu cortex-a72`. The state
+  images sit on a btrfs disk so reflinks exist. It checks SSH, raw secrets,
+  persistent state, the hypervisor's empty root, ingress, denied traffic,
+  domain egress with a deny entry, credential injection with `allow`
+  entries and the access log, checkpoints and restore, and a clean stop.
+  Its timeout is 1800 seconds; `nix flake check` includes this integration
+  test.
 - `effects.nix` defines nixbot's scheduled flake-input updates.

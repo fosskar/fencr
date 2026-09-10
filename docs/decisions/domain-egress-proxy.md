@@ -63,10 +63,13 @@ names the destination explicitly on every connection.
 
 ## inbound and outbound grants
 
-The public interface now uses `inbound` and `outbound` instead of `expose`,
-`hostPorts`, `egress`, `allowedDomains` and `allowedTCPDestinations`.
-The enforcement mechanisms above are unchanged; `resolveInstance` partitions
-these grants into the existing internal fields for the builders.
+The public interface uses `inbound` and `outbound` instead of the earlier
+`expose`, `hostPorts`, `egress`, `allowedDomains` and
+`allowedTCPDestinations`. The enforcement mechanisms above are unchanged;
+`resolveInstance` sorts the entries by kind into `internet`, `domains`,
+`denied`, `hostPorts` and `destinations`, which the firewall and proxy
+builders read (2026-09-10: the fields took the parser's names; they had
+kept the old option names for a while).
 
 `outbound` is one list of strings: domains mean TLS on 443, `host:<port>`
 means host TCP access, `<ipv4[/prefix]>:<port>` means address-based TCP
@@ -77,6 +80,17 @@ sets. The distinction between proxy and firewall enforcement stays internal.
 `internet` cannot accompany domain grants: public internet access makes those
 restrictions ineffective and uses the host's resolver rather than the SNI
 proxy's DNS answers. Host and address grants can accompany either mode.
+
+## deny entries, 2026-09-10
+
+`"!name"` refuses a name a wildcard grant would otherwise admit:
+`[ "*.github.com" "!gist.github.com" ]`. The proxy checks the deny list
+before the allowlist, and `fencr status` lists the entry with the
+connections it refused. A deny no grant covers is rejected at evaluation
+as a typo, and one equal to a grant as emptying it. The one rule for what a
+pattern covers, case-insensitive, `*.x` never matching bare `x`, lives in
+`pkgs/domain.rs` and is compiled into both the proxy and the command;
+`instance.nix` carries it a third time for evaluation-time checks.
 
 `inbound` is a list of integer guest TCP ports. It has no `from` field because
 only host-to-guest access is supported; it does not publish ports externally.
