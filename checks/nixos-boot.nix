@@ -275,6 +275,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("fencr checkpoints sbx | grep '^stop-'")
       host.succeed("fencr checkpoint sbx before-agent | grep '^before-agent '")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/checkpoints/before-agent.img)\" = fencr-sbx:600")
+      # the copy is on disk when the command returns, not only in page cache
+      host.succeed("test \"$(stat -c %b /var/lib/fencr-vms/sbx/checkpoints/before-agent.img)\" -gt 0")
       host.succeed(f"{ssh} 'test -f ~/fencr-probe && echo after > ~/fencr-after && sync'", timeout=60)
       host.succeed("fencr restore sbx before-agent")
       host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)

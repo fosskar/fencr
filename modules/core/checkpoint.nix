@@ -92,6 +92,9 @@ in
         exit 1
       fi
       mv "$dir/$name.img.tmp" "$dir/$name.img"
+      # a clone that has not reached the disk is lost with the host, and on
+      # zfs its blocks are unaccounted until the transaction group commits
+      sync -f "$dir/$name.img"
       echo "fencr: checkpoint $name"
       for kind in stop timer; do
         find "$dir" -maxdepth 1 -name "$kind-*.img" | sort | head -n -${toString instance.checkpoints.keep} | xargs -r rm --
