@@ -1,8 +1,32 @@
 { core, ... }:
 let
-  inherit (core) hardened specialUseNetworks;
+  inherit (core)
+    hardened
+    specialUseNetworks
+    runDirOf
+    stateDirOf
+    ;
 in
 {
+
+  # the vm's own view of the host: an empty read-only tmpfs with the
+  # store, the run directory and the state directory bound in, which is
+  # what firecracker's jailer builds with its chroot. ProtectSystem and
+  # ProtectHome would silently win over the tmpfs, so they are left out
+  emptyRootOf =
+    name:
+    removeAttrs hardened [
+      "ProtectHome"
+      "ProtectSystem"
+    ]
+    // {
+      TemporaryFileSystem = "/:ro";
+      BindReadOnlyPaths = [ "/nix/store" ];
+      BindPaths = [
+        (runDirOf name)
+        (stateDirOf name)
+      ];
+    };
 
   hardened = {
     CapabilityBoundingSet = "";

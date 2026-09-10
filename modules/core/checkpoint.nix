@@ -7,7 +7,7 @@ let
     apiSocketOf
     userOf
     unitsOf
-    hardened
+    emptyRootOf
     checkpointDirOf
     checkpointScript
     ;
@@ -123,24 +123,13 @@ in
     {
       services."${units.checkpoint}@" = {
         description = "checkpoint %i of fencr sandbox ${instance.name}";
-        serviceConfig =
-          removeAttrs hardened [
-            "ProtectHome"
-            "ProtectSystem"
-          ]
-          // {
-            Type = "oneshot";
-            User = userOf instance.name;
-            ExecStart = "${script} %i";
-            TemporaryFileSystem = "/:ro";
-            BindReadOnlyPaths = [ "/nix/store" ];
-            BindPaths = [
-              (runDirOf instance.name)
-              (stateDirOf instance.name)
-            ];
-            RestrictAddressFamilies = [ "AF_UNIX" ];
-            IPAddressDeny = "any";
-          };
+        serviceConfig = emptyRootOf instance.name // {
+          Type = "oneshot";
+          User = userOf instance.name;
+          ExecStart = "${script} %i";
+          RestrictAddressFamilies = [ "AF_UNIX" ];
+          IPAddressDeny = "any";
+        };
       };
       timers = lib.optionalAttrs (instance.checkpoints.interval != null) {
         ${units.checkpoint} = {

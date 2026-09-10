@@ -1,13 +1,12 @@
 { lib, core, ... }:
 let
   inherit (core)
-    stateDirOf
     stateImageOf
     userOf
     runDirOf
     vsockOf
     powerPort
-    hardened
+    emptyRootOf
     checkpointScript
     ;
 in
@@ -18,12 +17,8 @@ in
   # state image has a stable owner; group kvm is for /dev/kvm and the tap.
   # AF_INET is for the tap ioctls only. the runner creates the state image
   # on first start; a larger stateSize grows it here and the guest grows
-  # the filesystem.
-  # the root is an empty read-only tmpfs with the store, the run directory
-  # and the state directory bound in, which is what firecracker's jailer
-  # builds with its chroot: code that escapes the vm into this process
-  # finds no host file to read. ProtectSystem and ProtectHome would
-  # silently win over the tmpfs, so they are left off here
+  # the filesystem. the process sees the empty root: code that escapes
+  # the vm into it finds no host file to read
   vmService =
     pkgs: instance: runner:
     let
@@ -37,10 +32,8 @@ in
       # firecracker installs its own per-thread allowlist, tighter than
       # @system-service and including mincore, which that group lacks
       serviceConfig =
-        removeAttrs hardened [
+        removeAttrs (emptyRootOf instance.name) [
           "PrivateDevices"
-          "ProtectHome"
-          "ProtectSystem"
           "SystemCallFilter"
         ]
         // {
@@ -73,12 +66,6 @@ in
           MemoryMax = instance.memoryMax;
           CPUQuota = instance.cpuQuota;
           CPUWeight = 20;
-          TemporaryFileSystem = "/:ro";
-          BindReadOnlyPaths = [ "/nix/store" ];
-          BindPaths = [
-            runDir
-            (stateDirOf instance.name)
-          ];
           DevicePolicy = "closed";
           DeviceAllow = [
             "/dev/kvm rw"

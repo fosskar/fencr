@@ -567,4 +567,4 @@ assert lib.assertMsg (
       (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost
   && silent.serviceConfig.ExecStopPost == [ ]
 ) "unit check: checkpoints are not wired";
-pkgs.writeText "fencr-core-check" (builtins.toJSON units.unitNames)
+pkgs.writeText "fencr-core-check" (builtins.toJSON (lib.attrNames units.services))

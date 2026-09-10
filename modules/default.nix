@@ -87,7 +87,6 @@ in
       (import ../pkgs/cli {
         inherit lib pkgs;
         instances = resolvedInstances;
-        units = unitSets;
       })
     ];
 

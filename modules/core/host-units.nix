@@ -16,6 +16,9 @@ let
 in
 {
 
+  # the vm's host units beside the hypervisor unit: the credential proxy,
+  # the secrets relay, the egress proxy and the checkpoint units, each
+  # present only when the instance calls for it
   hostUnits =
     pkgs: instance:
     let
@@ -24,20 +27,57 @@ in
       caService = "${caUnit}.service";
       credentialUnits = lib.optional (instance.credentials != [ ]) "${units.credentials}.service";
       checkpoints = checkpointUnits pkgs instance;
-      credentialServices = lib.optionalAttrs (instance.credentials != [ ]) {
-        ${units.credentials} = {
-          description = "credentials for ${instance.name}";
-          wantedBy = [ "multi-user.target" ];
-          requires = [ caService ];
-          after = [ caService ];
-          serviceConfig = credentialServiceConfig pkgs instance;
-        };
-      };
       # raw secrets, served once per boot as a tar stream of the unit's
       # credentials directory into a connection the guest opened; the
       # host's ca certificate rides along for a vm with a credential
-      secretsUnits = lib.optionalAttrs (instance.secrets != { } || instance.credentials != [ ]) {
-        socket.${units.secrets} = {
+      secrets = instance.secrets != { } || instance.credentials != [ ];
+    in
+    {
+      services =
+        lib.optionalAttrs (instance.credentials != [ ]) {
+          ${units.credentials} = {
+            description = "credentials for ${instance.name}";
+            wantedBy = [ "multi-user.target" ];
+            requires = [ caService ];
+            after = [ caService ];
+            serviceConfig = credentialServiceConfig pkgs instance;
+          };
+        }
+        // checkpoints.services
+        // lib.optionalAttrs secrets {
+          "${units.secrets}@" = {
+            description = "raw secrets for ${instance.name}";
+            after = [ vmUnit ] ++ lib.optional (instance.credentials != [ ]) caService;
+            requisite = [ vmUnit ];
+            requires = lib.optional (instance.credentials != [ ]) caService;
+            partOf = [ vmUnit ];
+            unitConfig.CollectMode = "inactive-or-failed";
+            # a throwaway uid: a bug in tar shares nothing with the hypervisor
+            serviceConfig = hardened // {
+              DynamicUser = true;
+              StandardInput = "socket";
+              StandardError = "journal";
+              RestrictAddressFamilies = "none";
+              LoadCredential =
+                lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
+                ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCert}";
+              ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
+                exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
+              '';
+            };
+          };
+        }
+        // lib.optionalAttrs instance.proxy {
+          ${units.proxy} = {
+            description = "egress proxy for ${instance.name}";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network.target" ] ++ credentialUnits;
+            wants = credentialUnits;
+            serviceConfig = egressProxyServiceConfig pkgs instance;
+          };
+        };
+      sockets = lib.optionalAttrs secrets {
+        ${units.secrets} = {
           description = "raw secrets for ${instance.name}";
           wantedBy = [ "sockets.target" ];
           socketConfig = {
@@ -48,50 +88,7 @@ in
             MaxConnections = 4;
           };
         };
-        service."${units.secrets}@" = {
-          description = "raw secrets for ${instance.name}";
-          after = [ vmUnit ] ++ lib.optional (instance.credentials != [ ]) caService;
-          requisite = [ vmUnit ];
-          requires = lib.optional (instance.credentials != [ ]) caService;
-          partOf = [ vmUnit ];
-          unitConfig.CollectMode = "inactive-or-failed";
-          # a throwaway uid: a bug in tar shares nothing with the hypervisor
-          serviceConfig = hardened // {
-            DynamicUser = true;
-            StandardInput = "socket";
-            StandardError = "journal";
-            RestrictAddressFamilies = "none";
-            LoadCredential =
-              lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
-              ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCert}";
-            ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
-              exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
-            '';
-          };
-        };
       };
-    in
-    {
-      services =
-        credentialServices
-        // checkpoints.services
-        // secretsUnits.service or { }
-        // lib.optionalAttrs instance.proxy {
-          ${units.proxy} = {
-            description = "egress proxy for ${instance.name}";
-            wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ] ++ credentialUnits;
-            wants = credentialUnits;
-            serviceConfig = egressProxyServiceConfig pkgs instance;
-          };
-        };
-      sockets = secretsUnits.socket or { };
       inherit (checkpoints) timers;
-      unitNames = {
-        vm = vmUnit;
-        checkpoint = "${units.checkpoint}@";
-        proxy = lib.optional instance.proxy "${units.proxy}.service";
-        credentials = credentialUnits;
-      };
     };
 }

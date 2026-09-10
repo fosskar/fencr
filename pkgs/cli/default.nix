@@ -6,7 +6,6 @@
   lib,
   pkgs,
   instances,
-  units,
 }:
 let
   core = import ../../modules/core { inherit lib; };
@@ -43,14 +42,18 @@ let
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${units.${name}.unitNames.vm}", checkpoint_unit: "${
-      units.${name}.unitNames.checkpoint
-    }", state_dir: "${core.stateDirOf name}" },'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, cid: ${toString cfg.cid}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${(core.unitsOf name).vm}.service", checkpoint_unit: "${(core.unitsOf name).checkpoint}@", state_dir: "${core.stateDirOf name}" },'';
 
-  proxiedRows = name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.proxy;
+  # the proxy and credential units a vm runs, for the journals the
+  # command reads
+  proxiedRows =
+    name: cfg: lib.optional cfg.proxy ''("${name}", "${(core.unitsOf name).proxy}.service"),'';
 
   credentialRows =
-    name: unitSet: map (unit: ''("${name}", "${unit}"),'') unitSet.unitNames.credentials;
+    name: cfg:
+    lib.optional (
+      cfg.credentials != [ ]
+    ) ''("${name}", "${(core.unitsOf name).credentials}.service"),'';
 in
 pkgs.writers.writeRustBin "fencr"
   {
@@ -69,12 +72,12 @@ pkgs.writers.writeRustBin "fencr"
 
       // vm, egress proxy unit
       static PROXIED: &[(&str, &str)] = &[
-      ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows units))}
+      ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows instances))}
       ];
 
       // vm, credential unit
       static CREDENTIALS: &[(&str, &str)] = &[
-      ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList credentialRows units))}
+      ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList credentialRows instances))}
       ];
 
       const SSH: &str = "${pkgs.openssh}/bin/ssh";

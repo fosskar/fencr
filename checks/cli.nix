@@ -118,7 +118,6 @@ let
       nftables = nft;
     };
     inherit instances;
-    units = lib.mapAttrs (_: core.hostUnits pkgs) instances;
   };
 in
 pkgs.runCommand "fencr-cli-check" { } ''
