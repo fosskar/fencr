@@ -469,8 +469,8 @@ assert lib.assertMsg (
   && lib.hasInfix "https://second.example.com {" caddyfile
   && lib.hasInfix "tls internal" caddyfile
   && lib.hasInfix "reverse_proxy https://api.example.com" caddyfile
-  && lib.hasInfix ''header_up Authorization "{$FENCR_CREDENTIAL_0}"'' caddyfile
-  && lib.hasInfix ''header_up x-key "{$FENCR_CREDENTIAL_1}"'' caddyfile
+  && lib.hasInfix ''header_up Authorization "{file.{$CREDENTIALS_DIRECTORY}/api}"'' caddyfile
+  && lib.hasInfix ''header_up x-key "{file.{$CREDENTIALS_DIRECTORY}/second}"'' caddyfile
   && !lib.hasInfix "handle" caddyfile
 ) "unit check: credential proxy does not end tls for every granted domain with its own header";
 # allow entries: one handle per entry carrying the proxy, a 403 for the
@@ -496,7 +496,10 @@ assert lib.assertMsg (
   && lib.hasInfix "  @allow2 {\n    path /user\n  }\n" caddyfile
   && lib.hasInfix "  handle @allow2 {" caddyfile
   && lib.hasInfix ''respond "fencr: request not allowed for credential gh" 403'' caddyfile
-  && lib.length (lib.splitString ''header_up Authorization "{$FENCR_CREDENTIAL_0}"'' caddyfile) == 4
+  &&
+    lib.length (
+      lib.splitString ''header_up Authorization "{file.{$CREDENTIALS_DIRECTORY}/gh}"'' caddyfile
+    ) == 4
   &&
     (core.parseAllow "GET /x") == {
       methods = [ "GET" ];

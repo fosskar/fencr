@@ -13,7 +13,6 @@ let
     unitsOf
     credentialSocketOf
     credentialCaddyfile
-    credentialExec
     parseAllow
     ;
 in
@@ -164,8 +163,11 @@ in
   # host process to borrow a credential through
   credentialSocketOf = cfg: "/run/${(unitsOf cfg.name).credentials}/credentials.sock";
 
-  # the secrets reach caddy as FENCR_CREDENTIAL_<index>, since a credential
-  # name is no environment variable name
+  # caddy reads each credential from the unit's credentials directory
+  # at request time through its file placeholder, which strips the one
+  # trailing newline a secret file carries; {$CREDENTIALS_DIRECTORY} is
+  # filled in when the caddyfile is parsed, so no value crosses the
+  # environment
   credentialCaddyfile =
     socket: credentials:
     ''
@@ -183,8 +185,8 @@ in
       }
     ''
     + lib.concatStrings (
-      lib.imap0 (
-        index: credential:
+      map (
+        credential:
         let
           rules = map parseAllow (credential.allow or [ ]);
           indent =
@@ -192,7 +194,7 @@ in
           proxy = [
             "reverse_proxy ${credential.upstream} {"
             "  header_up Host {upstream_hostport}"
-            "  header_up ${credential.header} \"{$FENCR_CREDENTIAL_${toString index}}\""
+            "  header_up ${credential.header} \"{file.{$CREDENTIALS_DIRECTORY}/${credential.name}}\""
             "}"
           ];
           # one named matcher per allow entry, a handle for each; the
@@ -245,27 +247,13 @@ in
       ) credentials
     );
 
-  credentialExec =
-    pkgs: socket: credentials:
-    pkgs.writeShellScript "fencr-credentials" (
-      lib.concatStrings (
-        lib.imap0 (index: credential: ''
-          FENCR_CREDENTIAL_${toString index}="$(cat "$CREDENTIALS_DIRECTORY/${credential.name}")"
-          export FENCR_CREDENTIAL_${toString index}
-        '') credentials
-      )
-      + ''
-        exec ${pkgs.caddy}/bin/caddy run --config ${pkgs.writeText "fencr-credentials.caddyfile" (credentialCaddyfile socket credentials)} --adapter caddyfile
-      ''
-    );
-
   # the upstream is loopback or the internet; caddy resolves its name
   # through resolved's stub, since go reads resolv.conf itself
   credentialServiceConfig =
     pkgs: cfg:
     proxyHardening
     // {
-      ExecStart = "${credentialExec pkgs (credentialSocketOf cfg) cfg.credentials}";
+      ExecStart = "${pkgs.caddy}/bin/caddy run --config ${pkgs.writeText "fencr-credentials.caddyfile" (credentialCaddyfile (credentialSocketOf cfg) cfg.credentials)} --adapter caddyfile";
       LoadCredential =
         map (credential: "${credential.name}:${credential.secretFile}") cfg.credentials
         ++ lib.mapAttrsToList (member: path: "${member}:${path}") caMembers;
