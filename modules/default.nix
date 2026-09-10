@@ -72,6 +72,17 @@ in
         }
       ];
 
+    # guest memory is the hypervisor's memory: a swap partition without
+    # random encryption writes it to disk, where it outlives the vm
+    warnings =
+      let
+        plain = lib.filter (swap: !swap.randomEncryption.enable) config.swapDevices;
+      in
+      lib.optional (instances != { } && plain != [ ])
+        "fencr.vms: swap without randomEncryption (${
+          lib.concatMapStringsSep ", " (swap: swap.device) plain
+        }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap.";
+
     environment.systemPackages = lib.mkIf (instances != { }) [
       (import ../pkgs/cli {
         inherit lib pkgs;

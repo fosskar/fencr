@@ -131,6 +131,26 @@ in
       assertion = !config.hardware.ksm.enable;
       message = "nixos module check: same-page merging is on";
     }
+    {
+      assertion =
+        let
+          swap = lib.filter (lib.hasPrefix "fencr.vms: swap") config.warnings;
+        in
+        lib.length swap == 1
+        && lib.hasInfix "(/dev/sda2)" (lib.head swap)
+        && !lib.hasInfix "sda3" (lib.head swap);
+      message = "nixos module check: the swap warning names the wrong devices";
+    }
+  ];
+
+  # one plain swap partition, which the module warns about, and one with a
+  # per-boot random key, which it accepts
+  swapDevices = [
+    { device = "/dev/sda2"; }
+    {
+      device = "/dev/sda3";
+      randomEncryption.enable = true;
+    }
   ];
 
   networking.useNetworkd = true;
