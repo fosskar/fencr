@@ -33,9 +33,10 @@ history and what each move cost. `docs/quickstart.md` and `docs/access.md` descr
   the one list of guest ports the host may reach; the guest firewall and the
   output chain both take it. Keep shared defaults in `core.defaults` and
   derivation logic here rather than duplicating it in the module or CLI.
-  `resolveInstance` classifies public `inbound` and `outbound` grants into
-  the internal fields `expose`, `egress`, `allowedDomains`, `hostPorts` and
-  `allowedTCPDestinations`; firewall and proxy builders consume those fields.
+  `resolveInstance` sorts `outbound` entries by kind into `internet`,
+  `domains`, `denied`, `hostPorts` and `destinations`, one flat record with
+  `inbound` and the derived names; `guestOf` selects the `guestFields` the
+  guest receives as `agentSandbox`. Builders read those fields.
 - `pkgs/cli/cli.rs` is the fencr command; `pkgs/cli/default.nix` appends its
   instance tables and tool paths at build. `pkgs/egress-proxy/egress-proxy.rs`
   answers DNS

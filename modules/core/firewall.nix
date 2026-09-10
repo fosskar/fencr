@@ -28,9 +28,9 @@ let
       "connections-blocked";
 in
 {
-  # forward chain: what the guest reaches beyond the bridge. egress "open":
-  # declared pinholes plus the internet, every other private range
-  # dropped. egress "closed": nothing but the declared pinholes. replies to
+  # forward chain: what the guest reaches beyond the bridge. with an
+  # internet grant: declared pinholes plus the internet, every other
+  # private range dropped. without: nothing but the pinholes. replies to
   # whatever was allowed flow back either way. drops log with a rate limit
   # so the journal shows who knocked without flooding
   forwardRules =
@@ -45,10 +45,10 @@ in
     + lib.concatMapStringsSep "\n" (
       destination:
       ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} counter accept comment "${tag cfg "pin-${destination.address}-${toString destination.port}"}"''
-    ) cfg.allowedTCPDestinations
+    ) cfg.destinations
     + "\n"
     + (
-      if cfg.egress == "open" then
+      if cfg.internet then
         drop cfg ''iifname "${cfg.bridge}" ip daddr ${blocked}'' "private-blocked"
         + ''
           iifname "${cfg.bridge}" counter accept comment "${tag cfg "internet"}"

@@ -158,10 +158,10 @@ in
               description = "guest memory in MiB.";
             };
             memoryMax = lib.mkOption {
-              type = lib.types.str;
-              default = core.memoryMaxOf config.mem;
+              type = lib.types.nullOr lib.types.str;
+              default = core.defaults.memoryMax;
               defaultText = "mem plus 512 MiB";
-              description = "hard cap on the whole vm unit, enforced by the host: the guest's memory plus room for the hypervisor.";
+              description = "hard cap on the whole vm unit, enforced by the host: the guest's memory plus room for the hypervisor, when null.";
             };
             stateSize = lib.mkOption {
               type = lib.types.int;

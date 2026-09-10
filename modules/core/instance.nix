@@ -15,9 +15,6 @@ let
     stateDirOf
     runDirOf
     parseOutbound
-    dnsProxyOf
-    hostDnsOf
-    proxyOf
     credentialsOf
     credentialDomainError
     credentialAllowErrors
@@ -27,6 +24,7 @@ let
     domainPatternError
     domainCovers
     duplicates
+    guestFields
     ;
 in
 {
@@ -36,6 +34,7 @@ in
     vcpu = 4;
     mem = 4096;
     cpuQuota = "400%";
+    memoryMax = null;
     stateSize = 32768;
     diskBandwidth = null;
     networkBandwidth = null;
@@ -204,10 +203,37 @@ in
       "\"${pattern}\": not a hostname pattern; expected \"example.com\" or \"*.example.com\"";
 
   # the guest ports the host may reach at the guest's address: its sshd
-  # when keys authorize one, and what expose lists. the guest's firewall
+  # when keys authorize one, and what inbound lists. the guest's firewall
   # opens exactly these and the host's output chain admits exactly these
-  guestPortsOf = cfg: lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.expose;
+  guestPortsOf = cfg: lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.inbound;
 
+  # what the guest's module system is handed as agentSandbox: the shape of
+  # the machine and its network posture, nothing that names a host file
+  guestFields = [
+    "bridge"
+    "cid"
+    "credentialDomains"
+    "diskBandwidth"
+    "dns"
+    "hostIp"
+    "inbound"
+    "ip"
+    "mac"
+    "mem"
+    "name"
+    "networkBandwidth"
+    "secretNames"
+    "sshKeys"
+    "stateSize"
+    "tap"
+    "vcpu"
+  ];
+  guestOf = instance: lib.getAttrs guestFields instance;
+
+  # an instance: the declared options with outbound sorted by kind, the
+  # names and addresses derived from the id, and the errors found on the
+  # way. the outbound kinds keep the parser's names: internet, domains,
+  # denied, hostPorts, destinations
   resolveInstance =
     {
       name,
@@ -216,39 +242,21 @@ in
       ...
     }@args:
     let
-      declared = defaults // args.options;
-      entries = map parseOutbound declared.outbound;
+      options = defaults // args.options;
+      entries = map parseOutbound options.outbound;
       values = kind: map (entry: entry.value) (lib.filter (entry: entry.kind == kind) entries);
-      options = declared // {
-        egress = if values "internet" != [ ] then "open" else "closed";
-        allowedDomains = values "domain";
-        deniedDomains = values "deny";
-        allowedTCPDestinations = values "tcp";
-        hostPorts = values "host";
-      };
+      internet = values "internet" != [ ];
+      domains = values "domain";
+      denied = values "deny";
       granted = credentialsOf options credentials;
-      guest = {
-        inherit name sshKeys;
-        inherit (options)
-          vcpu
-          mem
-          stateSize
-          diskBandwidth
-          networkBandwidth
-          ;
-        # the host is the guest's resolver: the egress proxy with a domain
-        # allowlist, resolved with open egress; closed egress reaches none
-        dns = if dnsProxyOf options || hostDnsOf options then hostIpOf options else null;
-        tap = tapOf name;
-        bridge = bridgeOf name;
-        mac = macOf options;
-        cid = cidOf options;
-        hostIp = hostIpOf options;
-        ip = ipOf options;
-        expose = options.inbound;
-        credentialDomains = map (credential: credential.domain) granted;
-        secretNames = lib.attrNames options.secrets;
-      };
+      tap = tapOf name;
+      secretNames = lib.attrNames options.secrets;
+      # the egress proxy runs for a domain allowlist or a credential; it
+      # is the guest's resolver for the allowlist, the host's resolved
+      # answers open egress, closed egress resolves nothing
+      proxy = domains != [ ] || granted != [ ];
+      dnsProxy = domains != [ ];
+      hostDns = internet;
       errors =
         lib.optional (
           options.id < 0 || options.id >= idRange
@@ -256,13 +264,13 @@ in
         ++ map (
           secretName:
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
-        ) (lib.filter (secretName: !credentialId secretName) guest.secretNames)
-        ++ lib.optional (lib.elem guestTrust.member guest.secretNames) "${name}: secret name \"${guestTrust.member}\" is reserved for the authority"
+        ) (lib.filter (secretName: !credentialId secretName) secretNames)
+        ++ lib.optional (lib.elem guestTrust.member secretNames) "${name}: secret name \"${guestTrust.member}\" is reserved for the authority"
         ++ lib.optional (
-          lib.stringLength guest.tap > 15
-        ) "vm name \"${name}\" is too long: \"${guest.tap}\" exceeds IFNAMSIZ"
+          lib.stringLength tap > 15
+        ) "vm name \"${name}\" is too long: \"${tap}\" exceeds IFNAMSIZ"
         ++ lib.optional (
-          options.allowedDomains != [ ] && options.egress != "closed"
+          domains != [ ] && internet
         ) "${name}: outbound cannot combine internet with domain grants"
         ++ map (entry: "${name}: outbound entry \"${entry.text}\": ${entry.error}") (
           lib.filter (entry: entry.error != null) entries
@@ -270,7 +278,7 @@ in
         # a deny narrows a domain grant; one that no grant covers denies
         # nothing and is a typo, one that equals a grant empties it
         ++ map (pattern: "${name}: outbound entry \"!${pattern}\" denies the whole grant \"${pattern}\"") (
-          lib.filter (pattern: lib.elem pattern options.allowedDomains) options.deniedDomains
+          lib.filter (pattern: lib.elem pattern domains) denied
         )
         ++
           map
@@ -280,9 +288,9 @@ in
             (
               lib.filter (
                 pattern:
-                !lib.elem pattern options.allowedDomains
-                && !lib.any (allowed: domainCovers allowed (lib.removePrefix "*." pattern)) options.allowedDomains
-              ) options.deniedDomains
+                !lib.elem pattern domains
+                && !lib.any (allowed: domainCovers allowed (lib.removePrefix "*." pattern)) domains
+              ) denied
             )
         ++ map (credential: "${name}: credential \"${credential}\" is not declared in fencr.credentials") (
           lib.filter (credential: !(credentials ? ${credential})) options.credentials
@@ -301,29 +309,47 @@ in
         ++ map (domain: "${name}: credential domain ${domain} granted twice") (
           duplicates (map (credential: credential.domain) granted)
         )
-        ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates guest.expose);
+        ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates options.inbound);
     in
-    guest
-    // {
-      inherit guest errors;
-      memoryMax = options.memoryMax or (memoryMaxOf options.mem);
+    {
+      inherit
+        name
+        sshKeys
+        errors
+        tap
+        secretNames
+        internet
+        domains
+        denied
+        proxy
+        dnsProxy
+        hostDns
+        ;
       inherit (options)
         id
+        vcpu
+        mem
+        stateSize
         cpuQuota
+        diskBandwidth
+        networkBandwidth
         maxConnections
         checkpoints
-        egress
-        allowedDomains
-        deniedDomains
-        hostPorts
+        inbound
         secrets
-        allowedTCPDestinations
         ;
-      proxy = proxyOf options;
-      dnsProxy = dnsProxyOf options;
-      hostDns = hostDnsOf options;
-      subnet = subnetOf options;
+      hostPorts = values "host";
+      destinations = values "tcp";
+      memoryMax = if options.memoryMax != null then options.memoryMax else memoryMaxOf options.mem;
       credentials = granted;
+      credentialDomains = map (credential: credential.domain) granted;
+      dns = if dnsProxy || hostDns then hostIpOf options else null;
+      bridge = bridgeOf name;
+      mac = macOf options;
+      cid = cidOf options;
+      hostIp = hostIpOf options;
+      ip = ipOf options;
+      subnet = subnetOf options;
     };
 
   hostErrors =

@@ -1,4 +1,4 @@
-//! the road out for a vm with allowedDomains or credentials: on the bridge
+//! the road out for a vm with domain grants or credentials: on the bridge
 //! address it answers every dns name with itself and, on the port the firewall
 //! redirects 443 to, reads the server name from the tls client hello. a
 //! credential's domain goes to the vm's credentials proxy on its unix

@@ -27,18 +27,16 @@ let
     );
   outbound =
     cfg:
-    lib.optional (cfg.egress == "open") (
+    lib.optional cfg.internet (
       counted "public IPv4 internet and DNS (special-use ranges excluded)" "internet"
     )
     ++ lib.optional (cfg.hostPorts != [ ]) (counted "host TCP ${ports cfg.hostPorts}" "host")
     ++ map (
       destination:
       counted "${destination.address} TCP ${toString destination.port}" "pin-${destination.address}-${toString destination.port}"
-    ) cfg.allowedTCPDestinations
-    ++ map (domain: grant "${domain} TLS 443" ''Source::Domain("${domain}")'') cfg.allowedDomains
-    ++ map (
-      domain: grant "!${domain} TLS 443 (denied)" ''Source::Denied("${domain}")''
-    ) cfg.deniedDomains
+    ) cfg.destinations
+    ++ map (domain: grant "${domain} TLS 443" ''Source::Domain("${domain}")'') cfg.domains
+    ++ map (domain: grant "!${domain} TLS 443 (denied)" ''Source::Denied("${domain}")'') cfg.denied
     ++ map (
       credential:
       grant "${credential.domain} TLS 443 (credential ${credential.name})" ''Source::Credential("${credential.domain}")''

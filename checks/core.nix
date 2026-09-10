@@ -86,29 +86,7 @@ let
   outboundKind =
     entry: expected:
     check "outbound ${builtins.toJSON entry} kind" (core.parseOutbound entry).kind expected;
-  legacyPolicy = resolved // {
-    egress = "closed";
-    allowedDomains = [ "github.com" ];
-    allowedTCPDestinations = [
-      {
-        address = "192.168.1.50";
-        port = 8123;
-      }
-    ];
-    hostPorts = [ 443 ];
-    expose = [ 33627 ];
-    proxy = true;
-    dnsProxy = true;
-    hostDns = false;
-  };
 in
-assert lib.assertMsg (
-  core.forwardRules resolved == core.forwardRules legacyPolicy
-  && core.inputRules resolved == core.inputRules legacyPolicy
-  && core.outputRules resolved == core.outputRules legacyPolicy
-  && core.redirectRules resolved == core.redirectRules legacyPolicy
-  && core.egressProxyServiceConfig pkgs resolved == core.egressProxyServiceConfig pkgs legacyPolicy
-) "core check: access syntax changed enforcement";
 assert check "internet and domain grants"
   (resolve "sbx" {
     id = 0;
@@ -191,7 +169,7 @@ assert check "deny entries under a wildcard grant"
       "!gist.github.com"
       "!*.raw.github.com"
     ];
-  }).deniedDomains
+  }).denied
   [
     "gist.github.com"
     "*.raw.github.com"
@@ -241,7 +219,7 @@ assert lib.assertMsg (
 ) "core check: inbound accepted a string port";
 assert lib.assertMsg (resolved.cid == 3) "core check: wrong cid";
 assert lib.assertMsg (resolved.ip == "10.11.0.2") "core check: wrong guest address";
-assert lib.assertMsg (resolved.expose == [ 33627 ]) "core check: inbound was not resolved";
+assert lib.assertMsg (resolved.inbound == [ 33627 ]) "core check: inbound was not resolved";
 assert lib.assertMsg (
   resolved.memoryMax == "4608M"
   &&
@@ -270,19 +248,19 @@ assert lib.assertMsg (
   lib.hasInfix cap (core.forwardRules resolved)
   && lib.hasInfix cap (core.inputRules resolved)
   && lib.hasInfix "ct count over 16 " (core.forwardRules capped)
-  && resolved.guest.diskBandwidth == null
-  && resolved.guest.networkBandwidth == null
-  && capped.guest.diskBandwidth == 200
-  && capped.guest.networkBandwidth == 50
+  && resolved.diskBandwidth == null
+  && resolved.networkBandwidth == null
+  && capped.diskBandwidth == 200
+  && capped.networkBandwidth == 50
 ) "core check: the resource caps are not rendered";
 assert lib.assertMsg (
   resolved.proxy
-  && resolved.guest.dns == "10.11.0.1"
+  && resolved.dns == "10.11.0.1"
   && !longName.proxy
   && longName.hostDns
-  && longName.guest.dns == "10.11.1.1"
+  && longName.dns == "10.11.1.1"
   && !(resolve "sbx" { id = 0; }).hostDns
-  && (resolve "sbx" { id = 0; }).guest.dns == null
+  && (resolve "sbx" { id = 0; }).dns == null
 ) "core check: the host is not the guest's resolver";
 assert lib.assertMsg (
   longName.errors
@@ -322,14 +300,14 @@ assert lib.assertMsg (
   && (resolve "sbx" { id = 256; }).errors == [ "sbx: id must be between 0 and 255" ]
 ) "core check: id from name order";
 assert lib.assertMsg (
-  builtins.attrNames resolved.guest == [
+  builtins.attrNames (core.guestOf resolved) == [
     "bridge"
     "cid"
     "credentialDomains"
     "diskBandwidth"
     "dns"
-    "expose"
     "hostIp"
+    "inbound"
     "ip"
     "mac"
     "mem"
@@ -418,7 +396,7 @@ assert lib.assertMsg (
   ]
 ) "core check: a name the authority uses was accepted";
 assert lib.assertMsg (
-  resolved.guest.credentialDomains == [ "api.example.com" ]
+  resolved.credentialDomains == [ "api.example.com" ]
   &&
     loopbackCredential.errors == [
       "sbx: credential \"local\" needs fencr.credentials.local.domain: its upstream \"http://127.0.0.1:8764\" names no host a vm could call"
@@ -427,7 +405,7 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   keyed.proxy
   && !keyed.dnsProxy
-  && keyed.guest.dns == null
+  && keyed.dns == null
   && keyedUnits.services ? "fencr-keyed-egress-proxy"
   && keyedUnits.services."fencr-keyed-egress-proxy".wants == [ "fencr-keyed-credentials.service" ]
   && keyedUnits.sockets ? "fencr-keyed-secrets"

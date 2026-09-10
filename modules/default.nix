@@ -36,7 +36,7 @@ let
       inherit pkgs;
       system = pkgs.stdenv.hostPlatform.system;
       specialArgs = cfg.specialArgs // {
-        agentSandbox = resolvedInstances.${name}.guest;
+        agentSandbox = core.guestOf resolvedInstances.${name};
       };
       modules = [
         inputs.microvm.nixosModules.microvm
@@ -96,7 +96,7 @@ in
     programs.ssh.extraConfig = lib.concatStrings (
       lib.mapAttrsToList (
         name: cfg:
-        lib.optionalString (cfg.guest.sshKeys != [ ]) ''
+        lib.optionalString (cfg.sshKeys != [ ]) ''
           Host ${name}
             HostName ${cfg.ip}
             User root
