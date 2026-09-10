@@ -108,6 +108,9 @@ in
         && config.systemd.services."fencr-sbx".serviceConfig.CapabilityBoundingSet == ""
         && config.systemd.services."fencr-sbx".serviceConfig.RestrictSUIDSGID
         && config.systemd.services."fencr-sbx".serviceConfig.PrivateIPC
+        && config.systemd.services."fencr-sbx".serviceConfig.TemporaryFileSystem == "/:ro"
+        && config.systemd.services."fencr-sbx".serviceConfig.ProtectProc == "invisible"
+        && !(config.systemd.services."fencr-sbx".serviceConfig ? ProtectSystem)
         && guestConfig.fileSystems."/".device == "/dev/disk/by-label/fencr-state";
       message = "nixos module check: hypervisor unit drifted";
     }

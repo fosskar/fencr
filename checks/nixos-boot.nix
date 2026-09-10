@@ -235,6 +235,19 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # write-back cache mode; the entropy device shows up as hwrng
       host.succeed(f"{ssh} 'cat /sys/block/vdb/queue/write_cache' | grep -Fx 'write back'", timeout=60)
       host.succeed(f"{ssh} 'test -c /dev/hwrng'", timeout=60)
+      # the hypervisor process sits in an empty root: no /etc, no host
+      # /var, only the store and the vm's own directories; other users'
+      # processes are hidden from its /proc
+      pid = host.succeed("systemctl show -p MainPID --value fencr-sbx.service").strip()
+      # nsenter into the mount namespace: the host's binaries live in the
+      # store, which is bound in, so their resolved paths still work
+      inside = f"nsenter -t {pid} -m -S $(id -u fencr-sbx) -G $(id -g fencr-sbx) $(dirname $(readlink -f $(command -v ls)))"
+      host.succeed(f"{inside}/ls / | tr '\\n' ' ' | grep -qxE '(dev|nix|proc|run|sys|tmp|var| )+'")
+      host.fail(f"{inside}/test -e /etc")
+      host.fail(f"{inside}/test -e /var/lib/fencr")
+      host.succeed(f"{inside}/test -f /var/lib/fencr-vms/sbx/state.img")
+      host.fail(f"{inside}/test -d /proc/1")
+      host.fail(f"{inside}/test -e /proc/cpuinfo")
       host.succeed(f"{ssh} 'echo survives > ~/fencr-probe'", timeout=60)
       host.succeed("systemctl restart fencr-sbx.service")
       # a clean stop, not a kill after the stop timeout
