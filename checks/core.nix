@@ -255,6 +255,26 @@ assert lib.assertMsg (
       memoryMax = "1G";
     }).memoryMax == "1G"
 ) "core check: the unit's cap does not follow the guest's memory";
+# the connection cap sits in both chains the guest's new connections
+# enter, and the limiter values reach the guest contract
+assert lib.assertMsg (
+  let
+    cap = ''iifname "br-sbx" ct state new ct count over 2048 counter drop comment "fencr:sbx:connections-blocked"'';
+    capped = resolve "sbx" {
+      id = 0;
+      maxConnections = 16;
+      diskBandwidth = 200;
+      networkBandwidth = 50;
+    };
+  in
+  lib.hasInfix cap (core.forwardRules resolved)
+  && lib.hasInfix cap (core.inputRules resolved)
+  && lib.hasInfix "ct count over 16 " (core.forwardRules capped)
+  && resolved.guest.diskBandwidth == null
+  && resolved.guest.networkBandwidth == null
+  && capped.guest.diskBandwidth == 200
+  && capped.guest.networkBandwidth == 50
+) "core check: the resource caps are not rendered";
 assert lib.assertMsg (
   resolved.proxy
   && resolved.guest.dns == "10.11.0.1"
@@ -306,6 +326,7 @@ assert lib.assertMsg (
     "bridge"
     "cid"
     "credentialDomains"
+    "diskBandwidth"
     "dns"
     "expose"
     "hostIp"
@@ -313,6 +334,7 @@ assert lib.assertMsg (
     "mac"
     "mem"
     "name"
+    "networkBandwidth"
     "secretNames"
     "sshKeys"
     "stateSize"

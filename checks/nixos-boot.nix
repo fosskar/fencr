@@ -123,6 +123,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # the web ui: reachable from the host at the guest's address, on
         # this port and no other
         inbound = [ 9119 ];
+        # generous caps: firecracker must accept the limiter config and
+        # nothing below may slow down; the cap itself is not measured
+        diskBandwidth = 500;
+        networkBandwidth = 100;
         # the credential: the guest calls api.test over https as it would
         # any site, the host ends the tls and injects the bearer token,
         # the value never enters the vm
@@ -263,6 +267,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # carries a timeout: a hang here means the firewall swallowed the reply
       # and the test should say so rather than wait
       host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
+      host.succeed("nft list table inet fencr-sbx | grep -q 'ct count over 2048'")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.2:80'", timeout=60)
       host.wait_for_unit("host-80.service")

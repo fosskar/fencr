@@ -19,6 +19,13 @@ let
     ${match} limit rate 5/second log prefix "${tag cfg kind}: "
     ${match} counter drop comment "${tag cfg kind}"
   '';
+  # the cap on connections the guest holds open, counted by conntrack on
+  # the packets this rule sees: the guest's new connections on this
+  # bridge, whichever chain they enter
+  connectionCap =
+    cfg:
+    drop cfg ''iifname "${cfg.bridge}" ct state new ct count over ${toString cfg.maxConnections}''
+      "connections-blocked";
 in
 {
   # forward chain: what the guest reaches beyond the bridge. egress "open":
@@ -34,6 +41,7 @@ in
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
     ''
+    + connectionCap cfg
     + lib.concatMapStringsSep "\n" (
       destination:
       ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} counter accept comment "${tag cfg "pin-${destination.address}-${toString destination.port}"}"''
@@ -77,6 +85,7 @@ in
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
       iifname "${cfg.bridge}" ct state established,related accept
     ''
+    + connectionCap cfg
     + lib.optionalString (cfg.hostPorts != [ ]) ''
       iifname "${cfg.bridge}" tcp dport { ${
         lib.concatMapStringsSep ", " toString cfg.hostPorts

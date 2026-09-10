@@ -131,6 +131,21 @@ in
       message = "nixos module check: the guest's drives drifted from the runner's";
     }
     {
+      assertion =
+        let
+          sbx = guestConfig.microvm.firecracker.extraConfig;
+          sealed = config.fencr.guestSystems.sealed.config.microvm.firecracker.extraConfig;
+          tap = lib.head sealed.network-interfaces;
+        in
+        !(lib.last sbx.drives ? rate_limiter)
+        && !(sbx ? network-interfaces)
+        && (lib.last sealed.drives).rate_limiter.bandwidth.size == 200 * 1048576
+        && tap.host_dev_name == "tap-sealed"
+        && tap.rx_rate_limiter.bandwidth.size == 50 * 1048576
+        && tap.tx_rate_limiter.bandwidth.refill_time == 1000;
+      message = "nixos module check: the bandwidth caps did not reach firecracker";
+    }
+    {
       assertion = !config.hardware.ksm.enable;
       message = "nixos module check: same-page merging is on";
     }
@@ -204,6 +219,8 @@ in
       "github.com"
       "*.github.com"
     ];
+    diskBandwidth = 200;
+    networkBandwidth = 50;
   };
 
   system.stateVersion = "25.11";

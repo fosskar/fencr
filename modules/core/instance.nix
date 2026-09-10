@@ -36,6 +36,9 @@ in
     mem = 4096;
     cpuQuota = "400%";
     stateSize = 32768;
+    diskBandwidth = null;
+    networkBandwidth = null;
+    maxConnections = 2048;
     credentials = [ ];
     inbound = [ ];
     outbound = [ ];
@@ -223,6 +226,8 @@ in
           vcpu
           mem
           stateSize
+          diskBandwidth
+          networkBandwidth
           ;
         # the host is the guest's resolver: the egress proxy with a domain
         # allowlist, resolved with open egress; closed egress reaches none
@@ -297,6 +302,7 @@ in
       inherit (options)
         id
         cpuQuota
+        maxConnections
         egress
         allowedDomains
         deniedDomains

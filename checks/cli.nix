@@ -86,6 +86,7 @@ let
         printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.11.0.1 DST=10.11.0.2 PROTO=TCP DPT=9120\n'
         printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.11.0.1 DST=224.0.0.22 PROTO=2\n'
         printf 'fencr:sbx:host-blocked: IN=br-sbx OUT= SRC=10.11.0.2 DST=10.11.0.1 PROTO=TCP SPT=33627 DPT=58836\n'
+        printf 'fencr:sbx:connections-blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=140.82.121.4 PROTO=TCP DPT=443\n'
         ;;
       -u)
         printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
@@ -124,6 +125,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
 
   Blocked (journal):
     ✗ guest → 1.2.3.4:443/tcp           x2     outbound "1.2.3.4:443"
+    ✗ guest → 140.82.121.4:443/tcp      x1     over maxConnections
     ✗ guest → evil.test:443/tls         x1     outbound "evil.test"
     ✗ guest → gist.github.com:443/tls   x1     denied by outbound "!gist.github.com"
     ✗ guest → host:58836/tcp            x1     reply to a connection the host no longer tracks

@@ -327,6 +327,10 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
             None => format!("{target}/{proto}"),
         };
         let (flow, hint) = match (kind, port) {
+            ("connections-blocked", _) => (
+                format!("guest \u{2192} {}", peer(dst)),
+                "over maxConnections".to_string(),
+            ),
             ("guest-blocked", Some(port)) => (
                 format!("host  \u{2192} {}", peer("guest")),
                 format!("inbound {port}"),

@@ -161,6 +161,36 @@ in
               type = lib.types.str;
               default = core.defaults.cpuQuota;
             };
+            diskBandwidth = lib.mkOption {
+              type = lib.types.nullOr lib.types.ints.positive;
+              default = core.defaults.diskBandwidth;
+              example = 200;
+              description = ''
+                cap in MiB/s on the vm's reads and writes to its state image,
+                enforced by the hypervisor's token bucket. null leaves the
+                disk unlimited.
+              '';
+            };
+            networkBandwidth = lib.mkOption {
+              type = lib.types.nullOr lib.types.ints.positive;
+              default = core.defaults.networkBandwidth;
+              example = 50;
+              description = ''
+                cap in MiB/s on the vm's traffic in each direction, enforced
+                by the hypervisor's token bucket on the tap. null leaves the
+                network unlimited.
+              '';
+            };
+            maxConnections = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = core.defaults.maxConnections;
+              description = ''
+                connections the vm may hold open at once, counted by the
+                host's connection tracking; a new connection beyond it is
+                dropped and logged. protects the host's conntrack table from
+                a port scan or a leaking tool.
+              '';
+            };
             secrets = lib.mkOption {
               type = lib.types.attrsOf lib.types.path;
               default = core.defaults.secrets;

@@ -27,6 +27,15 @@ in
     let
       # a vm with a credential trusts the host's authority
       trusted = agentSandbox.credentialDomains != [ ];
+      # firecracker's token bucket: a bucket of one second's bytes,
+      # refilled every second
+      bandwidth = mib: {
+        bandwidth = {
+          size = mib * 1048576;
+          one_time_burst = 0;
+          refill_time = 1000;
+        };
+      };
     in
     {
       imports = [ "${modulesPath}/profiles/minimal.nix" ];
@@ -53,13 +62,28 @@ in
             is_read_only = true;
             io_engine = config.microvm.firecracker.driveIoEngine;
           }
+          (
+            {
+              drive_id = "state";
+              path_on_host = stateImageOf agentSandbox.name;
+              is_root_device = false;
+              is_read_only = false;
+              io_engine = config.microvm.firecracker.driveIoEngine;
+              cache_type = "Writeback";
+            }
+            // lib.optionalAttrs (agentSandbox.diskBandwidth != null) {
+              rate_limiter = bandwidth agentSandbox.diskBandwidth;
+            }
+          )
+        ];
+        # the runner's one interface, restated with a limiter each way
+        firecracker.extraConfig.network-interfaces = lib.mkIf (agentSandbox.networkBandwidth != null) [
           {
-            drive_id = "state";
-            path_on_host = stateImageOf agentSandbox.name;
-            is_root_device = false;
-            is_read_only = false;
-            io_engine = config.microvm.firecracker.driveIoEngine;
-            cache_type = "Writeback";
+            iface_id = agentSandbox.tap;
+            host_dev_name = agentSandbox.tap;
+            guest_mac = agentSandbox.mac;
+            rx_rate_limiter = bandwidth agentSandbox.networkBandwidth;
+            tx_rate_limiter = bandwidth agentSandbox.networkBandwidth;
           }
         ];
         # virtio-rng, so the guest's entropy does not rest on rdrand and
