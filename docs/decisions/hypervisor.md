@@ -159,7 +159,7 @@ What the port changed:
   each start
 - the runner boots `vmlinux` from the kernel's `dev` output, 400 MiB with
   debug symbols; fencr strips it to 57 MiB. A bzImage needs Firecracker
-  1.17, unreleased (issue 22)
+  1.17, unreleased (issue 10)
 
 Removed with crosvm: the microvm.nix patch, the fw_cfg ssdt, the
 user-namespace assertion, the vhost-vsock device and the `vhost_vsock`
