@@ -107,8 +107,25 @@ in
         && config.users.users."fencr-sbx".group == "kvm"
         && config.systemd.services."fencr-sbx".serviceConfig.CapabilityBoundingSet == ""
         && config.systemd.services."fencr-sbx".serviceConfig.RestrictSUIDSGID
+        && config.systemd.services."fencr-sbx".serviceConfig.PrivateIPC
         && guestConfig.fileSystems."/".device == "/dev/disk/by-label/fencr-state";
       message = "nixos module check: hypervisor unit drifted";
+    }
+    {
+      assertion =
+        let
+          drives = guestConfig.microvm.firecracker.extraConfig.drives;
+          state = lib.findFirst (drive: drive.path_on_host == "/var/lib/fencr-vms/sbx/state.img") null drives;
+        in
+        map (drive: drive.path_on_host) drives == [
+          guestConfig.microvm.storeDisk
+          "/var/lib/fencr-vms/sbx/state.img"
+        ]
+        && state.cache_type == "Writeback"
+        && !state.is_read_only
+        && (lib.head drives).is_read_only
+        && guestConfig.microvm.firecracker.extraConfig ? entropy;
+      message = "nixos module check: the guest's drives drifted from the runner's";
     }
     {
       assertion = !config.hardware.ksm.enable;

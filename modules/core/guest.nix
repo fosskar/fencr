@@ -41,6 +41,30 @@ in
         # the runner's own vsock path lives in the working directory and is
         # wiped on every start; the secrets socket beside it must not be
         firecracker.extraConfig.vsock.uds_path = vsockOf agentSandbox.name;
+        # the runner's drives ignore guest flushes (firecracker's Unsafe
+        # cache): a host crash loses the state image's journal. lists are
+        # replaced, not merged, so the runner's two drives are restated
+        # here with Writeback on the state image
+        firecracker.extraConfig.drives = [
+          {
+            drive_id = "store";
+            path_on_host = config.microvm.storeDisk;
+            is_root_device = false;
+            is_read_only = true;
+            io_engine = config.microvm.firecracker.driveIoEngine;
+          }
+          {
+            drive_id = "state";
+            path_on_host = stateImageOf agentSandbox.name;
+            is_root_device = false;
+            is_read_only = false;
+            io_engine = config.microvm.firecracker.driveIoEngine;
+            cache_type = "Writeback";
+          }
+        ];
+        # virtio-rng, so the guest's entropy does not rest on rdrand and
+        # timing jitter alone
+        firecracker.extraConfig.entropy = { };
         # the runner boots the kernel's unstripped vmlinux, 400 MiB of debug
         # symbols per guest; firecracker below 1.17 takes no bzImage
         firecracker.extraConfig."boot-source".kernel_image_path =

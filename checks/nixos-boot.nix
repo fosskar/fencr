@@ -230,6 +230,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # there again after a restart
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
       host.succeed(f"{ssh} 'findmnt -n -o SOURCE /' | grep -Fx /dev/vdb", timeout=60)
+      # the state image honours flushes: firecracker's Writeback cache
+      # advertises the virtio flush feature, which the guest reports as
+      # write-back cache mode; the entropy device shows up as hwrng
+      host.succeed(f"{ssh} 'cat /sys/block/vdb/queue/write_cache' | grep -Fx 'write back'", timeout=60)
+      host.succeed(f"{ssh} 'test -c /dev/hwrng'", timeout=60)
       host.succeed(f"{ssh} 'echo survives > ~/fencr-probe'", timeout=60)
       host.succeed("systemctl restart fencr-sbx.service")
       # a clean stop, not a kill after the stop timeout
