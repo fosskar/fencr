@@ -89,7 +89,19 @@ let
         printf 'fencr:sbx:connections-blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=140.82.121.4 PROTO=TCP DPT=443\n'
         ;;
       -u)
-        printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
+        case "$2" in
+          *-credentials.service)
+            # caddy's access log with headers filtered out, one json
+            # record per request, beside its own startup chatter
+            printf '{"level":"info","msg":"serving initial configuration"}\n'
+            printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"POST","host":"api.test","uri":"/v1/messages","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":200}\n'
+            printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"POST","host":"api.test","uri":"/v1/messages","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":200}\n'
+            printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"GET","host":"api.test","uri":"/v1/models?x=1","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":404}\n'
+            ;;
+          *)
+            printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
+            ;;
+        esac
         ;;
     esac
   '';
@@ -131,6 +143,10 @@ pkgs.runCommand "fencr-cli-check" { } ''
     ✗ guest → host:58836/tcp            x1     reply to a connection the host no longer tracks
     ✗ host  → guest:9120/tcp            x1     inbound 9120
 
+  Credential requests (journal):
+    POST api.test/v1/messages → 200           x2
+    GET api.test/v1/models?x=1 → 404          x1
+
   Services: egress proxy RUNNING, credential RUNNING
 
   EOF
@@ -139,6 +155,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent,ActiveEnterTimestamp
   -k -q --no-pager -g fencr: -o cat --since Tue 2026-09-08 05:11:18 UTC
   -u fencr-sbx-egress-proxy.service -q -n 400 --no-pager -o cat
+  -u fencr-sbx-credentials.service -q -n 400 --no-pager -o cat
   show fencr-sbx-egress-proxy.service --property=LoadState,ActiveState
   show fencr-sbx-credentials.service --property=LoadState,ActiveState
   EOF

@@ -151,6 +151,19 @@ in
         https://${credential.domain} {
           bind unix/${socket}|0660
           tls internal
+          # every request the credential rode on, method, path and status,
+          # to the journal; headers are dropped from the record since the
+          # guest's own header sits there
+          log {
+            output stderr
+            format filter {
+              wrap json
+              fields {
+                request>headers delete
+                resp_headers delete
+              }
+            }
+          }
           reverse_proxy ${credential.upstream} {
             header_up Host {upstream_hostport}
             header_up ${credential.header} "{$FENCR_CREDENTIAL_${toString index}}"

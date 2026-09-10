@@ -315,6 +315,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
+      # the credential proxy's access log: the request is on record with
+      # its method, path and status, and without the headers it carried
+      host.succeed("journalctl -u fencr-sbx-credentials.service -o cat | grep -F 'handled request' | grep -F '\"method\":\"GET\"' | grep -F '\"host\":\"api.test\"' | grep -F '\"uri\":\"/\"' | grep -qF '\"status\":200'")
+      host.fail("journalctl -u fencr-sbx-credentials.service -o cat | grep -qiF 'placeholder'")
+      host.succeed("fencr status sbx | grep -F 'GET api.test/ \u2192 200'")
 
       # open egress: the guest resolves through the host, whose resolved
       # answers on the bridge

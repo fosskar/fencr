@@ -211,6 +211,52 @@ fn proxy_log(name: &str) -> Option<Result<String, String>> {
     ))
 }
 
+/// the credential proxy logs one json record per request; the record's
+/// nested `request` object carries method, host and uri, and `status` the
+/// upstream's answer
+fn credential_log(name: &str) -> Option<Result<String, String>> {
+    let (_, unit) = CREDENTIALS.iter().find(|p| p.0 == name)?;
+    Some(output(
+        JOURNALCTL,
+        &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"],
+    ))
+}
+
+/// the value of a top-level or nested string or number field in one
+/// json record; enough for caddy's flat access log, no parser needed
+fn json_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
+    let rest = &record[record.find(&format!("\"{key}\":"))? + key.len() + 3..];
+    match rest.strip_prefix('"') {
+        Some(string) => string.split('"').next(),
+        None => rest.split([',', '}']).next(),
+    }
+}
+
+/// requests the credential proxies carried, aggregated by method, host,
+/// path and status, most frequent first
+fn requests(log: &str) -> Vec<(String, u64)> {
+    let mut hits: BTreeMap<String, u64> = BTreeMap::new();
+    for record in log
+        .lines()
+        .filter(|line| line.contains("\"msg\":\"handled request\""))
+    {
+        let (Some(method), Some(host), Some(uri), Some(status)) = (
+            json_field(record, "method"),
+            json_field(record, "host"),
+            json_field(record, "uri"),
+            json_field(record, "status"),
+        ) else {
+            continue;
+        };
+        *hits
+            .entry(format!("{method} {host}{uri} \u{2192} {status}"))
+            .or_default() += 1;
+    }
+    let mut sorted: Vec<_> = hits.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    sorted
+}
+
 fn connections(log: &str, verb: &str, matches: impl Fn(&str) -> bool) -> u64 {
     log.lines()
         .filter_map(|line| line.strip_prefix(verb))
@@ -496,6 +542,22 @@ fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec
             }
         }
         Err(reason) => out.push(format!("  {}", unavailable(reason, s))),
+    }
+    if let Some(log) = credential_log(vm.name) {
+        out.push(String::new());
+        out.push("Credential requests (journal):".to_string());
+        match log {
+            Ok(log) => {
+                let hits = requests(&log);
+                if hits.is_empty() {
+                    out.push(format!("  {}none{}", s.dim, s.reset));
+                }
+                for (entry, count) in hits.iter().take(8) {
+                    out.push(format!("  {entry:<40}  x{count}"));
+                }
+            }
+            Err(reason) => out.push(format!("  {}", unavailable(&reason, s))),
+        }
     }
     out.push(String::new());
     service_lines(vm.name, s, out);
