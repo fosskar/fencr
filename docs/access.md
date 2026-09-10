@@ -33,24 +33,17 @@ Host myvm
 Your ssh authenticates directly against the vm; the server only forwards
 the connection and never sees your agent.
 
-Quick, interactive, without a config entry (fencr installed on your
-machine too):
+Quick, interactive, without a config entry: double-ssh through the
+server's own alias:
 
 ```console
-fencr -H server list
-fencr -H server ssh <vm-name>
-```
-
-`-H` delegates the whole command to the server's fencr over ssh. Without
-a local fencr, plain double-ssh works the same:
-
-```console
+ssh -t server fencr list
 ssh -t server ssh <vm-name>
 ```
 
-Uses the server's alias. Authentication happens *on the server*, so your
-key must be usable there (`-A` agent forwarding works; be aware server
-root can use the forwarded agent while connected).
+Authentication happens *on the server*, so your key must be usable
+there (`-A` agent forwarding works; be aware server root can use the
+forwarded agent while connected).
 
 On the host itself the same tool covers the day-to-day reads:
 

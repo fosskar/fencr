@@ -14,20 +14,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-/// `*.example.com` matches any name ending in `.example.com`; anything
-/// else matches itself, case-insensitively
 fn matches(patterns: &[String], host: &str) -> bool {
-    let host = host.to_ascii_lowercase();
-    patterns
-        .iter()
-        .any(|pattern| match pattern.strip_prefix("*.") {
-            Some(suffix) => {
-                host.len() > suffix.len() + 1
-                    && host.ends_with(suffix)
-                    && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
-            }
-            None => host == *pattern,
-        })
+    patterns.iter().any(|pattern| covers(pattern, host))
 }
 
 /// a name some allow pattern matches and no deny pattern does

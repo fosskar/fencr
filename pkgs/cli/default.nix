@@ -65,6 +65,7 @@ pkgs.writers.writeRustBin "fencr"
   }
   (
     builtins.readFile ./cli.rs
+    + builtins.readFile ../domain.rs
     + ''
       static VMS: &[Vm] = &[
       ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}

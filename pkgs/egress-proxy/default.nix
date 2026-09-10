@@ -5,4 +5,4 @@ writers.writeRustBin "fencr-egress-proxy" {
     "--edition"
     "2024"
   ];
-} ./egress-proxy.rs
+} (builtins.readFile ./egress-proxy.rs + builtins.readFile ../domain.rs)

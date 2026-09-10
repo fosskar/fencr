@@ -6,7 +6,8 @@ use std::process::{Command, exit};
 use std::{thread, time};
 
 // the instance tables and tool paths are appended by cli.nix at build:
-// VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP
+// VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP; so is
+// pkgs/domain.rs with covers()
 
 /// the kind out of "fencr:<vm>:<kind>", which the firewall writes as every
 /// counted rule's comment and every drop's log prefix; a kind ending in
@@ -91,10 +92,6 @@ fn usage() -> ! {
     eprintln!("                   list the vm's checkpoints, or remove one");
     eprintln!("  restore <vm> <name>");
     eprintln!("                   stop the vm, replace its disk with the checkpoint, start it");
-    eprintln!();
-    eprintln!(
-        "  -H <host>        run the command on <host> over ssh (fencr must be installed there)"
-    );
     exit(1)
 }
 
@@ -190,16 +187,6 @@ fn packets(ruleset: &str, name: &str, tag: &str) -> u64 {
         .filter_map(|line| field(line, "packets "))
         .filter_map(|value| value.parse::<u64>().ok())
         .sum()
-}
-
-/// "*.example.com" covers the names below example.com, not example.com
-fn covers(pattern: &str, host: &str) -> bool {
-    match pattern.strip_prefix("*.") {
-        Some(suffix) => host
-            .strip_suffix(suffix)
-            .is_some_and(|rest| rest.ends_with('.') && rest.len() > 1),
-        None => pattern == host,
-    }
 }
 
 /// the egress proxy logs one line per connection: "allow <host>",
@@ -674,22 +661,16 @@ fn run(cmd: &str, args: &[&str]) {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("-H") {
-        if args.len() < 3 {
-            usage();
-        }
-        let host = args[1].clone();
-        // -t so remote `fencr ssh` gets a tty; harmless for the rest
-        fail(
-            Command::new(SSH)
-                .arg("-t")
-                .arg(host)
-                .arg("fencr")
-                .args(&args[2..])
-                .exec(),
-        );
+    // rust starts with SIGPIPE ignored, so a reader that closes early
+    // (`fencr status | head`) makes println panic; the default action
+    // ends the command quietly like every other tool
+    unsafe extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
     }
+    unsafe {
+        signal(13, 0);
+    }
+    let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("list") => print_list(),
         Some("ssh") => {
