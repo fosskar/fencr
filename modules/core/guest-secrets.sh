@@ -1,7 +1,5 @@
 #!@runtimeShell@
-# fetch the vm's secrets, and the host's certificate authority when a
-# credential is granted, as one tar stream over vsock; the vsock device
-# comes up with udev, so the fetch waits for it
+# the vsock device comes up with udev, so the fetch retries until it is there
 set -eu
 
 install -d -m 0700 /run/agent-secrets

@@ -16,9 +16,6 @@ let
 in
 {
 
-  # the vm's host units beside the hypervisor unit: the credential proxy,
-  # the secrets relay, the egress proxy and the checkpoint units, each
-  # present only when the instance calls for it
   hostUnits =
     pkgs: instance:
     let
@@ -27,9 +24,6 @@ in
       caService = "${caUnit}.service";
       credentialUnits = lib.optional (instance.credentials != [ ]) "${units.credentials}.service";
       checkpoints = checkpointUnits pkgs instance;
-      # raw secrets, served once per boot as a tar stream of the unit's
-      # credentials directory into a connection the guest opened; the
-      # host's ca certificate rides along for a vm with a credential
       secrets = instance.secrets != { } || instance.credentials != [ ];
     in
     {
@@ -52,7 +46,8 @@ in
             requires = lib.optional (instance.credentials != [ ]) caService;
             partOf = [ vmUnit ];
             unitConfig.CollectMode = "inactive-or-failed";
-            # a throwaway uid: a bug in tar shares nothing with the hypervisor
+            # served from systemd credentials, so no secret touches the store
+            # or a disk; a throwaway uid shares nothing with the hypervisor
             serviceConfig = hardened // {
               DynamicUser = true;
               StandardInput = "socket";

@@ -17,23 +17,17 @@ let
     ;
 in
 {
-  # one certificate authority per host, made on first use in a directory
-  # root alone reads. each credential proxy signs its domain's certificate
-  # with it, and a vm with a credential trusts it, fetched beside the secrets
   caUnit = "fencr-ca";
   caDir = "/var/lib/fencr/ca";
   caCert = "${caDir}/root.crt";
   caKey = "${caDir}/root.key";
-  # the credential proxy loads the authority under these ids, beside the
-  # credentials it is granted; a credential may not take them
+  # credential ids the authority takes in the proxy unit; a credential may not use them
   caMembers = {
     "ca.crt" = caCert;
     "ca.key" = caKey;
   };
 
-  # what a vm with a credential fetches beside its secrets, and where the
-  # guest installs it: the authority alone for node, the store bundle with
-  # the authority appended for everything else
+  # node takes the authority alone, everything else the store bundle with it appended
   guestTrust = {
     member = "fencr-ca.crt";
     cert = "/run/fencr/ca.crt";
@@ -58,8 +52,6 @@ in
     '';
   };
 
-  # the apis a credential names by provider instead of by upstream and
-  # header. the proxy works per host, so one row serves every path under it
   providers = {
     anthropic = {
       upstream = "https://api.anthropic.com";
@@ -79,8 +71,6 @@ in
     };
   };
 
-  # a credential's domain is the name the vm calls; it defaults to the
-  # upstream's host, which a loopback upstream cannot supply
   upstreamHost =
     upstream:
     let
@@ -116,9 +106,7 @@ in
     else
       null;
 
-  # an allow entry, "<methods> <path>": the methods caddy's matcher takes
-  # (none for "*"), the path pattern (none for "*"), or the reason it is
-  # malformed
+  # "<methods> <path>"; "*" on either side means no matcher
   parseAllow =
     entry:
     let
@@ -151,23 +139,12 @@ in
       lib.filter (rule: rule.error != null) (map parseAllow (credential.allow or [ ]))
     );
 
-  # the vm's credential proxy: the guest calls a credential's domain as
-  # usual and lands here, where one caddy per vm holds a certificate for
-  # each granted domain from the host's authority, ends the tls, injects
-  # that credential's header and sends the request on, originating tls to
-  # an https upstream itself. the secrets never exist inside the vm; the
-  # vm can use every credential granted to it anyway, so one process for
-  # all of them separates nothing the vm could not reach. it listens on a
-  # unix socket in its own runtime directory, group kvm, so only the vm's
-  # egress proxy reaches it: no host loopback port, nothing for another
-  # host process to borrow a credential through
+  # a unix socket in group kvm, not a loopback port: only the vm's egress proxy
+  # reaches it, no other host process can borrow a credential through it
   credentialSocketOf = cfg: "/run/${(unitsOf cfg.name).credentials}/credentials.sock";
 
-  # caddy reads each credential from the unit's credentials directory
-  # at request time through its file placeholder, which strips the one
-  # trailing newline a secret file carries; {$CREDENTIALS_DIRECTORY} is
-  # filled in when the caddyfile is parsed, so no value crosses the
-  # environment
+  # {file.} is read per request and strips the trailing newline; {$CREDENTIALS_DIRECTORY}
+  # is expanded at parse time, so no secret crosses the environment
   credentialCaddyfile =
     socket: credentials:
     ''
@@ -197,9 +174,7 @@ in
             "  header_up ${credential.header} \"{file.{$CREDENTIALS_DIRECTORY}/${credential.name}}\""
             "}"
           ];
-          # one named matcher per allow entry, a handle for each; the
-          # bare handle answers what none admitted. a matcher's methods
-          # and paths are each a disjunction, the two are conjoined
+          # a caddy matcher ORs its methods and ORs its paths, ANDs the two
           matcher =
             i: rule:
             indent 2 (
@@ -218,9 +193,7 @@ in
           https://${credential.domain} {
             bind unix/${socket}|0660
             tls internal
-            # every request the credential rode on, method, path and status,
-            # to the journal; headers are dropped from the record since the
-            # guest's own header sits there
+            # headers dropped from the record: the guest's own header sits there
             log {
               output stderr
               format filter {
@@ -247,8 +220,7 @@ in
       ) credentials
     );
 
-  # the upstream is loopback or the internet; caddy resolves its name
-  # through resolved's stub, since go reads resolv.conf itself
+  # go reads resolv.conf itself, so resolved's stub is allowed
   credentialServiceConfig =
     pkgs: cfg:
     proxyHardening

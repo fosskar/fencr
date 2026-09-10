@@ -1,8 +1,6 @@
-# the builders behind the nixos module, one file per concern: instance
-# derivation, hardening sets, the hypervisor unit, the egress proxy, the
-# vm's firewall, the credential proxies, the host unit set and the guest
-# system. pure functions of an instance, so checks/core.nix probes
-# them without a host. every part sees the whole through `core`
+# the builders behind the nixos module: pure functions of an instance, so
+# checks/core.nix probes them without a host. every part sees the whole
+# through `core`
 { lib }:
 lib.fix (
   core:

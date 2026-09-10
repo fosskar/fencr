@@ -1,9 +1,8 @@
-//! the road out for a vm with domain grants or credentials: on the bridge
-//! address it answers every dns name with itself and, on the port the firewall
-//! redirects 443 to, reads the server name from the tls client hello. a
-//! credential's domain goes to the vm's credentials proxy on its unix
-//! socket, which holds the certificate; an allowed name is spliced to the
-//! real host unread, unless a deny pattern names it; the rest is refused.
+//! the road out for a vm with domain grants or credentials: every dns name is
+//! answered with the bridge address, so every tls connection lands here and is
+//! judged by the server name in its client hello. a credential's domain goes to
+//! the vm's caddy on its unix socket; an allowed name is spliced to the real
+//! host unread; the rest is refused.
 use std::io::{self, Read, Write};
 use std::net::{
     Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
@@ -18,12 +17,10 @@ fn matches(patterns: &[String], host: &str) -> bool {
     patterns.iter().any(|pattern| covers(pattern, host))
 }
 
-/// a name some allow pattern matches and no deny pattern does
 fn allowed(patterns: &[String], denied: &[String], host: &str) -> bool {
     !matches(denied, host) && matches(patterns, host)
 }
 
-/// the server name of a tls client hello, or why there is none
 fn server_name(hello: &[u8]) -> Result<String, &'static str> {
     let mut at = 0;
     let mut take = |n: usize| -> Result<&[u8], &'static str> {
@@ -66,8 +63,7 @@ fn server_name(hello: &[u8]) -> Result<String, &'static str> {
                 .unwrap(),
         ) as usize;
         let name = entry.get(3..3 + name_len).ok_or("short server_name")?;
-        // the name is echoed into the journal, where a newline would forge
-        // a line of its own; a host name is letters, digits, "-" and "."
+        // the name is echoed into the journal, where a newline would forge a line
         if name.is_empty()
             || !name
                 .iter()
@@ -80,8 +76,7 @@ fn server_name(hello: &[u8]) -> Result<String, &'static str> {
     Err("no server_name")
 }
 
-/// reads whole tls records from the client until the client hello is
-/// complete; the bytes are replayed to the server afterwards
+/// whole tls records until the client hello is complete, kept for the replay
 fn read_client_hello(
     client: &mut TcpStream,
 ) -> io::Result<(Vec<u8>, Result<String, &'static str>)> {
@@ -112,8 +107,7 @@ fn read_client_hello(
     }
 }
 
-/// a server end: the real host over tcp or a credential proxy over its
-/// unix socket
+/// the real host over tcp, or a credential proxy over its unix socket
 trait Server: Read + Write + Send + 'static {
     fn duplicate(&self) -> io::Result<Self>
     where
@@ -196,16 +190,15 @@ fn serve_tls(
     )
 }
 
-/// replays the client hello to the server end and splices the rest; the
-/// verb is logged before the connect, so a failure follows its name
+/// replays the client hello, then splices
 fn relay<S: Server>(client: TcpStream, hello: &[u8], mut server: S) -> io::Result<()> {
     client.set_read_timeout(None)?;
     server.write_all(hello)?;
     splice(client, server)
 }
 
-/// answers every A query with the bridge address and everything else
-/// with an empty answer; the client hello names the real destination
+/// every A query answered with the bridge address; the client hello names
+/// the real destination
 fn serve_dns(socket: &UdpSocket, answer: Ipv4Addr) -> io::Result<()> {
     let mut query = [0u8; 512];
     loop {
@@ -214,7 +207,6 @@ fn serve_dns(socket: &UdpSocket, answer: Ipv4Addr) -> io::Result<()> {
         if len < 12 || query[2] & 0x80 != 0 {
             continue;
         }
-        // walk the question name to find qtype
         let mut at = 12;
         while let Some(&label) = query.get(at) {
             if label == 0 {
@@ -237,6 +229,7 @@ fn serve_dns(socket: &UdpSocket, answer: Ipv4Addr) -> io::Result<()> {
             reply.extend_from_slice(&answer.octets());
         }
         // a reply that cannot be sent is that client's loss, not the resolver's
+        // to die on
         let _ = socket.send_to(&reply, peer);
     }
 }
@@ -286,7 +279,7 @@ fn run() -> io::Result<()> {
     let denied: Arc<Vec<String>> = Arc::new(lines(&denylist)?);
     let intercepts: Arc<Vec<String>> = Arc::new(lines(&interceptlist)?);
     let socket: Arc<str> = Arc::from(socket);
-    // the bridge gets its address from networkd; be there when it does
+    // the bridge gets its address from networkd, which may not have run yet
     let dns = loop {
         match UdpSocket::bind(dns_address) {
             Ok(socket) => break socket,
@@ -331,7 +324,6 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
-    /// a client hello carrying the given extensions block
     fn hello(extensions: &[u8]) -> Vec<u8> {
         let mut body = vec![3, 3];
         body.extend_from_slice(&[0; 32]);
@@ -418,8 +410,7 @@ mod tests {
             let mut query = vec![0xab, 0xcd, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
             query.extend_from_slice(b"\x07example\x03com\x00");
             query.extend_from_slice(&[0, qtype, 0, 1]);
-            // a query cut off after its type gets no answer and does not
-            // end the resolver
+            // a truncated query gets no answer and does not end the resolver
             client.send_to(&query[..query.len() - 2], address).unwrap();
             client.send_to(&query, address).unwrap();
             let mut reply = [0u8; 512];

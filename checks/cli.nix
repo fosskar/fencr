@@ -59,10 +59,8 @@ let
     esac
     printf 'LoadState=loaded\nActiveState=%s\nMemoryCurrent=1048576\nActiveEnterTimestamp=Tue 2026-09-08 05:11:18 UTC\n' "$TEST_STATE"
   '';
-  # the ruleset the command parses is the one core renders, as nft lists it
-  # back: every counter at three packets, and the burst nft adds to a rate
-  # limit, since "packets" is the token the parser keys on. the traffic
-  # line then sums the same comment tags the firewall wrote
+  # what core renders, as nft lists it back: counters filled in, and the burst
+  # nft adds to a rate limit, since "packets" is the token the parser keys on
   ruleset = pkgs.writeText "fencr-test-ruleset" (
     builtins.replaceStrings
       [ " counter " " limit rate 5/second log " ]
@@ -72,14 +70,12 @@ let
   nft = pkgs.writeShellScriptBin "nft" ''
     cat ${ruleset}
   '';
-  # the kernel log for denials since the vm started, on every drop chain,
-  # with the host's igmp report and a stale reply; the proxy's own log for
-  # domains
+  # every drop chain, plus an igmp report and a stale reply the command must skip
   journalctl = pkgs.writeShellScriptBin "journalctl" ''
     printf '%s\n' "$*" >> "$TEST_LOG"
     case "$1" in
       -k)
-        # -g with no match exits 1 and prints nothing
+        # journalctl -g exits 1 when nothing matches
         [ "''${TEST_QUIET-}" = 1 ] && exit 1
         printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
         printf 'fencr:sbx:blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=1.2.3.4 PROTO=TCP DPT=443\n'
@@ -91,8 +87,7 @@ let
       -u)
         case "$2" in
           *-credentials.service)
-            # caddy's access log with headers filtered out, one json
-            # record per request, beside its own startup chatter
+            # caddy's access log beside its startup chatter
             printf '{"level":"info","msg":"serving initial configuration"}\n'
             printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"POST","host":"api.test","uri":"/v1/messages","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":200}\n'
             printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"POST","host":"api.test","uri":"/v1/messages","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":200}\n'
@@ -171,9 +166,8 @@ pkgs.runCommand "fencr-cli-check" { } ''
   grep -Fx '  · host TCP 8080                             unused' actual
   grep -Fx '  · 192.168.20.0/24 TCP 1234                  unused' actual
   grep -Fx '  none' actual
-  # checkpoints: the command starts the template unit with the name as
-  # instance; without a state directory here there is nothing to list,
-  # a restore of an unknown name stops nothing, a bad name is refused
+  # no state directory here, so there is nothing to list and a restore of an
+  # unknown name must stop nothing
   ${cli}/bin/fencr checkpoint sbx before-agent > actual
   grep -Fx 'start fencr-sbx-checkpoint@before-agent.service' "$TEST_LOG"
   grep -Fx 'sbx has no checkpoints' actual

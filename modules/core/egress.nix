@@ -10,24 +10,13 @@ let
 in
 {
 
-  # domain-allowlist egress: the guest's resolver is the bridge address,
-  # where the egress proxy answers every name with itself, so every tls
-  # connection lands on the host and is judged by the server name in its
-  # client hello; an allowed name is passed through unread. the same
-  # listener takes the credentials' domains, which the guest's /etc/hosts
-  # points at the bridge: by server name the proxy hands the connection
-  # to that credential's caddy, which holds the certificate.
-  # the guest talks to 53 and 443 on the bridge address; the firewall's
-  # nat table redirects both to ports the proxy binds on that address
-  # alone, so a host service on *:443 or *:53 is no conflict and the
-  # proxy needs no capability to bind
+  # high ports the firewall redirects the guest's 53 and 443 to, so a host
+  # service on *:443 or *:53 is no conflict and the proxy binds unprivileged
   proxyDnsPort = 33053;
   proxyTlsPort = 33443;
 
   egressProxyBin = pkgs: pkgs.callPackage ../../pkgs/egress-proxy { };
 
-  # listens on the bridge address only, so the guest's subnet is allowed in
-  # beside the internet
   egressProxyServiceConfig =
     pkgs: instance:
     proxyHardening
@@ -43,9 +32,8 @@ in
           lib.concatMapStrings (credential: "${credential.domain}\n") instance.credentials
         )
       } ${credentialSocketOf instance}";
-      # the allow list is checked before the deny list, so it names only
-      # what the deny list would otherwise take: the guest's subnet and
-      # resolved's stub on 127.0.0.53. the internet needs no entry
+      # checked before proxyHardening's deny list, so it names only what that
+      # would otherwise take; the internet needs no entry
       IPAddressAllow = [
         "127.0.0.53/32"
         instance.subnet

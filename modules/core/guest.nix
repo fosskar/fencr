@@ -13,9 +13,6 @@ let
     ;
 in
 {
-
-  # the environment itself: hardware shape, network posture, and a /var/lib
-  # that survives reboots so whatever is installed inside keeps its state.
   guestBase =
     {
       agentSandbox,
@@ -26,10 +23,7 @@ in
       ...
     }:
     let
-      # a vm with a credential trusts the host's authority
       trusted = agentSandbox.credentialDomains != [ ];
-      # firecracker's token bucket: a bucket of one second's bytes,
-      # refilled every second
       bandwidth = mib: {
         bandwidth = {
           size = mib * 1048576;
@@ -43,21 +37,16 @@ in
       networking.hostName = lib.mkDefault agentSandbox.name;
       microvm = {
         hypervisor = "firecracker";
-        # nixpkgs' glibc build embeds an empty seccomp policy: firecracker
-        # ships syscall allowlists for its musl targets only
+        # nixpkgs' glibc build ships an empty seccomp policy; only musl gets the allowlist
         firecracker.package = pkgs.pkgsStatic.firecracker;
         inherit (agentSandbox) vcpu mem;
         vsock.cid = agentSandbox.cid;
-        # the runner's own vsock path lives in the working directory and is
-        # wiped on every start; the secrets socket beside it must not be
+        # the runner wipes its own vsock path on every start; the secrets socket beside it must survive
         firecracker.extraConfig.vsock.uds_path = vsockOf agentSandbox.name;
-        # the api socket by a fixed name: the runner's default follows the
-        # guest's host name, which a payload may set
+        # the runner's default socket name follows networking.hostName, which a payload may set
         socket = apiSocketOf agentSandbox.name;
-        # the runner's drives ignore guest flushes (firecracker's Unsafe
-        # cache): a host crash loses the state image's journal. lists are
-        # replaced, not merged, so the runner's two drives are restated
-        # here with Writeback on the state image
+        # firecracker's default cache ignores guest flushes; lists are not merged, so the
+        # runner's drives are restated to set Writeback on the state image
         firecracker.extraConfig.drives = [
           {
             drive_id = "store";
@@ -80,7 +69,6 @@ in
             }
           )
         ];
-        # the runner's one interface, restated with a limiter each way
         firecracker.extraConfig.network-interfaces = lib.mkIf (agentSandbox.networkBandwidth != null) [
           {
             iface_id = agentSandbox.tap;
@@ -90,11 +78,8 @@ in
             tx_rate_limiter = bandwidth agentSandbox.networkBandwidth;
           }
         ];
-        # virtio-rng, so the guest's entropy does not rest on rdrand and
-        # timing jitter alone
         firecracker.extraConfig.entropy = { };
-        # the runner boots the kernel's unstripped vmlinux, 400 MiB of debug
-        # symbols per guest; firecracker below 1.17 takes no bzImage
+        # firecracker below 1.17 takes no bzImage, and the dev output's vmlinux is 400 MiB
         firecracker.extraConfig."boot-source".kernel_image_path =
           lib.mkIf pkgs.stdenv.hostPlatform.isx86_64 "${pkgs.runCommand "vmlinux-stripped"
             { nativeBuildInputs = [ pkgs.binutils ]; }
@@ -102,8 +87,7 @@ in
               strip -o $out ${config.boot.kernelPackages.kernel.dev}/vmlinux
             ''
           }";
-        # the guest must not see the host's virtualization extensions: vmx
-        # is cpuid leaf 1 ecx bit 5, svm leaf 0x80000001 ecx bit 2
+        # hide vmx (leaf 1 ecx bit 5) and svm (leaf 0x80000001 ecx bit 2) from the guest
         firecracker.cpu = lib.mkIf pkgs.stdenv.hostPlatform.isx86_64 (
           let
             clearBit = bit: "0b" + lib.concatStrings (lib.genList (i: if 31 - i == bit then "0" else "x") 32);
@@ -142,10 +126,7 @@ in
             inherit (agentSandbox) mac;
           }
         ];
-        # the root filesystem is a disk image the runner creates on first
-        # start, so the whole guest persists like an ordinary machine; no
-        # share, so no file server faces the guest and without a host store
-        # share the guest's closure becomes an erofs image
+        # no share: no file server faces the guest, and the closure becomes an erofs image
         volumes = [
           {
             image = stateImageOf agentSandbox.name;
@@ -157,14 +138,12 @@ in
       };
       fileSystems."/".autoResize = true;
       system.switch.enable = false;
-      # perl-free activation, as the perlless profile sets it; the profile's
-      # ban on perl in the closure is not taken, payloads may need it
+      # the perlless profile's activation, without its ban on perl in the closure
       boot.initrd.systemd.enable = true;
       system.etc.overlay.enable = true;
       services.userborn.enable = true;
       systemd.services = lib.mkMerge [
         (lib.mkIf (agentSandbox.secretNames != [ ] || trusted) {
-          # the vsock device comes up with udev; the fetch waits for it
           fencr-secrets = {
             description = "Materialize fencr secrets in volatile guest storage";
             wantedBy = [ "sysinit.target" ];
@@ -185,7 +164,6 @@ in
                   tar = "${pkgs.gnutar}/bin/tar";
                   port = toString secretsPort;
                   first = lib.head (agentSandbox.secretNames ++ [ guestTrust.member ]);
-                  # empty for a vm without a credential: no authority to install
                   storeBundle = lib.optionalString trusted config.security.pki.caBundle;
                 };
               };
@@ -193,8 +171,7 @@ in
           };
         })
         {
-          # firecracker exits on cpu reset; a power-off only halts the cpu
-          # and leaves the process running
+          # firecracker exits on cpu reset; a power-off only halts and leaves the process
           fencr-power = {
             description = "power button on fencr vsock";
             wantedBy = [ "multi-user.target" ];
@@ -205,23 +182,17 @@ in
       networking = {
         useDHCP = false;
         useNetworkd = true;
-        # the bridge is the one interface; the host's output chain admits
-        # the same ports
         firewall = {
           enable = true;
           allowedTCPPorts = guestPortsOf agentSandbox;
         };
         # the iptables backend drags perl in through libpcap and rdma-core
         nftables.enable = true;
-        # a credential's domain is the host, where its proxy answers with a
-        # certificate from the host's authority
         hosts = lib.mkIf trusted {
           ${agentSandbox.hostIp} = agentSandbox.credentialDomains;
         };
       };
-      # the system trust store, fetched at boot with the host's authority in
-      # it, on every path the store bundle sits on; python's certifi and
-      # node carry bundles of their own and read only these variables
+      # every path the store bundle sits on; certifi and node read only the two variables
       environment.etc = lib.mkIf trusted (
         lib.genAttrs
           [
@@ -235,8 +206,7 @@ in
       );
       environment.sessionVariables = lib.mkIf trusted trustVariables;
       systemd.globalEnvironment = lib.mkIf trusted trustVariables;
-      # virtio gives unpredictable enp0sN names, so match the mac we assigned.
-      # v4 only: no RA-assigned v6 for the host's v4 forward rules to miss
+      # virtio's enp0sN names are unpredictable; v4 only so the host's v4 rules see everything
       systemd.network.networks."10-lan" = {
         matchConfig.MACAddress = agentSandbox.mac;
         networkConfig = {
@@ -247,10 +217,9 @@ in
           LinkLocalAddressing = "ipv4";
         };
       };
-      # no sshd on vsock from systemd-ssh-generator: the door is the bridge
+      # no systemd-ssh-generator sshd on vsock
       boot.kernelParams = [ "systemd.ssh_auto=0" ];
-      # socket-activated on the guest's address; the socket binds before
-      # networkd assigns it
+      # the socket binds before networkd assigns the address
       systemd.sockets.sshd.socketConfig.FreeBind = lib.mkIf (agentSandbox.sshKeys != [ ]) true;
       services.openssh = {
         enable = agentSandbox.sshKeys != [ ];
@@ -276,8 +245,7 @@ in
       environment.systemPackages = [ ];
       nix.enable = lib.mkDefault false;
       programs.nano.enable = false;
-      # the disk persists, so stateful defaults are pinned to the release the
-      # state image first shipped under rather than following the nixpkgs pin
+      # pinned to the release the state image first shipped under, not the nixpkgs pin
       system.stateVersion = lib.mkDefault "26.11";
     };
 }

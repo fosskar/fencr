@@ -28,8 +28,8 @@ let
     ;
 in
 {
-  # applied again in resolveInstance, so a check that omits an option still
-  # gets the same vm the module would build
+  # resolveInstance applies these too, so a check that omits an option gets
+  # the vm the module would build
   defaults = {
     vcpu = 4;
     mem = 4096;
@@ -50,13 +50,12 @@ in
     secrets = { };
   };
 
-  # the unit's hard cap: the guest's memory plus room for firecracker
+  # the guest's memory plus room for firecracker
   memoryMaxOf = mem: "${toString (mem + 512)}M";
 
   tapOf = name: "tap-${name}";
   bridgeOf = name: "br-${name}";
-  # a vm's default id is its position among the host's vm names, so a new
-  # name that sorts earlier moves the ones after it; `id` pins one in place
+  # a new name that sorts earlier moves every id after it; `id` pins one
   idRange = 256;
   idOf =
     names: name: lib.lists.findFirstIndex (other: other == name) null (lib.sort lib.lessThan names);
@@ -70,7 +69,6 @@ in
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
   userOf = name: "fencr-${name}";
-  # the vm's units, keyed as systemd.services and systemd.sockets take them
   unitsOf = name: {
     vm = "fencr-${name}";
     proxy = "fencr-${name}-egress-proxy";
@@ -78,21 +76,15 @@ in
     secrets = "fencr-${name}-secrets";
     checkpoint = "fencr-${name}-checkpoint";
   };
-  # firecracker's vsock on the host: one unix socket for connections into
-  # the guest, and one per port, "<vsock>_<port>", for connections out of
-  # it, in a directory only the vm's user enters
+  # firecracker's vsock: one socket in, "<vsock>_<port>" out, in a directory
+  # only the vm's user enters, which is what makes the path the identity
   runDirOf = name: "/run/fencr-${name}";
   vsockOf = name: "${runDirOf name}/vsock";
-  # the power button: a guest listener on this vsock port reboots on any
-  # connection, and only the vm's user can open the vsock
   powerPort = 4;
-  # raw secrets: at boot the guest fetches them as one archive from a host
-  # socket only the vm's own user can open; the host side reads them as
-  # systemd credentials, so they touch neither the store nor a disk
   secretsPort = 5;
 
-  # domainPatternError also accepts dotted IPv4 addresses and numeric final
-  # labels; reject these before domain validation so addresses require a port.
+  # addresses are rejected before domain validation: domainPatternError would
+  # accept a dotted quad, and an address without a port must be an error
   parseOutbound =
     entry:
     let
@@ -107,8 +99,7 @@ in
         inherit error;
         text = entry;
       };
-      # a number written plainly: digits without a leading zero, at most
-      # the maximum. "010" is refused rather than read as ten or eight
+      # "010" is refused rather than read as ten by one reader and eight by another
       number =
         text: maximum: builtins.match "0|[1-9][0-9]{0,9}" text != null && lib.toIntBase10 text <= maximum;
       parts = lib.splitString ":" entry;
@@ -169,8 +160,7 @@ in
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
 
-  # "*.example.com" covers the names below example.com, not example.com;
-  # a deny pattern is covered when the name its wildcard stands under is
+  # the eval-time twin of covers() in pkgs/domain.rs
   domainCovers =
     pattern: host:
     if lib.hasPrefix "*." pattern then
@@ -178,12 +168,11 @@ in
     else
       pattern == host;
 
-  # secrets and credentials become systemd credential ids on the host
+  # secrets and credentials become systemd credential ids
   credentialId = value: builtins.match "[A-Za-z0-9_.-]+" value != null;
 
-  # a pattern is a hostname, optionally with a leading "*." label. anything
-  # else is rejected: "*github.com" also matches evilgithub.com, and stray
-  # fnmatch metacharacters widen the allowlist silently.
+  # "*github.com" would also match evilgithub.com, and stray metacharacters
+  # widen an allowlist silently
   domainPatternError =
     pattern:
     if builtins.match "(\\*\\.)?([a-zA-Z0-9-]+\\.)+[a-zA-Z0-9-]+" pattern != null then
@@ -193,13 +182,10 @@ in
     else
       "\"${pattern}\": not a hostname pattern; expected \"example.com\" or \"*.example.com\"";
 
-  # the guest ports the host may reach at the guest's address: its sshd
-  # when keys authorize one, and what inbound lists. the guest's firewall
-  # opens exactly these and the host's output chain admits exactly these
+  # the one list the guest's firewall and the host's output chain both take
   guestPortsOf = cfg: lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.inbound;
 
-  # what the guest's module system is handed as agentSandbox: the shape of
-  # the machine and its network posture, nothing that names a host file
+  # agentSandbox: the machine's shape and network posture, no host path
   guestFields = [
     "bridge"
     "cid"
@@ -221,10 +207,6 @@ in
   ];
   guestOf = instance: lib.getAttrs guestFields instance;
 
-  # an instance: the declared options with outbound sorted by kind, the
-  # names and addresses derived from the id, and the errors found on the
-  # way. the outbound kinds keep the parser's names: internet, domains,
-  # denied, hostPorts, destinations
   resolveInstance =
     {
       name,
@@ -242,9 +224,8 @@ in
       granted = credentialsOf options credentials;
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
-      # the egress proxy runs for a domain allowlist or a credential; it
-      # is the guest's resolver for the allowlist, the host's resolved
-      # answers open egress, closed egress resolves nothing
+      # the guest's resolver is the proxy with domain grants, the host's
+      # resolved with an internet grant, and nothing otherwise
       proxy = domains != [ ] || granted != [ ];
       dnsProxy = domains != [ ];
       hostDns = internet;
@@ -266,8 +247,7 @@ in
         ++ map (entry: "${name}: outbound entry \"${entry.text}\": ${entry.error}") (
           lib.filter (entry: entry.error != null) entries
         )
-        # a deny narrows a domain grant; one that no grant covers denies
-        # nothing and is a typo, one that equals a grant empties it
+        # a deny that covers nothing is a typo; one equal to a grant empties it
         ++ map (pattern: "${name}: outbound entry \"!${pattern}\" denies the whole grant \"${pattern}\"") (
           lib.filter (pattern: lib.elem pattern domains) denied
         )

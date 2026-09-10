@@ -9,10 +9,8 @@ let
 in
 {
 
-  # the vm's own view of the host: an empty read-only tmpfs with the
-  # store, the run directory and the state directory bound in, which is
   # what firecracker's jailer builds with its chroot. ProtectSystem and
-  # ProtectHome would silently win over the tmpfs, so they are left out
+  # ProtectHome silently win over the tmpfs, so they are left out
   emptyRootOf =
     name:
     removeAttrs hardened [
@@ -58,9 +56,8 @@ in
     UMask = "0077";
   };
 
-  # the proxies: a throwaway uid in group kvm, which is what the credentials
-  # socket admits; every special-use range denied so an upstream or an
-  # allowed name cannot resolve into the lan. each allows its own addresses
+  # group kvm is what the credentials socket admits; the denied ranges keep
+  # an upstream or an allowed name from resolving into the lan
   proxyHardening = hardened // {
     Restart = "always";
     RestartSec = 5;
@@ -74,10 +71,8 @@ in
     ];
   };
 
-  # destinations a vm never reaches, even with open egress: private, link-local,
-  # multicast and other special-use ranges. the firewall enforces the v4 list
-  # on the bridge (v6 is dropped wholesale there); the proxy units enforce
-  # both on their own sockets
+  # never reached, even with an internet grant. the firewall enforces v4 on
+  # the bridge and drops v6 wholesale; the proxy units enforce both
   specialUseNetworks = {
     v4 = [
       "0.0.0.0/8"

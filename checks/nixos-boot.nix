@@ -1,7 +1,8 @@
 self: pkgs:
 
 # Boots the nixos surface end to end and drives real traffic through every
-# path the module promises.
+# path the module promises. Every probe carries a timeout: a hang means the
+# firewall swallowed a reply, and the test should say so rather than wait.
 let
   inherit (import (pkgs.path + "/nixos/tests/ssh-keys.nix") pkgs)
     snakeOilEd25519PrivateKey
@@ -11,7 +12,7 @@ let
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
   credentialFile = pkgs.writeText "fencr-test-credential" "Bearer fencr-api-token\n";
   rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
-  # the api behind the credential: echoes the Authorization header it received
+  # echoes the Authorization header it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -41,7 +42,6 @@ let
     openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=allowed.test \
       -keyout $out/key.pem -out $out/cert.pem
   '';
-  # the site behind an allowed name: tls with a throwaway certificate
   tlsServer = pkgs.writeText "fencr-test-tls.py" ''
     from http.server import SimpleHTTPRequestHandler, HTTPServer
     import os, ssl
@@ -73,7 +73,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       ];
       virtualisation.diskSize = 4096;
       virtualisation.memorySize = 2048;
-      # the state images on a filesystem with reflinks, as checkpoints need
+      # reflinks, as checkpoints need
       virtualisation.emptyDiskImages = [ 2048 ];
       virtualisation.fileSystems."/var/lib/fencr-vms" = {
         device = "/dev/vdb";
@@ -89,15 +89,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         pkgs.openssh
       ];
 
-      # a globally opened host port: the vm's firewall must still keep it from the vm
+      # globally open: the vm's firewall must still keep it from the vm
       networking.firewall.allowedTCPPorts = [ 80 ];
       networking.firewall.filterForward = true;
       systemd.services.host-80 = {
         wantedBy = [ "multi-user.target" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 80 --bind 0.0.0.0 --directory ${targetRoot}";
       };
-      # a host that already serves *:443 and *:53, as one with its own web
-      # server and resolver does; the egress proxy must live beside them
+      # a host already serving *:443 and *:53; the egress proxy must live beside it
       systemd.services.host-squatter = {
         wantedBy = [ "multi-user.target" ];
         before = [ "fencr-sbx-egress-proxy.service" ];
@@ -257,8 +256,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # /var, only the store and the vm's own directories; other users'
       # processes are hidden from its /proc
       pid = host.succeed("systemctl show -p MainPID --value fencr-sbx.service").strip()
-      # nsenter into the mount namespace: the host's binaries live in the
-      # store, which is bound in, so their resolved paths still work
+      # the store is bound in, so a resolved binary path still works inside
       inside = f"nsenter -t {pid} -m -S $(id -u fencr-sbx) -G $(id -g fencr-sbx) $(dirname $(readlink -f $(command -v ls)))"
       host.succeed(f"{inside}/ls / | tr '\\n' ' ' | grep -qxE '(dev|nix|proc|run|sys|tmp|var| )+'")
       host.fail(f"{inside}/test -e /etc")
@@ -272,10 +270,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
       host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
 
-      # checkpoints: the clean stop above left one; a manual one is taken
-      # while the vm runs, then a file written after it vanishes on
-      # restore while the earlier probe stays. the restore's own stop
-      # leaves a second stop checkpoint, and the copies belong to the vm
+      # the clean stop above left one; a file written after the manual one
+      # must vanish on restore while the earlier probe stays
       host.succeed("fencr checkpoints sbx | grep '^stop-'")
       host.succeed("fencr checkpoint sbx before-agent | grep '^before-agent '")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/checkpoints/before-agent.img)\" = fencr-sbx:600")
@@ -290,9 +286,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # a reserved name is the unit's error, relayed by the command
       host.fail("fencr checkpoint sbx stop-now")
 
-      # the firewall, probed with real packets from inside the vm. every probe
-      # carries a timeout: a hang here means the firewall swallowed the reply
-      # and the test should say so rather than wait
+      # the firewall, probed with real packets from inside the vm
       host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
       host.succeed("nft list table inet fencr-sbx | grep -q 'ct count over 2048'")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'", timeout=60)
@@ -304,9 +298,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:blocked\"' | grep -qv 'packets 0 '")
       host.succeed("nft list table inet fencr-sbx | grep 'fencr:sbx:host-blocked\"' | grep -qv 'packets 0 '")
 
-      # egress by name: every name resolves to the host, the allowed one is
-      # passed through to the real site, the other is refused by name, and a
-      # raw address on 443 hits the closed forward chain
+      # every name resolves to the host; the allowed one is passed through,
+      # the other refused by name, a raw address on 443 by the forward chain
       target.wait_for_unit("target-443.service")
       host.wait_for_unit("fencr-sbx-egress-proxy.service")
       host.succeed(f"{ssh} 'getent hosts denied.test' | grep -q '^10.11.0.1 '", timeout=60)
@@ -315,24 +308,19 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
-      # the deny entry inside the wildcard grant: a sibling name passes,
-      # the named one is refused before any connect
+      # the deny entry inside the wildcard grant
       host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://other.allowed.test/' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://sub.allowed.test/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow other.allowed.test'")
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny sub.allowed.test'")
-      # an allowed name that resolves into the lan: the proxy admits the
-      # name, the unit's deny list drops the syn, so the connect times out;
-      # the squatter listens on that address and would otherwise have
-      # completed the handshake at once
+      # an allowed name resolving into the lan: the unit's deny list drops the
+      # syn, so the connect times out where the squatter would have answered
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 15 https://private.test/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow private.test'")
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'relay: connection timed out'")
 
-      # the credential, end to end: the guest calls the domain over https
-      # and trusts the host's authority without being told to, whatever it
-      # sent as a header is replaced, the upstream called directly sees
-      # none, and the proxy has no tcp port
+      # the guest trusts the host's authority without being told to, and
+      # whatever it sent as a header is replaced
       host.wait_for_unit("upstream-8765.service")
       host.wait_for_unit("fencr-sbx-credentials.service")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/root.key)\" = root:600")
@@ -342,20 +330,17 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
-      # the credential proxy's access log: the request is on record with
-      # its method, path and status, and without the headers it carried
+      # the access log holds the request without the headers it carried
       host.succeed("journalctl -u fencr-sbx-credentials.service -o cat | grep -F 'handled request' | grep -F '\"method\":\"GET\"' | grep -F '\"host\":\"api.test\"' | grep -F '\"uri\":\"/\"' | grep -qF '\"status\":200'")
       host.fail("journalctl -u fencr-sbx-credentials.service -o cat | grep -qiF 'placeholder'")
       host.succeed("fencr status sbx | grep -F 'GET api.test/ \u2192 200'")
-      # outside the allow entries the host answers 403 itself: the upstream
-      # would have echoed the header, so its absence shows nothing reached it
+      # the upstream echoes the header, so its absence shows nothing reached it
       host.succeed(f"{ssh} 'curl --silent --max-time 10 -o /dev/null -w %{{http_code}} -X POST https://api.test/' | grep -Fx 403", timeout=60)
       host.succeed(f"{ssh} 'curl --silent --max-time 10 -X POST https://api.test/other' | grep -Fx \"fencr: request not allowed for credential api\"", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 10 https://api.test/other' | grep -F authorization", timeout=60)
       host.succeed("fencr status sbx | grep -F 'POST api.test/ \u2192 403'")
 
-      # open egress: the guest resolves through the host, whose resolved
-      # answers on the bridge
+      # an internet grant resolves through the host's resolved on the bridge
       ssh_open = ssh.replace("10.11.0.2", "10.11.1.2")
       host.wait_for_unit("fencr-open.service", timeout=600)
       host.wait_until_succeeds(f"{ssh_open} 'getent hosts allowed.test' | grep -q '^192.168.1.2 '", timeout=300)

@@ -155,8 +155,7 @@ in
     }
   ];
 
-  # one plain swap partition, which the module warns about, and one with a
-  # per-boot random key, which it accepts
+  # one plain partition, which the module warns about, and one encrypted
   swapDevices = [
     { device = "/dev/sda2"; }
     {
@@ -172,7 +171,7 @@ in
     fsType = "ext4";
   };
 
-  # dummy keys: never used, they only build the key-gated units
+  # never used; they only build the key-gated units
   fencr.adminKeys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdminDummyAdminDummyAdminDummyAdminDummyAdmi check"
   ];

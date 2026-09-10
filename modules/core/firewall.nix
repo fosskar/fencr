@@ -11,28 +11,20 @@ let
     inputRules
     outputRules
     ;
-  # every counted rule's comment and every drop's log prefix carry
-  # "fencr:<vm>:<kind>", which `fencr status` sums and lists; a kind
-  # ending in blocked is a drop
+  # `fencr status` sums these tags; a kind ending in blocked is a drop
   tag = cfg: kind: "fencr:${cfg.name}:${kind}";
   drop = cfg: match: kind: ''
     ${match} limit rate 5/second log prefix "${tag cfg kind}: "
     ${match} counter drop comment "${tag cfg kind}"
   '';
-  # the cap on connections the guest holds open, counted by conntrack on
-  # the packets this rule sees: the guest's new connections on this
-  # bridge, whichever chain they enter
+  # each chain counts its own, so the effective ceiling is up to twice this
   connectionCap =
     cfg:
     drop cfg ''iifname "${cfg.bridge}" ct state new ct count over ${toString cfg.maxConnections}''
       "connections-blocked";
 in
 {
-  # forward chain: what the guest reaches beyond the bridge. with an
-  # internet grant: declared pinholes plus the internet, every other
-  # private range dropped. without: nothing but the pinholes. replies to
-  # whatever was allowed flow back either way. drops log with a rate limit
-  # so the journal shows who knocked without flooding
+  # what the guest reaches beyond the bridge
   forwardRules =
     cfg:
     let
@@ -64,8 +56,6 @@ in
     ip saddr ${cfg.ip} oifname != "${cfg.bridge}" masquerade
   '';
 
-  # the guest talks to 53 and 443 on the bridge address; both go to ports
-  # the egress proxy binds on that address alone
   redirectRules =
     cfg:
     lib.optionalString cfg.dnsProxy ''
@@ -75,10 +65,8 @@ in
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 redirect to :${toString proxyTlsPort}
     '';
 
-  # input chain: what the guest reaches on the host itself, the declared
-  # ports, the host's resolver with open egress and the egress proxy. v6
-  # dropped first like on forward: the host's own link-local multicast
-  # reflects off the bridge
+  # what the guest reaches on the host itself. v6 is dropped first: the
+  # host's own link-local multicast reflects off the bridge
   inputRules =
     cfg:
     ''
@@ -103,9 +91,7 @@ in
     ''
     + drop cfg ''iifname "${cfg.bridge}"'' "host-blocked";
 
-  # output chain: what the host itself may open toward the guest, its sshd
-  # and its exposed ports and nothing else; replies to what the guest
-  # opened flow back either way
+  # what the host may open toward the guest
   outputRules =
     cfg:
     let
@@ -122,10 +108,8 @@ in
     ''
     + drop cfg ''oifname "${cfg.bridge}"'' "guest-blocked";
 
-  # the vm's firewall as complete nftables tables for
-  # networking.nftables.tables. they stand on their own so no host chain
-  # runs ahead of them; the filter chains sit one below filter, since a
-  # host chain at the same priority would tie
+  # tables of their own so no host chain runs ahead of them, and one below
+  # filter because a host chain at the same priority would tie
   firewallOf = cfg: {
     "fencr-${cfg.name}-nat" = {
       family = "ip";

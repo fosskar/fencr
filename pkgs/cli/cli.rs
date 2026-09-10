@@ -9,9 +9,7 @@ use std::{thread, time};
 // VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP; so is
 // pkgs/domain.rs with covers()
 
-/// the kind out of "fencr:<vm>:<kind>", which the firewall writes as every
-/// counted rule's comment and every drop's log prefix; a kind ending in
-/// blocked is a drop
+/// the kind out of the firewall's "fencr:<vm>:<kind>" tag
 fn kind<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     let rest = &line[line.find("fencr:")? + 6..];
     let rest = rest.strip_prefix(name)?.strip_prefix(':')?;
@@ -23,10 +21,8 @@ fn dropped(kind: &str) -> bool {
     kind.ends_with("blocked")
 }
 
-/// where a grant's use shows: the counter of the rule tagged with the kind,
-/// or the proxy log's lines for hosts a pattern covers, a deny pattern
-/// refused or a credential's domain. a host's table may use no grant of
-/// some source
+/// where a grant's use shows
+// a host's table may construct no grant of some source
 #[allow(dead_code)]
 enum Source {
     Counter(&'static str),
@@ -107,7 +103,6 @@ fn fail(err: std::io::Error) -> ! {
     exit(1)
 }
 
-/// a command's stdout, or the first line of why there is none
 fn output(cmd: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new(cmd)
         .args(args)
@@ -179,7 +174,6 @@ fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
         .and_then(|rest| rest.split_whitespace().next())
 }
 
-/// the packet count of the vm's rule tagged with the kind
 fn packets(ruleset: &str, name: &str, tag: &str) -> u64 {
     ruleset
         .lines()
@@ -189,9 +183,7 @@ fn packets(ruleset: &str, name: &str, tag: &str) -> u64 {
         .sum()
 }
 
-/// the egress proxy logs one line per connection: "allow <host>",
-/// "intercept <host>" for a credential's domain, "deny <host>", or
-/// "deny: <reason>" when there was no server name
+/// one line per connection: "allow|deny|intercept <host>", or "deny: <reason>"
 fn proxy_log(name: &str) -> Option<Result<String, String>> {
     let (_, unit) = PROXIED.iter().find(|p| p.0 == name)?;
     Some(output(
@@ -200,9 +192,7 @@ fn proxy_log(name: &str) -> Option<Result<String, String>> {
     ))
 }
 
-/// the credential proxy logs one json record per request; the record's
-/// nested `request` object carries method, host and uri, and `status` the
-/// upstream's answer
+/// caddy's access log, one json record per request
 fn credential_log(name: &str) -> Option<Result<String, String>> {
     let (_, unit) = CREDENTIALS.iter().find(|p| p.0 == name)?;
     Some(output(
@@ -211,8 +201,7 @@ fn credential_log(name: &str) -> Option<Result<String, String>> {
     ))
 }
 
-/// the value of a top-level or nested string or number field in one
-/// json record; enough for caddy's flat access log, no parser needed
+/// enough for caddy's flat access log; no parser worth the dependency
 fn json_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
     let rest = &record[record.find(&format!("\"{key}\":"))? + key.len() + 3..];
     match rest.strip_prefix('"') {
@@ -221,8 +210,6 @@ fn json_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
     }
 }
 
-/// requests the credential proxies carried, aggregated by method, host,
-/// path and status, most frequent first
 fn requests(log: &str) -> Vec<(String, u64)> {
     let mut hits: BTreeMap<String, u64> = BTreeMap::new();
     for record in log
@@ -332,8 +319,7 @@ fn grant_lines(
     }
 }
 
-/// what the firewall and the proxy refused, by peer, with the grant that
-/// would admit it
+/// what was refused, by peer, with the grant that would admit it
 fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
     let mut hits: BTreeMap<(String, String), u64> = BTreeMap::new();
     for line in kernel.lines() {
@@ -352,8 +338,7 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
         }
         let proto = field(line, "PROTO=").unwrap_or("?").to_lowercase();
         let port = field(line, "DPT=");
-        // a reply toward the host's ephemeral range: the connection the host
-        // opened is no longer tracked, so its replies miss ct state
+        // a reply to a connection the host no longer tracks misses ct state
         let ephemeral = port
             .and_then(|port| port.parse::<u16>().ok())
             .is_some_and(|port| port >= 32768);
@@ -397,8 +382,6 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
         .flat_map(str::lines)
         .filter_map(|line| line.strip_prefix("deny "))
     {
-        // a host a deny entry refused is listed under that entry, not as
-        // a missing grant
         let denied = vm.outbound.iter().find_map(|grant| match grant.source {
             Source::Denied(pattern) if covers(pattern, host) => Some(pattern),
             _ => None,
@@ -458,8 +441,6 @@ fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
     }
 }
 
-/// the kernel's drop log since the vm unit last started, or the last 400
-/// lines when the unit reports no start
 fn kernel_log(started: Option<&str>) -> Result<String, String> {
     let mut args = vec!["-k", "-q", "--no-pager", "-g", "fencr:", "-o", "cat"];
     match started {
@@ -588,7 +569,6 @@ fn show(only: Option<&str>, watch: bool) {
     }
 }
 
-/// a checkpoint's file, or why the name is no checkpoint of this vm
 fn checkpoint_file(vm: &Vm, name: &str) -> Result<std::path::PathBuf, String> {
     if name.is_empty()
         || !name
@@ -607,7 +587,6 @@ fn checkpoint_file(vm: &Vm, name: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
-/// name, allocated size and time of every checkpoint, newest first
 fn checkpoints(vm: &Vm) -> Vec<(String, u64, std::time::SystemTime)> {
     use std::os::unix::fs::MetadataExt;
     let mut found = Vec::new();
@@ -648,7 +627,6 @@ fn print_checkpoints(vm: &Vm) {
     }
 }
 
-/// runs a tool that must succeed, with its own stderr
 fn run(cmd: &str, args: &[&str]) {
     match Command::new(cmd).args(args).status() {
         Ok(status) if status.success() => {}
@@ -661,9 +639,7 @@ fn run(cmd: &str, args: &[&str]) {
 }
 
 fn main() {
-    // rust starts with SIGPIPE ignored, so a reader that closes early
-    // (`fencr status | head`) makes println panic; the default action
-    // ends the command quietly like every other tool
+    // rust ignores SIGPIPE, so `fencr status | head` would panic in println
     unsafe extern "C" {
         fn signal(signum: i32, handler: usize) -> usize;
     }
@@ -674,8 +650,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("list") => print_list(),
         Some("ssh") => {
-            // the module's Host <vm> alias carries the address, root and
-            // the host key policy
+            // the module's Host <vm> alias carries address, user and host key policy
             let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
             fail(
                 Command::new(SSH)
@@ -708,8 +683,7 @@ fn main() {
             show(vm.map(|vm| vm.name), args.iter().any(|a| a == "--watch"));
         }
         Some("checkpoint") => {
-            // the unit does the work as the vm's user in the vm's own
-            // root; a bad name is the unit's error, shown here
+            // the unit does the work as the vm's user; a bad name is its error
             let vm = find(args.get(1).map(String::as_str).unwrap_or_else(|| usage()));
             let name = args.get(2).map(String::as_str).unwrap_or("manual");
             let unit = format!("{}{name}.service", vm.checkpoint_unit);
@@ -745,8 +719,7 @@ fn main() {
             }
         }
         Some("restore") => {
-            // the stop leaves a stop checkpoint of what is replaced, when
-            // onStop is set; the copy keeps the vm's ownership
+            // with onStop the stop leaves a checkpoint of what is replaced
             let vm = find(args.get(1).map(String::as_str).unwrap_or_else(|| usage()));
             let name = args.get(2).map(String::as_str).unwrap_or_else(|| usage());
             let file = checkpoint_file(vm, name).unwrap_or_else(|reason| {

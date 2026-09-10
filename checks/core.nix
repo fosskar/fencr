@@ -1,7 +1,6 @@
 _self: pkgs:
 
-# Probes the builders in modules/core without a host: instance derivation,
-# the firewall text and the host units. Nothing is built.
+# Probes the builders in modules/core without a host. Nothing is built.
 let
   inherit (pkgs) lib;
   core = import ../modules/core { inherit lib; };
@@ -155,7 +154,6 @@ assert (
   && outboundKind "!gist.github.com" "deny"
   && outboundValue "!*.raw.github.com" "*.raw.github.com"
 );
-# a deny narrows a grant: it must sit under one, and not equal one
 assert check "deny entries under a wildcard grant"
   (resolve "sbx" {
     id = 0;
@@ -229,8 +227,6 @@ assert lib.assertMsg (
       memoryMax = "1G";
     }).memoryMax == "1G"
 ) "core check: the unit's cap does not follow the guest's memory";
-# the connection cap sits in both chains the guest's new connections
-# enter, and the limiter values reach the guest contract
 assert lib.assertMsg (
   let
     cap = ''iifname "br-sbx" ct state new ct count over 2048 counter drop comment "fencr:sbx:connections-blocked"'';
@@ -360,8 +356,7 @@ assert lib.assertMsg (
     ]
   && !((core.vmService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
 ) "core check: syscall filter drifted";
-# the hypervisor unit: the vm's own user, no capabilities, the empty
-# root, and the process hiding the jailer's chroot gave
+# the unit's own user, no capabilities, and the empty root the jailer builds
 assert lib.assertMsg (
   let
     vm = (core.vmService pkgs resolved "/nix/store/runner").serviceConfig;
@@ -497,8 +492,6 @@ assert lib.assertMsg (
   && lib.hasInfix ''header_up x-key "{file.{$CREDENTIALS_DIRECTORY}/second}"'' caddyfile
   && !lib.hasInfix "handle" caddyfile
 ) "unit check: credential proxy does not end tls for every granted domain with its own header";
-# allow entries: one handle per entry carrying the proxy, a 403 for the
-# rest; malformed entries are rejected at evaluation
 assert lib.assertMsg (
   let
     caddyfile = core.credentialCaddyfile "/run/x/credentials.sock" [
@@ -551,9 +544,6 @@ assert lib.assertMsg (
       };
     }).errors == [ "sbx: credential \"api\": allow entry \"GET\": expected \"<methods> <path>\"" ]
 ) "unit check: credential allow entries are not rendered or validated";
-# checkpoints: the template unit runs the script as the vm's user in the
-# vm's empty root with reflink copies only; the timer exists only with an
-# interval; the vm unit copies after a clean stop unless told not to
 assert lib.assertMsg (
   let
     template = units.services."fencr-sbx-checkpoint@".serviceConfig;

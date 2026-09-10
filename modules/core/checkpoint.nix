@@ -13,26 +13,16 @@ let
     ;
 in
 {
-  # firecracker's api socket, in the run directory only the vm's user
-  # enters; a checkpoint pauses the vm through it
   apiSocketOf = name: "${runDirOf name}/api.sock";
 
-  # checkpoints are copies of the state image beside it, named
-  # "<kind>-<utc stamp>" for the automatic kinds and as given for manual
-  # ones; the vm's user owns them like the image
   checkpointDirOf = name: "${stateDirOf name}/checkpoints";
 
-  # the copy: a reflink, so it is instant and shares blocks with the image
-  # until either side writes. the clone is one atomic operation on the
-  # file, so a running vm's copy is a crash-consistent image of what
-  # reached the host disk, which Writeback keeps complete. the vm is not
-  # paused around it: firecracker 1.16 leaves host-to-guest vsock dead
-  # after a bare pause/resume (fixed in 1.17, #6100), which would take
-  # the power button with it. on a filesystem without reflinks a running
-  # copy would take minutes of racing the guest, so it is refused there;
-  # on the stop path the guest has unmounted and a plain sparse copy
-  # stands in. the automatic kinds are pruned to `keep` each, manual
-  # names are never touched
+  # the reflink is atomic on the file, so a running vm's copy is
+  # crash-consistent without pausing it, which firecracker 1.16 cannot
+  # survive: a bare pause/resume kills host-to-guest vsock and with it the
+  # power button (fixed in 1.17, #6100). without reflinks the copy would
+  # race the guest for minutes, so only the stop path falls back to one.
+  # see docs/decisions/checkpoints.md
   checkpointScript =
     pkgs: instance:
     pkgs.writeShellScript "fencr-${instance.name}-checkpoint" ''
@@ -74,8 +64,7 @@ in
           ;;
       esac
 
-      # the timer has nothing to add for a stopped vm; the api answers
-      # only while firecracker runs
+      # the api answers only while firecracker runs
       if [ "$label" = timer ] && ! curl --silent --fail --unix-socket "$socket" http://localhost/ > /dev/null; then
         echo "fencr: no timer checkpoint: the vm is not running" >&2
         exit 0
@@ -86,9 +75,8 @@ in
         echo "fencr: checkpoint \"$name\" exists" >&2
         exit 1
       fi
-      # the runner makes the image nodatacow on btrfs, and btrfs clones
-      # only between files with the same attribute: give the copy the
-      # image's before cloning into it; elsewhere chattr has nothing to do
+      # btrfs clones only between files whose nodatacow attribute matches,
+      # and the runner sets it on the image
       rm -f "$dir/$name.img.tmp"
       touch "$dir/$name.img.tmp"
       chmod 0600 "$dir/$name.img.tmp"
@@ -110,10 +98,7 @@ in
       done
     '';
 
-  # the unit set behind checkpoints: a template the timer and the command
-  # start with the name as instance, and the timer when an interval is
-  # set. it runs as the vm's user in the vm unit's own empty root, with
-  # the api socket as its only reach
+  # a template the timer and the command start with the name as instance
   checkpointUnits =
     pkgs: instance:
     let

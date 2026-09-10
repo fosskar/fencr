@@ -1,13 +1,10 @@
-# sealed microvms to run agents in. each instance provides the environment —
-# private bridge, nat to the internet, a firewall that drops every private
-# range, a persistent /var/lib and room to install into — and knows nothing
-# about which agent runs there. a machine says what to put inside:
+# sealed microvms to run agents in; a machine says what to put inside, and
+# the module knows nothing about it:
 #
 #   fencr.vms.myagent.services = [ my-agent-module ];
 #
-# per-instance networking (bridge, subnet, tap, mac, vsock cid) derives from
-# the instance's id, so instances never collide. the vm's address on its
-# bridge is where its sshd and its exposed ports answer.
+# bridge, subnet, tap, mac and vsock cid derive from the instance's id, so
+# instances never collide.
 { inputs }:
 {
   config,
@@ -29,7 +26,6 @@ let
   ) instances;
   unitSets = lib.mapAttrs (_: core.hostUnits pkgs) resolvedInstances;
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
-  # the guest evaluates against the host's nixpkgs
   guestSystems = lib.mapAttrs (
     name: cfg:
     import "${pkgs.path}/nixos/lib/eval-config.nix" {
@@ -52,7 +48,7 @@ in
   config = {
     fencr.guestSystems = guestSystems;
 
-    # the vm's firewall is written in nftables; the iptables firewall cannot host it
+    # the vm's tables are nftables; the iptables backend cannot host them
     networking.nftables.enable = lib.mkIf (instances != { }) true;
 
     assertions =
@@ -72,8 +68,7 @@ in
         }
       ];
 
-    # guest memory is the hypervisor's memory: a swap partition without
-    # random encryption writes it to disk, where it outlives the vm
+    # guest memory is the hypervisor's memory and would outlive the vm on disk
     warnings =
       let
         plain = lib.filter (swap: !swap.randomEncryption.enable) config.swapDevices;
@@ -90,8 +85,7 @@ in
       })
     ];
 
-    # `ssh <vm-name>` reaches the guest's sshd at its bridge address; any
-    # host user holding an authorized key gets in with their own identity
+    # any host user holding an authorized key gets in with their own identity
     programs.ssh.extraConfig = lib.concatStrings (
       lib.mapAttrsToList (
         name: cfg:
@@ -113,8 +107,7 @@ in
       }
     );
 
-    # the parent keeps host users outside group kvm away from every image;
-    # the state tree and the vsock sockets admit the vm's user alone
+    # 0710 keeps host users outside group kvm away from every image
     systemd.tmpfiles.rules = [
       "d /var/lib/fencr-vms 0710 root kvm -"
     ]
@@ -142,25 +135,21 @@ in
 
     systemd.timers = lib.mkMerge (map (units: units.timers) (lib.attrValues unitSets));
 
-    # masquerade by the vm's source address instead of networking.nat, so
-    # the module needs no knowledge of the host's uplink interface
+    # masquerade by source address, so the module needs no uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkIf (instances != { }) (
       lib.mkDefault true
     );
 
     # same-page merging lets a guest probe memory across vms
+    # (firecracker's prod-host-setup.md)
     hardware.ksm.enable = lib.mkIf (instances != { }) false;
 
-    # the vm's firewall tables stand beside the main firewall rather than inside it, so
-    # nothing nixpkgs puts ahead of extraForwardRules (icmpv6, dnat) runs
-    # before them, and the host keeps its own forward policy. the main
-    # firewall's interface rules only add ports, so globally open ones (sshd
-    # at least) would stay reachable from the bridges; the vm's input chain
-    # runs first and admits hostPorts and the egress proxy, nothing else
+    # beside the main firewall, not inside it: nothing nixpkgs puts ahead of
+    # extraForwardRules runs first, and the main firewall's interface rules
+    # would only add ports, leaving globally open ones reachable from the bridge
     networking.nftables.tables = forEachInstance (_: cfg: core.firewallOf cfg);
 
-    # firecracker attaches the tap by name with a virtio header and one queue, so
-    # it is persistent and its flags match; group kvm lets the vm unit open it
+    # firecracker attaches the tap by name with a virtio header and one queue
     systemd.network = forEachInstance (
       _name: cfg: {
         netdevs."10-${cfg.bridge}".netdevConfig = {
@@ -191,7 +180,6 @@ in
       }
     );
 
-    # with open egress the host's resolved answers the guest on the bridge
     services.resolved.settings.Resolve.DNSStubListenerExtra =
       let
         addresses = map (cfg: cfg.hostIp) (
@@ -200,9 +188,8 @@ in
       in
       lib.mkIf (addresses != [ ]) addresses;
 
-    # its input chain accepts first, but the main chain's drop policy
-    # still runs after it, so the resolver's and the egress proxy's ports
-    # open there too
+    # the vm's input chain accepts first, but the main chain's drop policy
+    # still runs after it
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
         ${cfg.bridge} = {
@@ -213,8 +200,7 @@ in
       }
     );
 
-    # with filterForward the main forward chain drops by policy, and a drop
-    # in any chain is final even after the vm's firewall accepted
+    # a drop in any chain is final, even after the vm's firewall accepted
     networking.firewall.extraForwardRules = lib.concatMapStrings (cfg: ''
       iifname "${cfg.bridge}" accept
     '') (lib.attrValues resolvedInstances);
