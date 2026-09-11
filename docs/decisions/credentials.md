@@ -10,8 +10,8 @@ Nothing here is a rule.
 - `fencr.credentials.<name>` declares a credential once on the host: an
   `upstream` such as `https://api.anthropic.com`, the `header` it travels
   in, and the `secretFile` holding the raw header value.
-  `fencr.vms.<vm>.credentials` grants it to a vm by name. A host-side
-  caddy, one unit per vm, injects the header; the value never exists
+  `fencr.vms.<vm>.credentials` grants it to a vm by name. The vm's egress
+  unit on the host injects the header; the value never exists
   inside the vm. An injected agent behind the proxy can still
   call the api and do damage with it during the session; it cannot steal
   the key for use elsewhere or leak it into logs and model context. Keys
@@ -23,11 +23,10 @@ Nothing here is a rule.
   a Nostr signing key, a Matrix recovery key and a token for a service on
   the lan have no header to ride in. An http api key is never a `secrets`
   entry; it is a credential
-- the proxy has no host loopback port. It listens on a unix socket in its
-  own runtime directory, group `kvm`, so nothing else on the host can
-  borrow the credential through it. The unit denies private ranges, so an
-  upstream name cannot resolve into the lan. An https upstream is tls the
-  host originates
+- nothing on the host can borrow a credential: the only door is the vm's
+  own bridge address, which the firewall opens to that vm alone. The unit
+  denies private ranges, so an upstream name cannot resolve into the lan.
+  An https upstream is tls the host originates
 - `allow` entries scope a credential by method and path since 2026-09-10;
   every request it rides on is on record. Not yet: a credential shared by
   several vms through one proxy process; a secret that must sit in a URL
@@ -191,3 +190,37 @@ its own environment, but it makes intent explicit and a misdirected
 placeholder visible. It needs the matchers to carry a header condition
 beside the `allow` entries, and it would refuse traffic that works today,
 so it wants its own decision.
+
+## 2026-09-11: one go program, and then one process
+
+Caddy went. It was 85 MiB of closure and 25 MiB resident to terminate tls
+and rewrite one header, and the body substitution the placeholder needed
+was a handler it does not have. `pkgs/egress` is a go program whose whole
+dependency tree is the standard library — `crypto/tls`, `crypto/x509` for
+the certificate per domain, `httputil.ReverseProxy` — so it packages with
+`vendorHash = null` like the rust ones, and its closure is 10 MiB. It does
+what the caddyfile did, and what caddy could not: substitute inside a
+request body, bounded at 1 MiB, larger or unmeasured bodies forwarded
+untouched. `FlushInterval = -1` keeps server-sent events flowing, which an
+mcp gateway needs.
+
+Then the two proxies became one. The vm's connection used to cross a unix
+socket from the egress proxy to the credential proxy; now one process
+reads the client hello and either splices the connection onward or ends it
+itself. What that removed is the point:
+
+- no socket between two host processes, so no `Group = "kvm"` on the unit
+  and no runtime directory to protect. The socket existed only because
+  two processes had to meet
+- one unit per vm, `fencr-<vm>-egress.service`, one journal, one process.
+  `fencr status` reads one journal for both the connection verdicts and
+  the credential requests
+- little isolation was traded for it. Both units already denied every
+  special-use range and both already reached the public internet, since an
+  upstream is out there; the merged unit adds the guest's own subnet,
+  which is where it listens
+
+The cost is that a fault in the tls termination now sits in the same
+process as the splice for every other name. The splice never parses what
+it carries, so the blast radius is a crash, and `Restart = always` covers
+that; a second process would not have made the parser safer.

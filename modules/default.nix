@@ -197,8 +197,8 @@ in
       _: cfg: {
         ${cfg.bridge} = {
           allowedTCPPorts =
-            cfg.hostPorts ++ lib.optional cfg.hostDns 53 ++ lib.optional cfg.proxy core.proxyTlsPort;
-          allowedUDPPorts = lib.optional cfg.hostDns 53 ++ lib.optional cfg.dnsProxy core.proxyDnsPort;
+            cfg.hostPorts ++ lib.optional cfg.hostDns 53 ++ lib.optional cfg.egress core.egressTlsPort;
+          allowedUDPPorts = lib.optional cfg.hostDns 53 ++ lib.optional cfg.dnsEgress core.egressDnsPort;
         };
       }
     );

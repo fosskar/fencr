@@ -56,13 +56,12 @@ in
     UMask = "0077";
   };
 
-  # group kvm is what the credentials socket admits; the denied ranges keep
-  # an upstream or an allowed name from resolving into the lan
-  proxyHardening = hardened // {
+  # the denied ranges keep an upstream or an allowed name from resolving
+  # into the lan
+  egressHardening = hardened // {
     Restart = "always";
     RestartSec = 5;
     DynamicUser = true;
-    Group = "kvm";
     IPAddressDeny = specialUseNetworks.v4 ++ specialUseNetworks.v6;
     RestrictAddressFamilies = [
       "AF_INET"
@@ -72,7 +71,7 @@ in
   };
 
   # never reached, even with an internet grant. the firewall enforces v4 on
-  # the bridge and drops v6 wholesale; the proxy units enforce both
+  # the bridge and drops v6 wholesale; the egress units enforce both
   specialUseNetworks = {
     v4 = [
       "0.0.0.0/8"

@@ -27,11 +27,12 @@ configuration, SSH access and the checkpoint commands.
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `hostErrors`),
   `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
-  (`vmService`), `egress.nix` (the egress proxy's service settings; it listens on two bridge ports, `proxyDnsPort` and
-  `proxyTlsPort`, which `redirectRules` reaches from the guest's 53 and 443),
-  `firewall.nix` (the vm's nftables tables: `forwardRules`, `inputRules`,
-  `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
-  `credentials.nix` (the authority and credential proxies, `parseAllow`),
+  (`vmService`), `firewall.nix` (the vm's nftables tables: `forwardRules`,
+  `inputRules`, `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
+  `egress.nix` (the authority, `parseAllow`, and the vm's egress unit:
+  `egressConfig`, `egressServiceConfig`, and the two bridge ports
+  `egressDnsPort` and `egressTlsPort` that `redirectRules` reaches from the
+  guest's 53 and 443),
   `checkpoint.nix` (`checkpointScript`, `checkpointUnits`, `apiSocketOf`),
   `host-units.nix` (`hostUnits`: services, sockets, timers) and `guest.nix`
   (`guestBase`, with the boot-time fetch in `guest-secrets.sh`). `emptyRootOf`
@@ -43,15 +44,17 @@ configuration, SSH access and the checkpoint commands.
   `domains`, `denied`, `hostPorts` and `destinations`, one flat record with
   `inbound` and the derived names; `guestOf` selects the `guestFields` the
   guest receives as `agentSandbox`. Builders read those fields.
-- `pkgs/cli/cli.rs` is the fencr command; `pkgs/cli/default.nix` appends its
-  instance tables and tool paths at build. `pkgs/egress-proxy/egress-proxy.rs`
-  answers DNS
-  queries, hands credential domains to their proxies by TLS SNI and applies the
-  allowlist to the rest. Both use `pkgs.writers.writeRustBin` with Rust edition
-  2024, not a Cargo workspace, and both get `pkgs/domain.rs` (`covers`, the
-  one wildcard rule) appended to their source at build; `nix build .#egress-proxy` builds the proxy on its own. `checks/cli.nix` feeds the command a ruleset
+- `pkgs/cli/cli.rs` is the fencr command, `pkgs.writers.writeRustBin` with
+  Rust edition 2024, not a Cargo workspace; `pkgs/cli/default.nix` appends its
+  instance tables, tool paths and `pkgs/domain.rs` (`covers`, the one wildcard
+  rule) at build. `checks/cli.nix` feeds the command a ruleset
   rendered by `firewallOf` and canned journal lines, so its parsers run on the
   text the firewall writes.
+- `pkgs/egress/` is the vm's road out, one Go program, standard library only,
+  so `buildGoModule` takes `vendorHash = null`: `dns.go` answers every A query
+  with the bridge address, `sni.go` reads the server name from the client
+  hello, `main.go` splices an allowed name onward or hands a credential's
+  domain to `credentials.go`, which ends the TLS and injects the header. `nix build .#egress` builds it on its own and runs its tests.
 - The bridge is the road between host and guest: the guest's sshd and its
   `inbound` ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
   firewall's output chain lets the host reach those ports and nothing else. vsock
@@ -84,12 +87,12 @@ configuration, SSH access and the checkpoint commands.
   `"!name"` refuses a name a wildcard grant would otherwise admit; a deny no
   grant covers, or one equal to a grant, is an evaluation error.
 - `credentials` intercepts TLS for the credential's domain only: the guest's
-  `/etc/hosts` points the domain at the bridge, the egress proxy hands the
-  connection by SNI to the VM's Caddy, `fencr-<vm>-credentials.service`, on a Unix
-  socket; it holds a certificate per granted domain from the per-host
+  `/etc/hosts` points the domain at the bridge, and the same unit that judges
+  every other name ends this one itself, by SNI. It holds a certificate per
+  granted domain from the per-host
   authority `fencr-ca.service` keeps in `/var/lib/fencr/ca` and injects that
-  credential's header, which it reads per request through Caddy's `{file.}`
-  placeholder rather than from its environment. `allow` entries scope a
+  credential's header, read from `$CREDENTIALS_DIRECTORY` per request rather
+  than from its environment, so a rotated `secretFile` needs no restart. `allow` entries scope a
   credential to methods and paths, and the host answers 403 itself for the
   rest; every request is logged without its headers, which `fencr status`
   lists. The guest fetches the authority
@@ -106,10 +109,9 @@ configuration, SSH access and the checkpoint commands.
   connection must not start a stopped VM. Keep relay identities separate from
   VM users.
 - Hosts need KVM and systemd-networkd, which brings systemd-resolved, the
-  stub the proxy units resolve through. KSM is disabled. The VM unit runs as
+  stub the egress units resolve through. KSM is disabled. The VM unit runs as
   the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices; group
-  `kvm` is for those two and for the credentials socket the egress proxy
-  connects to. The unit's root is an empty read-only tmpfs with the store, the
+  `kvm` is for those two. The unit's root is an empty read-only tmpfs with the store, the
   run directory and the state directory bound in, which is what Firecracker's
   jailer builds with its chroot. On x86_64, a CPU template hides vmx and svm from the guest. Stopping presses the guest's vsock power
   button (port 4), which reboots, because Firecracker exits on CPU reset.
@@ -131,19 +133,20 @@ nix fmt
 nix build .#checks.x86_64-linux.formatting --no-link
 nix build .#checks.x86_64-linux.core --no-link
 nix build .#checks.x86_64-linux.cli --no-link
-nix build .#checks.x86_64-linux.egress-proxy --no-link
+nix build .#checks.x86_64-linux.egress --no-link
 nix build .#checks.x86_64-linux.nixos-module --no-link
 nix build .#checks.x86_64-linux.nixos-boot --no-link -L
 nix flake check
 ```
 
-- `treefmt.nix` enables nixfmt, deadnix, statix, mdformat, and rustfmt. The dev
+- `treefmt.nix` enables nixfmt, deadnix, statix, mdformat, rustfmt and gofmt. The dev
   shell provides the treefmt wrapper. There is no default package to build;
   the CLI is installed by the NixOS module when VMs are declared.
 - `checks/core.nix` probes pure builders and generated configuration through
   evaluation assertions. Extend it for derivation, validation, and unit changes.
 - `checks/cli.nix` exercises the compiled CLI with mocked system commands.
-- `checks/egress-proxy.nix` runs the proxy's `#[cfg(test)]` cases with `rustc --test`.
+- `checks.egress` is the package itself: `buildGoModule` runs `pkgs/egress`'s
+  own `go test` cases in its check phase.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.
 - `checks/nixos-boot.nix` runs a Firecracker guest inside a NixOS test VM,

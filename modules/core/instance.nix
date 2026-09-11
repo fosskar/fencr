@@ -71,8 +71,7 @@ in
   userOf = name: "fencr-${name}";
   unitsOf = name: {
     vm = "fencr-${name}";
-    proxy = "fencr-${name}-egress-proxy";
-    credentials = "fencr-${name}-credentials";
+    egress = "fencr-${name}-egress";
     secrets = "fencr-${name}-secrets";
     checkpoint = "fencr-${name}-checkpoint";
   };
@@ -226,10 +225,10 @@ in
       granted = credentialsOf (options // { inherit name; }) credentials;
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
-      # the guest's resolver is the proxy with domain grants, the host's
+      # the guest's resolver is the egress with domain grants, the host's
       # resolved with an internet grant, and nothing otherwise
-      proxy = domains != [ ] || granted != [ ];
-      dnsProxy = domains != [ ];
+      egress = domains != [ ] || granted != [ ];
+      dnsEgress = domains != [ ];
       hostDns = internet;
       errors =
         lib.optional (
@@ -294,8 +293,8 @@ in
         internet
         domains
         denied
-        proxy
-        dnsProxy
+        egress
+        dnsEgress
         hostDns
         ;
       inherit (options)
@@ -326,7 +325,7 @@ in
       credentialPlaceholders = lib.listToAttrs (
         map (credential: lib.nameValuePair credential.name credential.placeholder) granted
       );
-      dns = if dnsProxy || hostDns then hostIpOf options else null;
+      dns = if dnsEgress || hostDns then hostIpOf options else null;
       bridge = bridgeOf name;
       mac = macOf options;
       cid = cidOf options;

@@ -166,7 +166,7 @@ fencr.credentials.mine = {
 ```
 
 The workload calls `https://api.anthropic.com` as it would anywhere. Inside
-the VM the name resolves to the host, where the credential's proxy ends the
+the VM the name resolves to the host, where the VM's egress unit ends the
 TLS with a certificate from a per-host certificate authority the VM trusts,
 replaces the header with the secret value and sends the request on. A
 client that insists on a key can be given any placeholder. The VM's system
@@ -248,8 +248,8 @@ forwarding. See [access](docs/access.md) for other connection methods.
 ## Implementation and design
 
 The NixOS module lives in `modules/`, the pure builders it composes
-in `modules/core/`, and the `fencr` command and the egress proxy in `pkgs/`. Flake
-checks cover the NixOS module, the builders, the CLI, the egress proxy and
+in `modules/core/`, and the `fencr` command and the egress program in `pkgs/`. Flake
+checks cover the NixOS module, the builders, the CLI, the egress program and
 NixOS boot integration. Firecracker replaced crosvm, which had replaced
 QEMU; [the hypervisor record](docs/decisions/hypervisor.md) holds the
 history, the costs, and what Firecracker's production host guidance

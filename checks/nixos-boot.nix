@@ -114,7 +114,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # a host already serving *:443 and *:53; the egress proxy must live beside it
       systemd.services.host-squatter = {
         wantedBy = [ "multi-user.target" ];
-        before = [ "fencr-sbx-egress-proxy.service" ];
+        before = [ "fencr-sbx-egress.service" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${squatter}";
       };
       # stands in for sops or agenix: the secret exists before the proxy starts
@@ -223,7 +223,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       networking.hosts."192.168.1.1" = [ "private.test" ];
       # the test network is a private range the proxy unit denies; allow
       # the one target, which is the "internet" here
-      systemd.services.fencr-sbx-egress-proxy.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
+      systemd.services.fencr-sbx-egress.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
 
       system.stateVersion = "25.11";
     };
@@ -340,38 +340,42 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # every name resolves to the host; the allowed one is passed through,
       # the other refused by name, a raw address on 443 by the forward chain
       target.wait_for_unit("target-443.service")
-      host.wait_for_unit("fencr-sbx-egress-proxy.service")
+      host.wait_for_unit("fencr-sbx-egress.service")
       host.succeed(f"{ssh} 'getent hosts denied.test' | grep -q '^10.11.0.1 '", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://allowed.test/' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://denied.test/'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 5 https://192.168.1.2/'", timeout=60)
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow allowed.test'")
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny denied.test'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'allow allowed.test'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'deny denied.test'")
       # the deny entry inside the wildcard grant
       host.succeed(f"{ssh} 'curl --fail --silent --insecure --max-time 10 https://other.allowed.test/' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 10 https://sub.allowed.test/'", timeout=60)
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow other.allowed.test'")
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'deny sub.allowed.test'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'allow other.allowed.test'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'deny sub.allowed.test'")
       # an allowed name resolving into the lan: the unit's deny list drops the
       # syn, so the connect times out where the squatter would have answered
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 15 https://private.test/'", timeout=60)
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'allow private.test'")
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'relay: connection timed out'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'allow private.test'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'relay: dial tcp4 192.168.1.1:443: i/o timeout'")
 
       # the guest trusts the host's authority without being told to, and
       # whatever it sent as a header is replaced
       host.wait_for_unit("upstream-8765.service")
-      host.wait_for_unit("fencr-sbx-credentials.service")
+      host.wait_for_unit("fencr-sbx-egress.service")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/root.key)\" = root:600")
-      host.succeed("test -S /run/fencr-sbx-credentials/credentials.sock")
+      # one process holds both listeners, so no socket carries a credential
+      # between two of them
+      host.fail("systemctl cat fencr-sbx-credentials.service")
+      pid = host.succeed("systemctl show -p MainPID --value fencr-sbx-egress.service").strip()
+      host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 2")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
       host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/fencr-ca.crt'", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
-      host.succeed("journalctl -u fencr-sbx-egress-proxy.service -o cat | grep -Fx 'intercept api.test'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
       # the access log holds the request without the headers it carried
-      host.succeed("journalctl -u fencr-sbx-credentials.service -o cat | grep -F 'handled request' | grep -F '\"method\":\"GET\"' | grep -F '\"host\":\"api.test\"' | grep -F '\"uri\":\"/\"' | grep -qF '\"status\":200'")
-      host.fail("journalctl -u fencr-sbx-credentials.service -o cat | grep -qiF 'placeholder'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'handled request' | grep -F '\"method\":\"GET\"' | grep -F '\"host\":\"api.test\"' | grep -F '\"uri\":\"/\"' | grep -qF '\"status\":200'")
+      host.fail("journalctl -u fencr-sbx-egress.service -o cat | grep -qiF 'placeholder'")
       host.succeed("fencr status sbx | grep -F 'GET api.test/ \u2192 200'")
       # the upstream echoes the header, so its absence shows nothing reached it
       host.succeed(f"{ssh} 'curl --silent --max-time 10 -o /dev/null -w %{{http_code}} -X POST https://api.test/' | grep -Fx 403", timeout=60)

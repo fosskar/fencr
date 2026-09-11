@@ -6,7 +6,7 @@ use std::process::{Command, exit};
 use std::{thread, time};
 
 // the instance tables and tool paths are appended by cli.nix at build:
-// VMS, PROXIED, CREDENTIALS, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP; so is
+// VMS, PROXIED, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP; so is
 // pkgs/domain.rs with covers()
 
 /// the kind out of the firewall's "fencr:<vm>:<kind>" tag
@@ -183,25 +183,24 @@ fn packets(ruleset: &str, name: &str, tag: &str) -> u64 {
         .sum()
 }
 
-/// one line per connection: "allow|deny|intercept <host>", or "deny: <reason>"
-fn proxy_log(name: &str) -> Option<Result<String, String>> {
-    let (_, unit) = PROXIED.iter().find(|p| p.0 == name)?;
+/// the egress journal: one line per connection, "allow|deny|intercept
+/// <host>" or "deny: <reason>", and one json record per credential request
+fn egress_log(name: &str) -> Option<Result<String, String>> {
+    let (_, unit, _) = PROXIED.iter().find(|p| p.0 == name)?;
     Some(output(
         JOURNALCTL,
         &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"],
     ))
 }
 
-/// caddy's access log, one json record per request
-fn credential_log(name: &str) -> Option<Result<String, String>> {
-    let (_, unit) = CREDENTIALS.iter().find(|p| p.0 == name)?;
-    Some(output(
-        JOURNALCTL,
-        &["-u", unit, "-q", "-n", "400", "--no-pager", "-o", "cat"],
-    ))
+/// whether a credential writes into that journal at all
+fn holds_credentials(name: &str) -> bool {
+    PROXIED
+        .iter()
+        .any(|(vm, _, credentials)| *vm == name && *credentials)
 }
 
-/// enough for caddy's flat access log; no parser worth the dependency
+/// enough for the proxy's flat access log; no parser worth the dependency
 fn json_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
     let rest = &record[record.find(&format!("\"{key}\":"))? + key.len() + 3..];
     match rest.strip_prefix('"') {
@@ -285,7 +284,7 @@ fn grant_lines(
                 grant,
                 proxy
                     .as_ref()
-                    .expect("a domain grant runs the egress proxy")
+                    .expect("a domain grant runs the egress unit")
                     .as_ref()
                     .map(|log| connections(log, "allow ", |host| covers(pattern, host)))
                     .map_err(Clone::clone),
@@ -296,7 +295,7 @@ fn grant_lines(
                 grant,
                 proxy
                     .as_ref()
-                    .expect("a deny entry runs the egress proxy")
+                    .expect("a deny entry runs the egress unit")
                     .as_ref()
                     .map(|log| connections(log, "deny ", |host| covers(pattern, host)))
                     .map_err(Clone::clone),
@@ -307,7 +306,7 @@ fn grant_lines(
                 grant,
                 proxy
                     .as_ref()
-                    .expect("a credential runs the egress proxy")
+                    .expect("a credential runs the egress unit")
                     .as_ref()
                     .map(|log| connections(log, "intercept ", |host| host == *domain))
                     .map_err(Clone::clone),
@@ -420,18 +419,10 @@ fn unit_health(p: &Result<BTreeMap<String, String>, String>, s: &Style) -> Strin
 
 fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
     let mut services = Vec::new();
-    for (vm, unit) in PROXIED {
+    for (vm, unit, _) in PROXIED {
         if *vm == name {
             services.push(format!(
-                "egress proxy {}",
-                unit_health(&props(unit, "LoadState,ActiveState"), s)
-            ));
-        }
-    }
-    for (vm, unit) in CREDENTIALS {
-        if *vm == name {
-            services.push(format!(
-                "credential {}",
+                "egress {}",
                 unit_health(&props(unit, "LoadState,ActiveState"), s)
             ));
         }
@@ -478,7 +469,7 @@ fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec
         "{}{}{}  {state}  {}{memory}",
         s.bold, vm.name, s.reset, vm.ip
     ));
-    let proxy = proxy_log(vm.name);
+    let proxy = egress_log(vm.name);
     for (heading, grants) in [
         ("Inbound (from host)", vm.inbound),
         ("Outbound (otherwise denied)", vm.outbound),
@@ -513,7 +504,7 @@ fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec
         }
         Err(reason) => out.push(format!("  {}", unavailable(reason, s))),
     }
-    if let Some(log) = credential_log(vm.name) {
+    if let (true, Some(log)) = (holds_credentials(vm.name), &proxy) {
         out.push(String::new());
         out.push("Credential requests (journal):".to_string());
         match log {
@@ -526,7 +517,7 @@ fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec
                     out.push(format!("  {entry:<40}  x{count}"));
                 }
             }
-            Err(reason) => out.push(format!("  {}", unavailable(&reason, s))),
+            Err(reason) => out.push(format!("  {}", unavailable(reason, s))),
         }
     }
     out.push(String::new());
@@ -668,9 +659,8 @@ fn main() {
                 let vm = vm.unwrap_or_else(|| usage());
                 let units = PROXIED
                     .iter()
-                    .chain(CREDENTIALS)
-                    .filter(|(owner, _)| *owner == vm.name)
-                    .map(|(_, unit)| *unit);
+                    .filter(|(owner, _, _)| *owner == vm.name)
+                    .map(|(_, unit, _)| *unit);
                 fail(
                     Command::new(SYSTEMCTL)
                         .arg("status")

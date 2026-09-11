@@ -41,7 +41,7 @@ in
     {
       assertion =
         config.systemd.services ? fencr-ca
-        && config.systemd.services ? fencr-sbx-credentials
+        && config.systemd.services ? fencr-sbx-egress
         && guestConfig.networking.hosts."10.11.0.1" == [ "api.anthropic.com" ]
         && guestConfig.environment.etc."ssl/certs/ca-certificates.crt".source == "/run/fencr/ca-bundle.crt"
         && guestConfig.systemd.globalEnvironment.NIX_SSL_CERT_FILE == "/run/fencr/ca-bundle.crt";
@@ -61,7 +61,7 @@ in
       assertion =
         config.fencr.guestSystems.sealed.config.systemd.network.networks."10-lan".networkConfig.DNS
         == "10.11.1.1"
-        && config.systemd.services ? "fencr-sealed-egress-proxy"
+        && config.systemd.services ? "fencr-sealed-egress"
         && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 33053 ]
         && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ]
         &&

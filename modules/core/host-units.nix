@@ -9,8 +9,7 @@ let
     caCert
     guestTrust
     hardened
-    egressProxyServiceConfig
-    credentialServiceConfig
+    egressServiceConfig
     checkpointUnits
     ;
 in
@@ -22,22 +21,12 @@ in
       units = unitsOf instance.name;
       vmUnit = "${units.vm}.service";
       caService = "${caUnit}.service";
-      credentialUnits = lib.optional (instance.credentials != [ ]) "${units.credentials}.service";
       checkpoints = checkpointUnits pkgs instance;
       secrets = instance.secrets != { } || instance.credentials != [ ];
     in
     {
       services =
-        lib.optionalAttrs (instance.credentials != [ ]) {
-          ${units.credentials} = {
-            description = "credentials for ${instance.name}";
-            wantedBy = [ "multi-user.target" ];
-            requires = [ caService ];
-            after = [ caService ];
-            serviceConfig = credentialServiceConfig pkgs instance;
-          };
-        }
-        // checkpoints.services
+        checkpoints.services
         // lib.optionalAttrs secrets {
           "${units.secrets}@" = {
             description = "raw secrets for ${instance.name}";
@@ -62,13 +51,13 @@ in
             };
           };
         }
-        // lib.optionalAttrs instance.proxy {
-          ${units.proxy} = {
-            description = "egress proxy for ${instance.name}";
+        // lib.optionalAttrs instance.egress {
+          ${units.egress} = {
+            description = "egress and credentials for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ] ++ credentialUnits;
-            wants = credentialUnits;
-            serviceConfig = egressProxyServiceConfig pkgs instance;
+            after = [ "network.target" ] ++ lib.optional (instance.credentials != [ ]) caService;
+            requires = lib.optional (instance.credentials != [ ]) caService;
+            serviceConfig = egressServiceConfig pkgs instance;
           };
         };
       sockets = lib.optionalAttrs secrets {

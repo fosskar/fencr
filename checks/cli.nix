@@ -85,18 +85,12 @@ let
         printf 'fencr:sbx:connections-blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=140.82.121.4 PROTO=TCP DPT=443\n'
         ;;
       -u)
-        case "$2" in
-          *-credentials.service)
-            # caddy's access log beside its startup chatter
-            printf '{"level":"info","msg":"serving initial configuration"}\n'
-            printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"POST","host":"api.test","uri":"/v1/messages","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":200}\n'
-            printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"POST","host":"api.test","uri":"/v1/messages","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":200}\n'
-            printf '{"level":"info","logger":"http.log.access","msg":"handled request","request":{"remote_ip":"@","proto":"HTTP/1.1","method":"GET","host":"api.test","uri":"/v1/models?x=1","tls":{"server_name":"api.test"}},"duration":0.2,"size":10,"status":404}\n'
-            ;;
-          *)
-            printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
-            ;;
-        esac
+        # one journal: the verdict per connection and, where a credential is
+        # granted, one record per request it carried
+        printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
+        printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
+        printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
+        printf '{"msg":"handled request","method":"GET","host":"api.test","uri":"/v1/models?x=1","status":404}\n'
         ;;
     esac
   '';
@@ -141,24 +135,22 @@ pkgs.runCommand "fencr-cli-check" { } ''
     POST api.test/v1/messages → 200           x2
     GET api.test/v1/models?x=1 → 404          x1
 
-  Services: egress proxy RUNNING, credential RUNNING
+  Services: egress RUNNING
 
   EOF
   diff -u expected actual
   cat > expected-queries <<'EOF'
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent,ActiveEnterTimestamp
   -k -q --no-pager -g fencr: -o cat --since Tue 2026-09-08 05:11:18 UTC
-  -u fencr-sbx-egress-proxy.service -q -n 400 --no-pager -o cat
-  -u fencr-sbx-credentials.service -q -n 400 --no-pager -o cat
-  show fencr-sbx-egress-proxy.service --property=LoadState,ActiveState
-  show fencr-sbx-credentials.service --property=LoadState,ActiveState
+  -u fencr-sbx-egress.service -q -n 400 --no-pager -o cat
+  show fencr-sbx-egress.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
   TEST_QUIET=1 ${cli}/bin/fencr status sbx > actual
   grep -Fx '  ✗ guest → evil.test:443/tls         x1     outbound "evil.test"' actual
   if grep -F '1.2.3.4' actual; then exit 1; fi
   ${cli}/bin/fencr status sbx --full > /dev/null
-  grep -Fx "status fencr-sbx.service fencr-sbx-egress-proxy.service fencr-sbx-credentials.service --no-pager" "$TEST_LOG"
+  grep -Fx "status fencr-sbx.service fencr-sbx-egress.service --no-pager" "$TEST_LOG"
   ${cli}/bin/fencr status sealed > actual
   test "$(grep -c '^  denied$' actual)" = 2
   ${cli}/bin/fencr status open > actual
@@ -194,7 +186,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
     esac
     ${cli}/bin/fencr status sbx > actual
     grep -F "sbx  $health  10.11.0.2" actual
-    grep -Fx "Services: egress proxy $health, credential $health" actual
+    grep -Fx "Services: egress $health" actual
   done
   touch "$out"
 ''

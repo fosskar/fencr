@@ -1,7 +1,3 @@
-// the credential proxy: one per vm, reached only over its unix socket by
-// that vm's egress proxy. it ends the tls for each granted domain with a
-// certificate from the host's authority, puts the credential where the
-// request needs it, and sends the request on. the vm never holds a value.
 package main
 
 import (
@@ -17,7 +13,6 @@ import (
 	"io"
 	"log"
 	"math/big"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -27,13 +22,6 @@ import (
 	"sync"
 	"time"
 )
-
-// what nix writes beside the binary; the values themselves arrive as
-// systemd credentials, never through this file
-type config struct {
-	Socket      string       `json:"socket"`
-	Credentials []credential `json:"credentials"`
-}
 
 type credential struct {
 	Name        string `json:"name"`
@@ -51,38 +39,9 @@ type rule struct {
 
 // a request body is substituted only when it is small enough to hold; a
 // larger or unmeasured one is forwarded untouched rather than buffered
+// larger or unmeasured one is forwarded untouched rather than buffered
 const maxBody = 1 << 20
 
-func main() {
-	log.SetFlags(0)
-	if len(os.Args) != 2 {
-		log.Fatal("usage: fencr-credentials-proxy <config.json>")
-	}
-	cfg, err := load(os.Args[1])
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := serve(cfg); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func load(path string) (*config, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	cfg := &config{}
-	if err := json.Unmarshal(raw, cfg); err != nil {
-		return nil, err
-	}
-	if len(cfg.Credentials) == 0 {
-		return nil, fmt.Errorf("no credentials configured")
-	}
-	return cfg, nil
-}
-
-// the credential's value, read per request so a rotated file is served
 // without a restart; the path watcher restarts the unit for LoadCredential,
 // this keeps the window short
 func secret(name string) (string, error) {
@@ -95,39 +54,6 @@ func secret(name string) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(string(raw), "\r\n"), nil
-}
-
-func serve(cfg *config) error {
-	authority, err := loadAuthority()
-	if err != nil {
-		return err
-	}
-	byDomain := map[string]*credential{}
-	for i := range cfg.Credentials {
-		byDomain[strings.ToLower(cfg.Credentials[i].Domain)] = &cfg.Credentials[i]
-	}
-
-	if err := os.Remove(cfg.Socket); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	listener, err := net.Listen("unix", cfg.Socket)
-	if err != nil {
-		return err
-	}
-	// the vm's egress proxy reaches it through group kvm and nothing else
-	if err := os.Chmod(cfg.Socket, 0o660); err != nil {
-		return err
-	}
-
-	server := &http.Server{
-		Handler:           handler(byDomain),
-		TLSConfig:         &tls.Config{GetCertificate: authority.certificate, MinVersion: tls.VersionTLS12},
-		ReadHeaderTimeout: 30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		ErrorLog:          log.New(io.Discard, "", 0),
-	}
-	// ServeTLS, not a tls listener: it is what turns on http/2
-	return server.ServeTLS(listener, "", "")
 }
 
 func handler(byDomain map[string]*credential) http.Handler {
@@ -199,7 +125,8 @@ func (entry rule) covers(r *http.Request) bool {
 
 var patterns sync.Map
 
-// "*" stands for any characters, "/" included, as caddy's path matcher did
+// "*" stands for any characters, "/" included: an allow entry scopes a
+// credential by path, and a path is not a place to be subtle
 func pathPattern(pattern string) *regexp.Regexp {
 	if cached, ok := patterns.Load(pattern); ok {
 		return cached.(*regexp.Regexp)

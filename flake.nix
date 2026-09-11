@@ -41,7 +41,7 @@
       };
 
       packages = forAllSystems (pkgs: {
-        egress-proxy = pkgs.callPackage ./pkgs/egress-proxy { };
+        egress = pkgs.callPackage ./pkgs/egress { };
       });
 
       herculesCI = import ./effects.nix {
@@ -61,7 +61,8 @@
 
         cli = import ./checks/cli.nix self pkgs;
 
-        egress-proxy = import ./checks/egress-proxy.nix self pkgs;
+        # buildGoModule runs the package's own tests
+        egress = pkgs.callPackage ./pkgs/egress { };
 
         nixos-boot = import ./checks/nixos-boot.nix self pkgs;
       });

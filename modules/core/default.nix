@@ -8,9 +8,8 @@ lib.fix (
     ./instance.nix
     ./hardening.nix
     ./vm.nix
-    ./egress.nix
     ./firewall.nix
-    ./credentials.nix
+    ./egress.nix
     ./checkpoint.nix
     ./host-units.nix
     ./guest.nix

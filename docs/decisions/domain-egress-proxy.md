@@ -89,7 +89,8 @@ before the allowlist, and `fencr status` lists the entry with the
 connections it refused. A deny no grant covers is rejected at evaluation
 as a typo, and one equal to a grant as emptying it. The one rule for what a
 pattern covers, case-insensitive, `*.x` never matching bare `x`, lives in
-`pkgs/domain.rs` and is compiled into both the proxy and the command;
+`matchesAny` in `pkgs/egress`, with `pkgs/domain.rs` compiled into the
+command;
 `instance.nix` carries it a third time for evaluation-time checks.
 
 `inbound` is a list of integer guest TCP ports. It has no `from` field because
@@ -97,3 +98,13 @@ only host-to-guest access is supported; it does not publish ports externally.
 SSH keys and credential grants retain their automatic access, and the CLI
 shows those permissions alongside explicit grants. Raw secrets remain separate
 because they deliver values into the guest rather than grant network access.
+
+## 2026-09-11: the proxy and the credential proxy became one unit
+
+`fencr-<vm>-egress.service` is now one go program doing both jobs: it
+answers the dns, reads the client hello, and either splices an allowed
+name onward as before or ends the tls itself for a credential's domain.
+The unix socket between the two processes is gone, and with it the `kvm`
+group on the unit and the runtime directory that held the socket. The
+enforcement above is unchanged — the splice still never decrypts what it
+carries. `credentials.md` holds the reasoning.

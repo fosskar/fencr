@@ -246,9 +246,9 @@ assert lib.assertMsg (
   && capped.networkBandwidth == 50
 ) "core check: the resource caps are not rendered";
 assert lib.assertMsg (
-  resolved.proxy
+  resolved.egress
   && resolved.dns == "10.11.0.1"
-  && !longName.proxy
+  && !longName.egress
   && longName.hostDns
   && longName.dns == "10.11.1.1"
   && !(resolve "sbx" { id = 0; }).hostDns
@@ -321,16 +321,17 @@ assert lib.assertMsg (lib.all (
   )
 ) core.specialUseNetworks.v4) "core check: open egress does not block every special-use range";
 assert lib.assertMsg (
-  !(units.services."fencr-sbx-egress-proxy".serviceConfig ? AmbientCapabilities)
+  !(units.services."fencr-sbx-egress".serviceConfig ? AmbientCapabilities)
   &&
-    lib.hasPrefix "${core.egressProxyBin pkgs}/bin/fencr-egress-proxy 10.11.0.1:33053 10.11.0.1:33443 "
-      units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart
+    lib.hasPrefix "${core.egressBin pkgs}/bin/fencr-egress "
+      units.services."fencr-sbx-egress".serviceConfig.ExecStart
   &&
-    units.services."fencr-sbx-egress-proxy".serviceConfig.IPAddressAllow == [
+    units.services."fencr-sbx-egress".serviceConfig.IPAddressAllow == [
+      "127.0.0.1/32"
       "127.0.0.53/32"
       "10.11.0.0/26"
     ]
-  && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-credentials".serviceConfig.IPAddressAllow
+  && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-egress".serviceConfig.IPAddressAllow
   && occurrences ''iifname "br-sbx" tcp dport { 443 } counter accept comment "fencr:sbx:host"'' == 1
   &&
     occurrences ''iifname "br-sbx" ip daddr 192.168.1.50 tcp dport 8123 counter accept comment "fencr:sbx:pin-192.168.1.50-8123"''
@@ -345,13 +346,13 @@ assert lib.assertMsg (
     == 1
 ) "unit check: egress proxy is not the vm's road out";
 assert lib.assertMsg (
-  units.services."fencr-sbx-egress-proxy".serviceConfig.SystemCallFilter == [
+  units.services."fencr-sbx-egress".serviceConfig.SystemCallFilter == [
     "@system-service"
     "~@privileged"
     "~@resources"
   ]
   &&
-    units.services."fencr-sbx-credentials".serviceConfig.SystemCallFilter == [
+    units.services."fencr-sbx-egress".serviceConfig.SystemCallFilter == [
       "@system-service"
       "~@privileged"
       "~@resources"
@@ -420,11 +421,12 @@ assert lib.assertMsg (
     ]
 ) "core check: credential domain drifted";
 assert lib.assertMsg (
-  keyed.proxy
-  && !keyed.dnsProxy
+  keyed.egress
+  && !keyed.dnsEgress
   && keyed.dns == null
-  && keyedUnits.services ? "fencr-keyed-egress-proxy"
-  && keyedUnits.services."fencr-keyed-egress-proxy".wants == [ "fencr-keyed-credentials.service" ]
+  && keyedUnits.services ? "fencr-keyed-egress"
+  && !(keyedUnits.services ? "fencr-keyed-credentials")
+  && keyedUnits.services."fencr-keyed-egress".requires == [ "fencr-ca.service" ]
   && keyedUnits.sockets ? "fencr-keyed-secrets"
   &&
     keyedUnits.services."fencr-keyed-secrets@".serviceConfig.LoadCredential == [
@@ -470,8 +472,7 @@ assert lib.assertMsg (
   && resolved.credentialPlaceholders == { api = placeholder; }
   && resolved.credentialEnv == { }
   &&
-    (lib.head (builtins.fromJSON (core.credentialConfig "/run/x/x.sock" resolved.credentials))
-    .credentials).placeholder == placeholder
+    (lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).placeholder == placeholder
 ) "unit check: the credential placeholder drifted";
 # a rotated secretFile reaches the proxies: one watcher for the host, and
 # none at all where no credential is granted
@@ -487,42 +488,45 @@ assert lib.assertMsg (
     PathChanged = [ "/run/secrets/api-token" ];
     PathModified = [ "/run/secrets/api-token" ];
   }
-  && lib.hasSuffix "systemctl try-restart fencr-keyed-credentials.service fencr-sbx-credentials.service" reload.services.fencr-credentials-reload.serviceConfig.ExecStart
+  && lib.hasSuffix "systemctl try-restart fencr-keyed-egress.service fencr-sbx-egress.service" reload.services.fencr-credentials-reload.serviceConfig.ExecStart
   && core.reloadUnits pkgs { sealed = resolve "sealed" { id = 1; }; } == { }
 ) "unit check: a rotated credential file does not reach the proxies";
+# one unit holds both, so it needs no runtime directory for a socket and no
+# group to share one
 assert lib.assertMsg (
-  units.services."fencr-sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-sbx-credentials"
-  && units.services."fencr-sbx-credentials".serviceConfig.Group == "kvm"
-  && units.services."fencr-sbx-credentials".requires == [ "fencr-ca.service" ]
+  !(units.services."fencr-sbx-egress".serviceConfig ? RuntimeDirectory)
+  && !(units.services."fencr-sbx-egress".serviceConfig ? Group)
+  && !(units.services ? "fencr-sbx-credentials")
+  && units.services."fencr-sbx-egress".requires == [ "fencr-ca.service" ]
   &&
-    units.services."fencr-sbx-credentials".serviceConfig.LoadCredential == [
+    units.services."fencr-sbx-egress".serviceConfig.LoadCredential == [
       "api:/run/secrets/api-token"
       "ca.crt:/var/lib/fencr/ca/root.crt"
       "ca.key:/var/lib/fencr/ca/root.key"
     ]
-  && units.services."fencr-sbx-egress-proxy".serviceConfig.Group == "kvm"
-  &&
-    lib.hasSuffix " /run/fencr-sbx-credentials/credentials.sock"
-      units.services."fencr-sbx-egress-proxy".serviceConfig.ExecStart
-) "unit check: credential proxy is not behind the egress proxy on its unix socket";
+) "unit check: the egress unit still carries a credential socket";
 assert lib.assertMsg (
   let
     config = builtins.fromJSON (
-      core.credentialConfig "/run/x/credentials.sock" (
-        resolved.credentials
-        ++ [
-          {
-            name = "second";
-            domain = "second.example.com";
-            upstream = "http://127.0.0.1:1";
-            placeholder = "fencr-second-placeholder";
-            header = "x-key";
-          }
-        ]
+      core.egressConfig (
+        resolved
+        // {
+          credentials = resolved.credentials ++ [
+            {
+              name = "second";
+              domain = "second.example.com";
+              upstream = "http://127.0.0.1:1";
+              placeholder = "fencr-second-placeholder";
+              header = "x-key";
+            }
+          ];
+        }
       )
     );
   in
-  config.socket == "/run/x/credentials.sock"
+  config.bridge == "10.11.0.1"
+  && config.dnsPort == 33053
+  && config.tlsPort == 33443
   &&
     map (credential: credential.domain) config.credentials == [
       "api.example.com"
@@ -538,27 +542,32 @@ assert lib.assertMsg (
       allow = [ ];
     }
   && (lib.last config.credentials).header == "x-key"
-  && !lib.hasInfix "secret" (core.credentialConfig "/run/x/credentials.sock" resolved.credentials)
-) "unit check: the credential proxy's config drifted";
+  && !lib.hasInfix "secret" (core.egressConfig resolved)
+) "unit check: the egress config drifted";
 # allow entries reach the proxy as methods and a path; "*" on either side
 # means no condition
 assert lib.assertMsg (
   let
     config = builtins.fromJSON (
-      core.credentialConfig "/run/x/credentials.sock" [
-        {
-          name = "gh";
-          domain = "api.github.com";
-          upstream = "https://api.github.com";
-          placeholder = "fencr-gh-placeholder";
-          header = "Authorization";
-          allow = [
-            "GET,HEAD *"
-            "POST /repos/*/pulls"
-            "* /user"
+      core.egressConfig (
+        resolved
+        // {
+          credentials = [
+            {
+              name = "gh";
+              domain = "api.github.com";
+              upstream = "https://api.github.com";
+              placeholder = "fencr-gh-placeholder";
+              header = "Authorization";
+              allow = [
+                "GET,HEAD *"
+                "POST /repos/*/pulls"
+                "* /user"
+              ];
+            }
           ];
         }
-      ]
+      )
     );
   in
   (lib.head config.credentials).allow == [

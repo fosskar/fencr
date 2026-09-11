@@ -2,8 +2,8 @@
 let
   inherit (core)
     specialUseNetworks
-    proxyDnsPort
-    proxyTlsPort
+    egressDnsPort
+    egressTlsPort
     guestPortsOf
     forwardRules
     natRules
@@ -58,11 +58,11 @@ in
 
   redirectRules =
     cfg:
-    lib.optionalString cfg.dnsProxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 redirect to :${toString proxyDnsPort}
+    lib.optionalString cfg.dnsEgress ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 redirect to :${toString egressDnsPort}
     ''
-    + lib.optionalString cfg.proxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 redirect to :${toString proxyTlsPort}
+    + lib.optionalString cfg.egress ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 redirect to :${toString egressTlsPort}
     '';
 
   # what the guest reaches on the host itself. v6 is dropped first: the
@@ -83,11 +83,11 @@ in
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 counter accept comment "${tag cfg "dns"}"
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 53 counter accept comment "${tag cfg "dns-tcp"}"
     ''
-    + lib.optionalString cfg.dnsProxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString proxyDnsPort} counter accept comment "${tag cfg "egress-dns"}"
+    + lib.optionalString cfg.dnsEgress ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString egressDnsPort} counter accept comment "${tag cfg "egress-dns"}"
     ''
-    + lib.optionalString cfg.proxy ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString proxyTlsPort} counter accept comment "${tag cfg "egress-tls"}"
+    + lib.optionalString cfg.egress ''
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString egressTlsPort} counter accept comment "${tag cfg "egress-tls"}"
     ''
     + drop cfg ''iifname "${cfg.bridge}"'' "host-blocked";
 

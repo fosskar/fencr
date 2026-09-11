@@ -41,15 +41,12 @@ let
     name: cfg:
     ''Vm { name: "${name}", id: ${toString cfg.id}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${(core.unitsOf name).vm}.service", checkpoint_unit: "${(core.unitsOf name).checkpoint}@", state_dir: "${core.stateDirOf name}" },'';
 
-  # the journals the command reads
+  # the journal the command reads, and whether a credential writes to it
   proxiedRows =
-    name: cfg: lib.optional cfg.proxy ''("${name}", "${(core.unitsOf name).proxy}.service"),'';
-
-  credentialRows =
     name: cfg:
-    lib.optional (
-      cfg.credentials != [ ]
-    ) ''("${name}", "${(core.unitsOf name).credentials}.service"),'';
+    lib.optional cfg.egress ''("${name}", "${(core.unitsOf name).egress}.service", ${
+      if cfg.credentials != [ ] then "true" else "false"
+    }),'';
 in
 pkgs.writers.writeRustBin "fencr"
   {
@@ -67,14 +64,9 @@ pkgs.writers.writeRustBin "fencr"
       ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}
       ];
 
-      // vm, egress proxy unit
-      static PROXIED: &[(&str, &str)] = &[
+      // vm, proxy unit, whether it holds credentials
+      static PROXIED: &[(&str, &str, bool)] = &[
       ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows instances))}
-      ];
-
-      // vm, credential unit
-      static CREDENTIALS: &[(&str, &str)] = &[
-      ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList credentialRows instances))}
       ];
 
       const SSH: &str = "${pkgs.openssh}/bin/ssh";
