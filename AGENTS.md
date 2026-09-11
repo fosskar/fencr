@@ -96,7 +96,12 @@ configuration, SSH access and the checkpoint commands.
   granted domain from the per-host
   authority `fencr-ca.service` keeps in `/var/lib/fencr/ca` and injects that
   credential's header, read from `$CREDENTIALS_DIRECTORY` per request rather
-  than from its environment, so a rotated `secretFile` needs no restart. `allow` entries scope a
+  than from its environment, so a rotated `secretFile` needs no restart. A
+  credential declares `secretFile` or `secretCommand`, never both;
+  `secretCommand` is served by `fencr-secret-<name>.socket`, a
+  socket-activated resolver `LoadCredential` reads instead of a file, which
+  the VM's egress unit requires before it starts; `secretSourceOf` picks
+  file or socket. `allow` entries scope a
   credential to methods and paths, and the host answers 403 itself for the
   rest; every request is logged without its headers, which `fencr status`
   lists. The guest fetches the authority

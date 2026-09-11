@@ -12,6 +12,8 @@ let
     domainPatternError
     unitsOf
     placeholderOf
+    secretUnitOf
+    secretSourceOf
     egressBin
     egressConfig
     egressDnsPort
@@ -19,12 +21,27 @@ let
     parseAllow
     reloadUnit
     ;
+  # the socket a credential's resolver listens on, which is what
+  # LoadCredential reads instead of a file
+  secretPathOf = name: "/run/fencr/secrets/${name}";
 in
 {
   # high ports the firewall redirects the guest's 53 and 443 to, so a host
   # service on *:443 or *:53 is no conflict and it binds unprivileged
   egressDnsPort = 33053;
   egressTlsPort = 33443;
+
+  secretUnitOf = name: "fencr-secret-${name}";
+
+  # LoadCredential takes a file or an AF_UNIX stream, so a credential with a
+  # command reads the same way one with a file does and nothing downstream
+  # knows the difference
+  secretSourceOf =
+    credential:
+    if (credential.secretCommand or null) != null then
+      secretPathOf credential.name
+    else
+      toString credential.secretFile;
 
   caUnit = "fencr-ca";
   caDir = "/var/lib/fencr/ca";
@@ -56,18 +73,70 @@ in
 
   egressBin = pkgs: pkgs.callPackage ../../pkgs/egress { };
 
+  # one socket-activated resolver per dynamic credential. systemd connects
+  # to the socket when a vm's egress unit starts and reads the value from
+  # it, so the secret exists in that unit's credentials directory and
+  # nowhere else: no file, no watcher, no copy of its own
+  secretUnits =
+    pkgs: credentials:
+    let
+      dynamic = lib.filterAttrs (_: credential: (credential.secretCommand or null) != null) credentials;
+    in
+    lib.optionalAttrs (dynamic != { }) {
+      services = lib.mapAttrs' (
+        name: credential:
+        lib.nameValuePair "${secretUnitOf name}@" {
+          description = "resolve the ${name} credential";
+          unitConfig.CollectMode = "inactive-or-failed";
+          # the command runs here and never in the proxy: the process that
+          # ends the guest's tls must not be able to exec
+          serviceConfig = hardened // {
+            DynamicUser = true;
+            StandardInput = "socket";
+            StandardError = "journal";
+            ExecStart = pkgs.writeShellScript "fencr-secret-${name}" ''
+              set -euo pipefail
+              value=$(${lib.escapeShellArgs credential.secretCommand})
+              # a command that prints nothing has failed quietly, and an
+              # empty header is worse than a unit that refuses to start
+              [ -n "$value" ]
+              printf '%s' "$value"
+            '';
+          };
+        }
+      ) dynamic;
+      sockets = lib.mapAttrs' (
+        name: _:
+        lib.nameValuePair (secretUnitOf name) {
+          description = "resolve the ${name} credential";
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            ListenStream = secretPathOf name;
+            SocketMode = "0600";
+            Accept = true;
+            MaxConnections = 4;
+          };
+        }
+      ) dynamic;
+    };
+
   reloadUnits =
     pkgs: instances:
     let
       granted = lib.filter (instance: instance.credentials != [ ]) (lib.attrValues instances);
+      # only a file can be watched; a resolver's socket is read afresh every
+      # time the unit that needs it starts
       files = lib.unique (
         lib.concatMap (
-          instance: map (credential: toString credential.secretFile) instance.credentials
+          instance:
+          map secretSourceOf (
+            lib.filter (credential: (credential.secretCommand or null) == null) instance.credentials
+          )
         ) granted
       );
       proxies = map (instance: "${(unitsOf instance.name).egress}.service") granted;
     in
-    lib.optionalAttrs (granted != [ ]) {
+    lib.optionalAttrs (files != [ ]) {
       services.${reloadUnit} = {
         description = "reload the credential proxies";
         serviceConfig = {
@@ -146,6 +215,18 @@ in
             upstreamHost credentials.${name}.upstream;
       }
     ) (lib.filter (name: credentials ? ${name}) cfg.credentials);
+
+  # one source or the other, never both and never neither: the fetch unit
+  # owns the path a command writes, so a secretFile beside it would be
+  # overwritten rather than read
+  credentialSecretError =
+    credential:
+    if (credential.secretFile or null) != null && (credential.secretCommand or null) != null then
+      "credential \"${credential.name}\": secretFile and secretCommand are alternatives, not a pair"
+    else if (credential.secretFile or null) == null && (credential.secretCommand or null) == null then
+      "credential \"${credential.name}\" needs fencr.credentials.${credential.name}.secretFile or .secretCommand"
+    else
+      null;
 
   credentialDomainError =
     credential:
@@ -229,7 +310,7 @@ in
     // {
       ExecStart = "${egressBin pkgs}/bin/fencr-egress ${pkgs.writeText "fencr-egress.json" (egressConfig cfg)}";
       LoadCredential =
-        map (credential: "${credential.name}:${credential.secretFile}") cfg.credentials
+        map (credential: "${credential.name}:${secretSourceOf credential}") cfg.credentials
         ++ lib.optionals (cfg.credentials != [ ]) (
           lib.mapAttrsToList (member: path: "${member}:${path}") caMembers
         );

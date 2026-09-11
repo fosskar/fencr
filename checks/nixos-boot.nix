@@ -24,7 +24,8 @@ let
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             body = (
-                "authorization: %s\nuri: %s\n" % (self.headers.get("Authorization"), self.path)
+                "authorization: %s\nx-fetched: %s\nuri: %s\n"
+                % (self.headers.get("Authorization"), self.headers.get("X-Fetched"), self.path)
             ).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
@@ -127,6 +128,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           mode = "0400";
           argument = "querytoken-9f3";
         };
+        "/run/fencr-test/vault".f = {
+          mode = "0444";
+          argument = "vaulted-first";
+        };
       };
       systemd.services.upstream-8765 = {
         wantedBy = [ "multi-user.target" ];
@@ -165,6 +170,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         credentials = [
           "api"
           "query"
+          "fetched"
         ];
         services = [
           (
@@ -203,6 +209,18 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         domain = "api2.test";
         header = "X-Key";
         secretFile = "/run/fencr-test/query-token";
+      };
+
+      # a credential with no file of its own: the command prints whatever
+      # stands in /run/fencr-test/vault, as a password manager would
+      fencr.credentials.fetched = {
+        upstream = "http://127.0.0.1:8765";
+        domain = "api3.test";
+        header = "X-Fetched";
+        secretCommand = [
+          "${pkgs.coreutils}/bin/cat"
+          "/run/fencr-test/vault"
+        ];
       };
 
       # a second vm with open egress: its own unit relays to the host's stub
@@ -394,6 +412,17 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # path unit sees the write, the next request carries the new value
       host.succeed("install -m 0400 /dev/stdin /run/fencr-test/api-token <<< 'Bearer fencr-rotated-token'")
       host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api.test/' | grep -Fx 'authorization: Bearer fencr-rotated-token'", timeout=60)
+
+      # a credential with no file of its own: a socket, and a resolver that
+      # ran when the egress unit started
+      host.succeed("test -S /run/fencr/secrets/fetched")
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 https://api3.test/' | grep -Fx 'x-fetched: vaulted-first'", timeout=60)
+      # the value is in the unit's credentials and in no file anywhere
+      host.fail("grep -rl vaulted-first /run/fencr /var/lib/fencr")
+      # the next start resolves again, so a rotated value needs no new unit
+      host.succeed("install -m 0444 /dev/stdin /run/fencr-test/vault <<< 'vaulted-second'")
+      host.succeed("systemctl restart fencr-sbx-egress.service")
+      host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api3.test/' | grep -Fx 'x-fetched: vaulted-second'", timeout=60)
 
       # an internet grant resolves through its own unit, which relays to the
       # host's stub: the real address comes back, unlike a domain grant where

@@ -53,13 +53,36 @@ in
               description = "request header that carries the credential.";
             };
             secretFile = lib.mkOption {
-              type = lib.types.path;
+              type = lib.types.nullOr lib.types.path;
+              default = null;
               description = ''
                 host file with the raw header value, for example "Bearer x";
                 never enters a vm. a write to it restarts the credential
                 proxy, so a rotated token is served without a rebuild.
+                required without secretCommand.
               '';
             };
+            secretCommand = lib.mkOption {
+              type = lib.types.nullOr (lib.types.listOf lib.types.str);
+              default = null;
+              example = [
+                "/run/current-system/sw/bin/rbw"
+                "get"
+                "openrouter"
+              ];
+              description = ''
+                command whose output is the header value, for a secret with
+                no file of its own: a password manager entry, a token a
+                tool prints. it runs on the host as its own user, never in
+                a vm and never in the proxy, and the value it writes is the
+                credential's secretFile. it runs when its unit starts, so
+                "systemctl restart fencr-secret-<name>" picks up a rotated
+                value; a value that has not changed is never written and
+                restarts nothing, and a run that fails leaves the last one
+                in place.
+              '';
+            };
+
             guestEnv = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;

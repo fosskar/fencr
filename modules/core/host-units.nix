@@ -10,6 +10,7 @@ let
     guestTrust
     hardened
     egressServiceConfig
+    secretUnitOf
     checkpointUnits
     ;
 in
@@ -22,6 +23,11 @@ in
       vmUnit = "${units.vm}.service";
       caService = "${caUnit}.service";
       checkpoints = checkpointUnits pkgs instance;
+      # the socket, not the resolver: systemd connects to it while starting
+      # the egress unit, which starts an instance of the service behind it
+      resolvers = map (credential: "${secretUnitOf credential.name}.socket") (
+        lib.filter (credential: (credential.secretCommand or null) != null) instance.credentials
+      );
       secrets = instance.secrets != { } || instance.credentials != [ ];
     in
     {
@@ -55,8 +61,8 @@ in
           ${units.egress} = {
             description = "egress and credentials for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ] ++ lib.optional (instance.credentials != [ ]) caService;
-            requires = lib.optional (instance.credentials != [ ]) caService;
+            after = [ "network.target" ] ++ lib.optional (instance.credentials != [ ]) caService ++ resolvers;
+            requires = lib.optional (instance.credentials != [ ]) caService ++ resolvers;
             serviceConfig = egressServiceConfig pkgs instance;
           };
         };

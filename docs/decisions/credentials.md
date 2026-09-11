@@ -224,3 +224,45 @@ The cost is that a fault in the tls termination now sits in the same
 process as the splice for every other name. The splice never parses what
 it carries, so the blast radius is a crash, and `Restart = always` covers
 that; a second process would not have made the parser safer.
+
+## 2026-09-11: a secret with no file
+
+`secretFile` required a path, so a value that lives in a password manager or
+comes out of a command needed a cron job outside fencr writing a file —
+exactly the glue fencr exists to remove. `secretCommand` takes the command
+instead:
+
+```nix
+fencr.credentials.openrouter.secretCommand = [ "rbw" "get" "openrouter" ];
+```
+
+`LoadCredential=` accepts an `AF_UNIX` stream as its source, so the command
+needs no file at all: a socket-activated resolver serves the value when a
+vm's egress unit starts, and systemd puts it in that unit's credentials
+directory. The same shape the guest's raw secrets already use over vsock.
+`secretSourceOf` is the one place that knows whether a credential names a
+file or a socket; `LoadCredential` cannot tell.
+
+A first attempt wrote the value to a tmpfs file and had a path unit watch
+it. That was a worse version of what the option replaces — it reintroduced
+the file, and rotation meant restarting a unit invented for the purpose.
+The socket has none of that: nothing is stored, so nothing is stale, and
+restarting the vm's own egress unit resolves the value again.
+
+What it costs, and it is a real cost: there is no last-known-good value. A
+vault that is down or locked when the egress unit starts means the unit does
+not start, rather than the vm quietly serving yesterday's token. Loud is the
+right default for a credential, but it means an interactive vault is a poor
+source — the command runs as a `DynamicUser` with no home and no session, so
+sources that work are the non-interactive ones. A small static secret
+bootstrapping a dynamic one is the expected shape.
+
+The command runs in the resolver and never in the proxy. The process that
+ends the guest's tls is reachable from the vm; giving it a fork and an exec
+would put that primitive behind the network-facing parser.
+
+No timer. A value a person rotates changes when they say so. An interval was
+written and removed: polling a vault to discover nothing is noise, and the
+number is a guess standing in for an expiry fencr cannot see. A token that
+expires on its own wants the upstream's 401 as its trigger, which is a
+different mechanism and its own decision.

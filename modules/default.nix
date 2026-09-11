@@ -130,9 +130,13 @@ in
             ${core.caUnit} = core.caService pkgs config.networking.hostName;
           }
       ++ [ ((core.reloadUnits pkgs resolvedInstances).services or { }) ]
+      ++ [ ((core.secretUnits pkgs config.fencr.credentials).services or { }) ]
     );
 
-    systemd.sockets = lib.mkMerge (map (units: units.sockets) (lib.attrValues unitSets));
+    systemd.sockets = lib.mkMerge (
+      map (units: units.sockets) (lib.attrValues unitSets)
+      ++ [ ((core.secretUnits pkgs config.fencr.credentials).sockets or { }) ]
+    );
 
     systemd.timers = lib.mkMerge (map (units: units.timers) (lib.attrValues unitSets));
 

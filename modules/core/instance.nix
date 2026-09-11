@@ -17,6 +17,7 @@ let
     parseOutbound
     credentialsOf
     credentialDomainError
+    credentialSecretError
     credentialAllowErrors
     credentialId
     caMembers
@@ -277,7 +278,9 @@ in
           credential: "${name}: credential name \"${credential.name}\" is reserved for the authority"
         ) (lib.filter (credential: caMembers ? ${credential.name}) granted)
         ++ map (error: "${name}: ${error}") (
-          lib.filter (error: error != null) (map credentialDomainError granted)
+          lib.filter (error: error != null) (
+            map credentialDomainError granted ++ map credentialSecretError granted
+          )
           ++ lib.concatMap credentialAllowErrors granted
         )
         ++ map (domain: "${name}: credential domain ${domain} granted twice") (

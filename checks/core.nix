@@ -22,6 +22,17 @@ let
           header = "Authorization";
           secretFile = "/run/secrets/local-token";
         };
+        rotating = {
+          upstream = "https://rotating.example.com";
+          domain = null;
+          header = "Authorization";
+          secretFile = null;
+          secretCommand = [
+            "/bin/rbw"
+            "get"
+            "openrouter"
+          ];
+        };
       };
       inherit options;
     };
@@ -689,4 +700,75 @@ assert lib.assertMsg (
       (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost
   && silent.serviceConfig.ExecStopPost == [ ]
 ) "unit check: checkpoints are not wired";
+# a credential whose value comes from a command: a socket-activated resolver
+# serves it, LoadCredential reads the socket, and the value never lands in a
+# file for a watcher to watch
+assert lib.assertMsg (
+  let
+    fetched = resolve "sbx" {
+      id = 0;
+      credentials = [ "rotating" ];
+    };
+    units = core.secretUnits pkgs {
+      rotating = {
+        upstream = "https://api.example.com";
+        domain = null;
+        header = "Authorization";
+        secretFile = null;
+        secretCommand = [
+          "/bin/rbw"
+          "get"
+          "openrouter"
+        ];
+      };
+    };
+    unit = units.services."fencr-secret-rotating@";
+    script = builtins.readFile unit.serviceConfig.ExecStart;
+    egress = core.egressServiceConfig pkgs fetched;
+  in
+  core.secretSourceOf (lib.head fetched.credentials) == "/run/fencr/secrets/rotating"
+  && lib.elem "rotating:/run/fencr/secrets/rotating" egress.LoadCredential
+  &&
+    units.sockets.fencr-secret-rotating.socketConfig == {
+      ListenStream = "/run/fencr/secrets/rotating";
+      SocketMode = "0600";
+      Accept = true;
+      MaxConnections = 4;
+    }
+  && unit.serviceConfig.StandardInput == "socket"
+  && unit.serviceConfig.DynamicUser
+  # the command runs in the resolver and nowhere else, and a command that
+  # prints nothing fails the unit instead of serving an empty header
+  && lib.hasInfix "/bin/rbw get openrouter" script
+  && lib.hasInfix ''[ -n "$value" ]'' script
+  # nothing watches a socket, so a vm with only fetched credentials has no
+  # path unit at all
+  && core.reloadUnits pkgs { sbx = fetched; } == { }
+  &&
+    (core.hostUnits pkgs fetched).services."fencr-sbx-egress".requires == [
+      "fencr-ca.service"
+      "fencr-secret-rotating.socket"
+    ]
+) "unit check: a command-sourced credential is not resolved through a socket";
+# one source or the other, never both and never neither
+assert lib.assertMsg (
+  let
+    both = {
+      name = "x";
+      secretFile = "/run/secrets/x";
+      secretCommand = [ "/bin/true" ];
+    };
+    neither = {
+      name = "x";
+      secretFile = null;
+      secretCommand = null;
+    };
+  in
+  core.credentialSecretError both
+  == ''credential "x": secretFile and secretCommand are alternatives, not a pair''
+  &&
+    core.credentialSecretError neither
+    == "credential \"x\" needs fencr.credentials.x.secretFile or .secretCommand"
+  && core.credentialSecretError (neither // { secretCommand = [ "/bin/true" ]; }) == null
+) "unit check: a credential with no source, or two, is accepted";
 pkgs.writeText "fencr-core-check" (builtins.toJSON (lib.attrNames units.services))

@@ -213,6 +213,23 @@ An upstream on host loopback has no name a VM could call; give it one with
 `domain`, for example `domain = "mcp.fencr"` for
 `upstream = "http://127.0.0.1:8764"`.
 
+A secret with no file of its own comes from a command instead:
+
+```nix
+fencr.credentials.openrouter = {
+  secretCommand = [ "/run/current-system/sw/bin/rbw" "get" "openrouter" ];
+};
+```
+
+The command runs on the host, never in a VM and never in the proxy. A
+socket-activated resolver, `fencr-secret-openrouter.socket`, serves the
+value when the VM's egress unit starts, and systemd puts it straight into
+that unit's credentials: the secret is never written to a file. Restarting
+the VM's egress unit resolves it again, so a value you rotated in the vault
+is picked up without a rebuild, and a command that prints nothing fails the
+unit rather than serving an empty header. Give a credential `secretFile` or
+`secretCommand`, not both.
+
 When a workload needs the raw value instead, use
 `fencr.vms.myagent.secrets."agent.env" = "/run/secrets/agent.env";`.
 The file appears at `/run/agent-secrets/agent.env` inside the VM and is
