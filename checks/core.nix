@@ -584,7 +584,7 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   let
     template = units.services."fencr-sbx-checkpoint@".serviceConfig;
-    script = builtins.readFile (core.checkpointScript pkgs resolved);
+    script = core.checkpointText pkgs resolved;
     hourly = resolve "sbx" {
       id = 0;
       checkpoints.interval = "hourly";
@@ -612,7 +612,7 @@ assert lib.assertMsg (
       OnCalendar = "hourly";
       Unit = "fencr-sbx-checkpoint@timer.service";
     }
-  && lib.hasInfix "head -n -3 " (builtins.readFile (core.checkpointScript pkgs hourly))
+  && lib.hasInfix "head -n -3 " (core.checkpointText pkgs hourly)
   &&
     lib.any (lib.hasSuffix " stop")
       (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost
