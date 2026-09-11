@@ -63,21 +63,25 @@ in
         == "10.11.1.1"
         && config.systemd.services ? "fencr-sealed-egress"
         && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 33053 ]
-        && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ]
+        &&
+          config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [
+            33053
+            33443
+          ]
         &&
           config.networking.firewall.interfaces."br-sbx".allowedTCPPorts == [
-            53
             443
+            33053
             33443
           ];
-      message = "nixos module check: outbound domains did not make the egress proxy the resolver";
+      message = "nixos module check: outbound domains did not make the egress unit the resolver";
     }
     {
       assertion =
         guestConfig.systemd.network.networks."10-lan".networkConfig.DNS == "10.11.0.1"
-        && config.services.resolved.settings.Resolve.DNSStubListenerExtra == [ "10.11.0.1" ]
-        && config.networking.firewall.interfaces."br-sbx".allowedUDPPorts == [ 53 ];
-      message = "nixos module check: open egress did not put the host's resolver on the bridge";
+        && !(config.services.resolved.settings.Resolve or { }) ? DNSStubListenerExtra
+        && config.networking.firewall.interfaces."br-sbx".allowedUDPPorts == [ 33053 ];
+      message = "nixos module check: an open grant still put resolved on the bridge";
     }
     {
       assertion =

@@ -137,6 +137,13 @@ server name. Shared CDN infrastructure can allow a client to reach a
 different site through an allowed server name; this is not application-level
 request filtering. See [domain egress](docs/decisions/domain-egress-proxy.md).
 
+The VM's own egress unit is always the guest's resolver. With domain grants
+it answers every name with the bridge address, so the TLS handshake names
+the destination; with `"internet"` it relays queries to the host's stub
+resolver and passes the real answers back. The guest never reaches
+systemd-resolved itself, and one VM's queries cannot exhaust the host's
+resolver.
+
 `inbound` does not authenticate clients: any process on the host can connect
 to an exposed port. Services on those ports must provide their own
 authentication.

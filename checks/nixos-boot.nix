@@ -205,14 +205,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         secretFile = "/run/fencr-test/query-token";
       };
 
-      # a second vm with open egress: the host's resolved answers it on the
-      # bridge
+      # a second vm with open egress: its own unit relays to the host's stub
       fencr.vms.open = {
         id = 1;
         vcpu = 1;
         mem = 512;
         outbound = [ "internet" ];
         authorizedKeys = [ snakeOilEd25519PublicKey ];
+        services = [ { environment.systemPackages = [ pkgs.dnsutils ]; } ];
       };
 
       networking.hosts."192.168.1.2" = [
@@ -395,10 +395,20 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("install -m 0400 /dev/stdin /run/fencr-test/api-token <<< 'Bearer fencr-rotated-token'")
       host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api.test/' | grep -Fx 'authorization: Bearer fencr-rotated-token'", timeout=60)
 
-      # an internet grant resolves through the host's resolved on the bridge
+      # an internet grant resolves through its own unit, which relays to the
+      # host's stub: the real address comes back, unlike a domain grant where
+      # every name is the bridge
       ssh_open = ssh.replace("10.11.0.2", "10.11.1.2")
       host.wait_for_unit("fencr-open.service", timeout=600)
+      host.wait_for_unit("fencr-open-egress.service")
       host.wait_until_succeeds(f"{ssh_open} 'getent hosts allowed.test' | grep -q '^192.168.1.2 '", timeout=300)
+      # tcp is relayed too, for the answer a truncated one sends there
+      host.succeed(f"{ssh_open} 'dig +tcp +short allowed.test @10.11.1.1' | grep -Fx '192.168.1.2'", timeout=60)
+      # resolved never listens on a bridge, so the guest cannot reach it even
+      # by naming the port the redirect came from
+      host.fail("ss -lntupH | grep -E 'systemd-resolve.*10\\.11\\.[01]\\.1:53'")
+      pid = host.succeed("systemctl show -p MainPID --value fencr-open-egress.service").strip()
+      host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 2")
     '';
 
     meta.timeout = 1800;

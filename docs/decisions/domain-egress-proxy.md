@@ -108,3 +108,35 @@ The unix socket between the two processes is gone, and with it the `kvm`
 group on the unit and the runtime directory that held the socket. The
 enforcement above is unchanged — the splice still never decrypts what it
 carries. `credentials.md` holds the reasoning.
+
+## 2026-09-11: the unit is the guest's resolver either way
+
+An `"internet"` grant used to point the guest at systemd-resolved, which
+fencr made listen on each vm's bridge address with
+`DNSStubListenerExtra`. That was the one host service a guest could speak
+to that fencr had not written: a large C daemon, shared with the host and
+every other vm, one cache and one process for all of them, parsing packets
+a guest chose. A vm could not be held to its own share of it — the EMFILE
+bursts that took dns down on one host were this — and its queries appeared
+in no journal fencr reads.
+
+The unit now owns udp and tcp 53 for every vm that may resolve at all, and
+has two modes:
+
+- with domain grants it answers every name with the bridge address, as
+  before, because the client hello is what names the destination
+- with an open grant there is no name to judge and the guest needs real
+  addresses, so the query is relayed to `127.0.0.53` and the answer passed
+  back unread. `maxQueries` bounds what one vm can have in flight; past
+  that its own queries are dropped, with the name in the journal, rather
+  than the host's resolver being pushed over
+
+`DNSStubListenerExtra` is gone and resolved is back on loopback only. The
+tcp road is relayed too, since a truncated udp answer sends a resolver
+there and the alternative is names that resolve nowhere.
+
+This is not an allowlist and does not pretend to be: an open grant still
+reaches any public address, and a guest that wants to exfiltrate has
+simpler roads than dns. What it buys is that the guest talks to fencr's
+code instead of the host's resolver, that one vm cannot starve another,
+and that a dropped query is attributable.

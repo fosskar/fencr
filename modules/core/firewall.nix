@@ -60,6 +60,7 @@ in
     cfg:
     lib.optionalString cfg.dnsEgress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 redirect to :${toString egressDnsPort}
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 53 redirect to :${toString egressDnsPort}
     ''
     + lib.optionalString cfg.egress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 redirect to :${toString egressTlsPort}
@@ -79,12 +80,9 @@ in
         lib.concatMapStringsSep ", " toString cfg.hostPorts
       } } counter accept comment "${tag cfg "host"}"
     ''
-    + lib.optionalString cfg.hostDns ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 counter accept comment "${tag cfg "dns"}"
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 53 counter accept comment "${tag cfg "dns-tcp"}"
-    ''
     + lib.optionalString cfg.dnsEgress ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString egressDnsPort} counter accept comment "${tag cfg "egress-dns"}"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString egressDnsPort} counter accept comment "${tag cfg "dns"}"
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString egressDnsPort} counter accept comment "${tag cfg "dns-tcp"}"
     ''
     + lib.optionalString cfg.egress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString egressTlsPort} counter accept comment "${tag cfg "egress-tls"}"

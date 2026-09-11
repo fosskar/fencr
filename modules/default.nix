@@ -183,22 +183,16 @@ in
       }
     );
 
-    services.resolved.settings.Resolve.DNSStubListenerExtra =
-      let
-        addresses = map (cfg: cfg.hostIp) (
-          lib.filter (cfg: cfg.hostDns) (lib.attrValues resolvedInstances)
-        );
-      in
-      lib.mkIf (addresses != [ ]) addresses;
-
     # the vm's input chain accepts first, but the main chain's drop policy
     # still runs after it
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
         ${cfg.bridge} = {
           allowedTCPPorts =
-            cfg.hostPorts ++ lib.optional cfg.hostDns 53 ++ lib.optional cfg.egress core.egressTlsPort;
-          allowedUDPPorts = lib.optional cfg.hostDns 53 ++ lib.optional cfg.dnsEgress core.egressDnsPort;
+            cfg.hostPorts
+            ++ lib.optional cfg.egress core.egressTlsPort
+            ++ lib.optional cfg.dnsEgress core.egressDnsPort;
+          allowedUDPPorts = lib.optional cfg.dnsEgress core.egressDnsPort;
         };
       }
     );

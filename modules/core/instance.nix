@@ -225,10 +225,12 @@ in
       granted = credentialsOf (options // { inherit name; }) credentials;
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
-      # the guest's resolver is the egress with domain grants, the host's
-      # resolved with an internet grant, and nothing otherwise
-      egress = domains != [ ] || granted != [ ];
-      dnsEgress = domains != [ ];
+      # the guest's resolver is always the vm's egress unit, which answers
+      # every name with the bridge address where there is a name to judge
+      # and relays to the host's stub where there is not. the guest never
+      # speaks to resolved itself
+      egress = domains != [ ] || granted != [ ] || internet;
+      dnsEgress = domains != [ ] || internet;
       hostDns = internet;
       errors =
         lib.optional (

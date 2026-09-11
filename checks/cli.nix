@@ -86,7 +86,12 @@ let
         ;;
       -u)
         # one journal: the verdict per connection and, where a credential is
-        # granted, one record per request it carried
+        # granted, one record per request it carried. a vm with an open
+        # grant has a unit too, but it only forwards dns and judges nothing
+        case "$2" in
+          fencr-sbx-egress.service | fencr-keyed-egress.service) ;;
+          *) exit 0 ;;
+        esac
         printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
         printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
         printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'

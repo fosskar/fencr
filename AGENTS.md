@@ -80,10 +80,12 @@ configuration, SSH access and the checkpoint commands.
   but still blocks other special-use ranges. IPv6 is
   dropped on the bridge. The vm's nftables filter chains run at `filter - 1`, before
   the host firewall; preserve both the vm's tables and the host firewall integration.
-- Domain grants in `outbound` cannot accompany `"internet"`. For domain
-  grants, the host answers guest DNS with its
-  bridge address and authorizes TLS by SNI without decrypting it or using proxy
-  environment variables. `*.example.com` does not include `example.com`, and
+- Domain grants in `outbound` cannot accompany `"internet"`. Either way the
+  VM's egress unit is the guest's resolver: for domain grants it answers
+  every name with the bridge address and authorizes TLS by SNI without
+  decrypting it or using proxy environment variables; for `"internet"` it
+  relays the query to the host stub, capped at `maxQueries` in flight, and
+  judges nothing. `*.example.com` does not include `example.com`, and
   `"!name"` refuses a name a wildcard grant would otherwise admit; a deny no
   grant covers, or one equal to a grant, is an evaluation error.
 - `credentials` intercepts TLS for the credential's domain only: the guest's
@@ -109,7 +111,10 @@ configuration, SSH access and the checkpoint commands.
   connection must not start a stopped VM. Keep relay identities separate from
   VM users.
 - Hosts need KVM and systemd-networkd, which brings systemd-resolved, the
-  stub the egress units resolve through. KSM is disabled. The VM unit runs as
+  stub at `127.0.0.53` the egress units resolve through. No guest reaches it:
+  the guest's 53 is redirected to the VM's own egress unit, which answers
+  with the bridge address where there is a name to judge and relays the
+  query otherwise. KSM is disabled. The VM unit runs as
   the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices; group
   `kvm` is for those two. The unit's root is an empty read-only tmpfs with the store, the
   run directory and the state directory bound in, which is what Firecracker's

@@ -202,6 +202,9 @@ in
       bridge = cfg.hostIp;
       dnsPort = egressDnsPort;
       tlsPort = egressTlsPort;
+      # the stub resolved listens on for the host itself; with domain grants
+      # there is a name to judge and no query leaves this unit
+      resolver = if cfg.hostDns then "127.0.0.53:53" else "";
       inherit (cfg) domains denied;
       credentials = map (credential: {
         inherit (credential)

@@ -25,9 +25,12 @@ import (
 // what nix writes beside the binary; no value is in it, the credentials
 // arrive as systemd credentials
 type config struct {
-	Bridge      string       `json:"bridge"`
-	DNSPort     int          `json:"dnsPort"`
-	TLSPort     int          `json:"tlsPort"`
+	Bridge  string `json:"bridge"`
+	DNSPort int    `json:"dnsPort"`
+	TLSPort int    `json:"tlsPort"`
+	// where a query goes when there is no name to judge; empty means every
+	// name is answered with the bridge address instead
+	Resolver    string       `json:"resolver"`
 	Domains     []string     `json:"domains"`
 	Denied      []string     `json:"denied"`
 	Credentials []credential `json:"credentials"`
@@ -76,16 +79,31 @@ func run(cfg *config) error {
 		}
 	}
 
-	// the guest resolves through us only when it has domain grants; with a
-	// credential alone its own resolver stands and only the tls door opens
-	if len(cfg.Domains) > 0 {
+	// the guest's resolver is this unit whenever it may resolve at all: with
+	// domain grants every name is answered with the bridge address, with an
+	// open grant the query is relayed to the host's stub
+	if len(cfg.Domains) > 0 || cfg.Resolver != "" {
 		conn, err := listenDNS(bridge, cfg.DNSPort)
 		if err != nil {
 			return err
 		}
-		go serveDNS(conn, bridge)
+		if cfg.Resolver == "" {
+			go answerDNS(conn, bridge)
+		} else {
+			stream, err := net.ListenTCP("tcp", &net.TCPAddr{IP: bridge, Port: cfg.DNSPort})
+			if err != nil {
+				return err
+			}
+			go forwardDNS(conn, cfg.Resolver)
+			go forwardDNSStream(stream, cfg.Resolver)
+		}
 	}
 
+	// an open grant needs no tls door: there is no name to judge and the
+	// firewall lets the guest reach the internet itself
+	if len(cfg.Domains) == 0 && len(intercept) == 0 {
+		select {}
+	}
 	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: bridge, Port: cfg.TLSPort})
 	if err != nil {
 		return err
@@ -150,15 +168,15 @@ func route(cfg *config, intercept map[string]*credential, handover chan net.Conn
 		return
 	}
 	log.Printf("allow %s", name)
-	splice(replayed, name)
+	splice(replayed, net.JoinHostPort(name, "443"))
 }
 
 // the unit's IPAddressDeny is what keeps an allowed name out of the lan, so
 // a refused destination shows up as a dial that never completes. only that
 // is worth a line; a copy ends when one side hangs up, which is not news
-func splice(client net.Conn, name string) {
+func splice(client net.Conn, address string) {
 	defer client.Close()
-	upstream, err := net.DialTimeout("tcp4", net.JoinHostPort(name, "443"), 10*time.Second)
+	upstream, err := net.DialTimeout("tcp4", address, 10*time.Second)
 	if err != nil {
 		log.Printf("relay: %v", err)
 		return

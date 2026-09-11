@@ -245,24 +245,42 @@ assert lib.assertMsg (
   && capped.diskBandwidth == 200
   && capped.networkBandwidth == 50
 ) "core check: the resource caps are not rendered";
+# the vm's own unit is the guest's resolver either way: it answers with the
+# bridge address where there is a name to judge, and relays to the host's
+# stub where there is not. a vm with no grant at all resolves nothing
 assert lib.assertMsg (
   resolved.egress
+  && resolved.dnsEgress
   && resolved.dns == "10.11.0.1"
-  && !longName.egress
+  && (builtins.fromJSON (core.egressConfig resolved)).resolver == ""
+  && longName.egress
+  && longName.dnsEgress
   && longName.hostDns
   && longName.dns == "10.11.1.1"
-  && !(resolve "sbx" { id = 0; }).hostDns
+  && (builtins.fromJSON (core.egressConfig longName)).resolver == "127.0.0.53:53"
+  && !(resolve "sbx" { id = 0; }).egress
+  && !(resolve "sbx" { id = 0; }).dnsEgress
   && (resolve "sbx" { id = 0; }).dns == null
-) "core check: the host is not the guest's resolver";
+) "core check: the vm's unit is not the guest's resolver";
 assert lib.assertMsg (
   longName.errors
   == [ "vm name \"coding-agent-1\" is too long: \"tap-coding-agent-1\" exceeds IFNAMSIZ" ]
 ) "core check: long interface name accepted";
+# the guest's 53 is redirected to the unit's own port, and only that port is
+# admitted: resolved is never reachable from the bridge
 assert lib.assertMsg (
-  lib.hasInfix ''ip daddr 10.11.1.1 udp dport 53 counter accept comment "fencr:coding-agent-1:dns"''
+  lib.hasInfix
+    ''ip daddr 10.11.1.1 udp dport 33053 counter accept comment "fencr:coding-agent-1:dns"''
     (core.firewallOf longName)."fencr-coding-agent-1".content
+  &&
+    lib.hasInfix "ip daddr 10.11.1.1 udp dport 53 redirect to :33053"
+      (core.firewallOf longName)."fencr-coding-agent-1-nat".content
+  &&
+    lib.hasInfix "ip daddr 10.11.1.1 tcp dport 53 redirect to :33053"
+      (core.firewallOf longName)."fencr-coding-agent-1-nat".content
+  && !lib.hasInfix "dport 53 counter accept" (core.firewallOf longName)."fencr-coding-agent-1".content
   && !lib.hasInfix "dport 53 " filterTable
-) "core check: open egress does not admit the host's resolver on the bridge";
+) "core check: the guest can still reach resolved on the bridge";
 assert lib.assertMsg (
   samePort.errors == [ "sbx: inbound port 22100 declared twice" ]
 ) "core check: repeated inbound port accepted";
@@ -338,13 +356,11 @@ assert lib.assertMsg (
     == 1
   && occurrences "ip daddr 10.11.0.1 udp dport 53 redirect to :33053" == 1
   && occurrences "ip daddr 10.11.0.1 tcp dport 443 redirect to :33443" == 1
-  &&
-    occurrences ''ip daddr 10.11.0.1 udp dport 33053 counter accept comment "fencr:sbx:egress-dns"''
-    == 1
+  && occurrences ''ip daddr 10.11.0.1 udp dport 33053 counter accept comment "fencr:sbx:dns"'' == 1
   &&
     occurrences ''ip daddr 10.11.0.1 tcp dport 33443 counter accept comment "fencr:sbx:egress-tls"''
     == 1
-) "unit check: egress proxy is not the vm's road out";
+) "unit check: the egress unit is not the vm's road out";
 assert lib.assertMsg (
   units.services."fencr-sbx-egress".serviceConfig.SystemCallFilter == [
     "@system-service"
