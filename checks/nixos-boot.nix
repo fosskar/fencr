@@ -10,7 +10,8 @@ let
     ;
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
-  credentialFile = pkgs.writeText "fencr-test-credential" "Bearer fencr-api-token\n";
+  # mutable, so the test can rotate it; a real host writes it with sops or agenix
+  credentialFile = "/run/fencr-test/api-token";
   rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
   # echoes the Authorization header it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
@@ -101,6 +102,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         wantedBy = [ "multi-user.target" ];
         before = [ "fencr-sbx-egress-proxy.service" ];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${squatter}";
+      };
+      # stands in for sops or agenix: the secret exists before the proxy starts
+      systemd.tmpfiles.settings."10-fencr-test"."/run/fencr-test/api-token".f = {
+        mode = "0400";
+        argument = "Bearer fencr-api-token";
       };
       systemd.services.upstream-8765 = {
         wantedBy = [ "multi-user.target" ];
@@ -341,6 +347,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'curl --silent --max-time 10 -X POST https://api.test/other' | grep -Fx \"fencr: request not allowed for credential api\"", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 10 https://api.test/other' | grep -F authorization", timeout=60)
       host.succeed("fencr status sbx | grep -F 'POST api.test/ \u2192 403'")
+      # a rotated secret reaches the proxy without anyone restarting it: the
+      # path unit sees the write, the next request carries the new value
+      host.succeed("install -m 0400 /dev/stdin /run/fencr-test/api-token <<< 'Bearer fencr-rotated-token'")
+      host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api.test/' | grep -Fx 'authorization: Bearer fencr-rotated-token'", timeout=60)
 
       # an internet grant resolves through the host's resolved on the bridge
       ssh_open = ssh.replace("10.11.0.2", "10.11.1.2")

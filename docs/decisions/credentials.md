@@ -131,3 +131,27 @@ placeholder reads the credential file at request time, strips the one
 trailing newline a secret file carries, and `{$CREDENTIALS_DIRECTORY}` is
 filled in when the caddyfile is parsed. The secret no longer sits in the
 process environment.
+
+## 2026-09-10: a rotated secretFile reaches the proxy
+
+`LoadCredential` copies a credential's `secretFile` into the unit's
+credentials directory once, when the proxy starts, so a token that expires
+in an hour was unusable: the value stayed until someone restarted the unit.
+Caddy already reads the credential per request (the `{file.}` placeholder
+above), so the only thing frozen was that copy.
+
+A `.path` unit watches every `secretFile` on the host and starts a oneshot
+that runs `systemctl try-restart` on the credential proxies. Two units for
+the host, not two per vm: a path unit can only start a unit, never restart
+one, so something has to do the restarting, and rotation is rare enough
+that one watcher for all of them beats a pair per vm. The cost is that
+rotating one credential restarts the proxies of every vm that has one,
+dropping their in-flight requests for the moment it takes.
+
+The boot check writes a new value into the credential file and sees the
+guest's next request carry it, with nothing restarted by hand.
+
+Not yet: a value fetched at use time rather than read from a file — `gh auth token`, `op read`, an STS call (issue 25). systemd's `LoadCredential`
+accepts an `AF_UNIX` socket as its source, so a socket-activated provider
+would keep the value off disk and out of the store; the refresh interval
+would then be systemd's, not fencr's.

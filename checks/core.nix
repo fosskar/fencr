@@ -455,6 +455,23 @@ assert lib.assertMsg (
   == 1
   && occurrences ''oifname "br-sbx" counter drop comment "fencr:sbx:guest-blocked"'' == 1
 ) "core check: the host is not held to the guest's sshd and exposed ports";
+# a rotated secretFile reaches the proxies: one watcher for the host, and
+# none at all where no credential is granted
+assert lib.assertMsg (
+  let
+    reload = core.reloadUnits pkgs {
+      inherit keyed;
+      sbx = resolved;
+      sealed = resolve "sealed" { id = 1; };
+    };
+  in
+  reload.paths.fencr-credentials-reload.pathConfig == {
+    PathChanged = [ "/run/secrets/api-token" ];
+    PathModified = [ "/run/secrets/api-token" ];
+  }
+  && lib.hasSuffix "systemctl try-restart fencr-keyed-credentials.service fencr-sbx-credentials.service" reload.services.fencr-credentials-reload.serviceConfig.ExecStart
+  && core.reloadUnits pkgs { sealed = resolve "sealed" { id = 1; }; } == { }
+) "unit check: a rotated credential file does not reach the proxies";
 assert lib.assertMsg (
   units.services."fencr-sbx-credentials".serviceConfig.RuntimeDirectory == "fencr-sbx-credentials"
   && units.services."fencr-sbx-credentials".serviceConfig.Group == "kvm"

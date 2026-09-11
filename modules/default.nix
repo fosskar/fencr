@@ -129,11 +129,14 @@ in
           {
             ${core.caUnit} = core.caService pkgs config.networking.hostName;
           }
+      ++ [ ((core.reloadUnits pkgs resolvedInstances).services or { }) ]
     );
 
     systemd.sockets = lib.mkMerge (map (units: units.sockets) (lib.attrValues unitSets));
 
     systemd.timers = lib.mkMerge (map (units: units.timers) (lib.attrValues unitSets));
+
+    systemd.paths = (core.reloadUnits pkgs resolvedInstances).paths or { };
 
     # masquerade by source address, so the module needs no uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkIf (instances != { }) (

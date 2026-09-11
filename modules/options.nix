@@ -54,7 +54,11 @@ in
             };
             secretFile = lib.mkOption {
               type = lib.types.path;
-              description = "host file with the raw header value, for example \"Bearer x\"; never enters a vm.";
+              description = ''
+                host file with the raw header value, for example "Bearer x";
+                never enters a vm. a write to it restarts the credential
+                proxy, so a rotated token is served without a rebuild.
+              '';
             };
             allow = lib.mkOption {
               type = lib.types.listOf lib.types.str;

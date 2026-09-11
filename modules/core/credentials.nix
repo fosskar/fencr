@@ -14,6 +14,7 @@ let
     credentialSocketOf
     credentialCaddyfile
     parseAllow
+    reloadUnit
     ;
 in
 {
@@ -37,6 +38,42 @@ in
     NIX_SSL_CERT_FILE = guestTrust.bundle;
     NODE_EXTRA_CA_CERTS = guestTrust.cert;
   };
+
+  # LoadCredential copies a secretFile once, at start, and a path unit can
+  # only start a unit, never restart one; so one watcher for the host
+  # restarts every credential proxy when any of their files is written.
+  # rotation is rare and the restart momentary, which is why this is not a
+  # pair of units per vm
+  reloadUnit = "fencr-credentials-reload";
+
+  reloadUnits =
+    pkgs: instances:
+    let
+      granted = lib.filter (instance: instance.credentials != [ ]) (lib.attrValues instances);
+      files = lib.unique (
+        lib.concatMap (
+          instance: map (credential: toString credential.secretFile) instance.credentials
+        ) granted
+      );
+      proxies = map (instance: "${(unitsOf instance.name).credentials}.service") granted;
+    in
+    lib.optionalAttrs (granted != [ ]) {
+      services.${reloadUnit} = {
+        description = "reload the credential proxies";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${pkgs.systemd}/bin/systemctl try-restart ${lib.concatStringsSep " " proxies}";
+        };
+      };
+      paths.${reloadUnit} = {
+        description = "watch the credential files";
+        wantedBy = [ "multi-user.target" ];
+        pathConfig = {
+          PathChanged = files;
+          PathModified = files;
+        };
+      };
+    };
 
   caService = pkgs: hostName: {
     description = "fencr certificate authority";
