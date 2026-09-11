@@ -31,6 +31,14 @@ let
             self.end_headers()
             self.wfile.write(body)
 
+        def do_POST(self):
+            sent = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = ("body: %s\n" % sent.decode()).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
     HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
   '';
   squatter = pkgs.writeText "fencr-test-squatter.py" ''
@@ -374,6 +382,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # header has no room, and the proxy substitutes the value it never sees
       host.succeed(f"{ssh} 'systemctl show ingress.service --property=Environment' | grep -F 'FENCR_TEST_KEY=${placeholder}'", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -Fx 'uri: /?key=querytoken-9f3'", timeout=60)
+      # and in a request body, which the caddy proxy could not reach
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -d \"{{\\\"key\\\":\\\"${queryPlaceholder}\\\"}}\" https://api2.test/' | grep -Fx 'body: {{\"key\":\"querytoken-9f3\"}}'", timeout=60)
       # the guest's own value never reaches the upstream
       host.fail(f"{ssh} 'curl --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -F '${queryPlaceholder}'", timeout=60)
       # a rotated secret reaches the proxy without anyone restarting it: the

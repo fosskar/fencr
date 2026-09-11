@@ -13,7 +13,8 @@ let
     unitsOf
     placeholderOf
     credentialSocketOf
-    credentialCaddyfile
+    credentialConfig
+    credentialsProxyBin
     parseAllow
     reloadUnit
     ;
@@ -46,6 +47,8 @@ in
   # rotation is rare and the restart momentary, which is why this is not a
   # pair of units per vm
   reloadUnit = "fencr-credentials-reload";
+
+  credentialsProxyBin = pkgs: pkgs.callPackage ../../pkgs/credentials-proxy { };
 
   reloadUnits =
     pkgs: instances:
@@ -188,100 +191,36 @@ in
   # reaches it, no other host process can borrow a credential through it
   credentialSocketOf = cfg: "/run/${(unitsOf cfg.name).credentials}/credentials.sock";
 
-  # {file.} is read per request and strips the trailing newline; {$CREDENTIALS_DIRECTORY}
-  # is expanded at parse time, so no secret crosses the environment
-  credentialCaddyfile =
+  # what the proxy is configured with: the names, where each goes and what
+  # the guest may send in its place. no value is in here; the credentials
+  # themselves arrive as systemd credentials and are read per request
+  credentialConfig =
     socket: credentials:
-    ''
-      {
-        admin off
-        auto_https disable_redirects
-        pki {
-          ca local {
-            root {
-              cert {$CREDENTIALS_DIRECTORY}/ca.crt
-              key {$CREDENTIALS_DIRECTORY}/ca.key
-            }
-          }
-        }
-      }
-    ''
-    + lib.concatStrings (
-      map (
-        credential:
-        let
-          rules = map parseAllow (credential.allow or [ ]);
-          indent =
-            depth: lines: lib.concatMapStrings (line: "${lib.fixedWidthString depth " " ""}${line}\n") lines;
-          # the guest may also carry the placeholder in the uri, for an api
-          # whose key rides in the query rather than a header; caddy's uri
-          # replace reaches path and query, not the body (issue 26)
-          proxy = [
-            "uri replace ${credential.placeholder} {file.{$CREDENTIALS_DIRECTORY}/${credential.name}}"
-            "reverse_proxy ${credential.upstream} {"
-            "  header_up Host {upstream_hostport}"
-            "  header_up ${credential.header} \"{file.{$CREDENTIALS_DIRECTORY}/${credential.name}}\""
-            "}"
-          ];
-          # a caddy matcher ORs its methods and ORs its paths, ANDs the two
-          matcher =
-            i: rule:
-            indent 2 (
-              [ "@allow${toString i} {" ]
-              ++ lib.optional (rule.methods != [ ]) "  method ${lib.concatStringsSep " " rule.methods}"
-              ++ lib.optional (rule.path != null) "  path ${rule.path}"
-              ++ [
-                "}"
-                "handle @allow${toString i} {"
-              ]
-            )
-            + indent 4 proxy
-            + indent 2 [ "}" ];
-        in
-        ''
-          https://${credential.domain} {
-            bind unix/${socket}|0660
-            tls internal
-            # headers dropped from the record: the guest's own header sits there
-            log {
-              output stderr
-              format filter {
-                wrap json
-                fields {
-                  request>headers delete
-                  resp_headers delete
-                }
-              }
-            }
-        ''
-        + (
-          if rules == [ ] then
-            indent 2 proxy
-          else
-            lib.concatStrings (lib.imap0 matcher rules)
-            + indent 2 [
-              "handle {"
-              "  respond \"fencr: request not allowed for credential ${credential.name}\" 403"
-              "}"
-            ]
-        )
-        + "}\n"
-      ) credentials
-    );
+    builtins.toJSON {
+      inherit socket;
+      credentials = map (credential: {
+        inherit (credential)
+          name
+          domain
+          upstream
+          header
+          ;
+        placeholder = credential.placeholder or "";
+        allow = map (rule: {
+          inherit (rule) methods;
+          path = if rule.path == null then "" else rule.path;
+        }) (map parseAllow (credential.allow or [ ]));
+      }) credentials;
+    };
 
-  # go reads resolv.conf itself, so resolved's stub is allowed
   credentialServiceConfig =
     pkgs: cfg:
     proxyHardening
     // {
-      ExecStart = "${pkgs.caddy}/bin/caddy run --config ${pkgs.writeText "fencr-credentials.caddyfile" (credentialCaddyfile (credentialSocketOf cfg) cfg.credentials)} --adapter caddyfile";
+      ExecStart = "${credentialsProxyBin pkgs}/bin/credentials-proxy ${pkgs.writeText "fencr-credentials.json" (credentialConfig (credentialSocketOf cfg) cfg.credentials)}";
       LoadCredential =
         map (credential: "${credential.name}:${credential.secretFile}") cfg.credentials
         ++ lib.mapAttrsToList (member: path: "${member}:${path}") caMembers;
-      Environment = [
-        "XDG_DATA_HOME=/tmp"
-        "XDG_CONFIG_HOME=/tmp"
-      ];
       RuntimeDirectory = (unitsOf cfg.name).credentials;
       RuntimeDirectoryMode = "0750";
       IPAddressAllow = [

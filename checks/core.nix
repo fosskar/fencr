@@ -469,9 +469,9 @@ assert lib.assertMsg (
   && placeholder != core.placeholderOf "sbx" "other"
   && resolved.credentialPlaceholders == { api = placeholder; }
   && resolved.credentialEnv == { }
-  && lib.hasInfix "uri replace ${placeholder} {file.{$CREDENTIALS_DIRECTORY}/api}" (
-    core.credentialCaddyfile "/run/x/credentials.sock" resolved.credentials
-  )
+  &&
+    (lib.head (builtins.fromJSON (core.credentialConfig "/run/x/x.sock" resolved.credentials))
+    .credentials).placeholder == placeholder
 ) "unit check: the credential placeholder drifted";
 # a rotated secretFile reaches the proxies: one watcher for the host, and
 # none at all where no credential is granted
@@ -507,53 +507,77 @@ assert lib.assertMsg (
 ) "unit check: credential proxy is not behind the egress proxy on its unix socket";
 assert lib.assertMsg (
   let
-    caddyfile = core.credentialCaddyfile "/run/x/credentials.sock" (
-      resolved.credentials
-      ++ [
+    config = builtins.fromJSON (
+      core.credentialConfig "/run/x/credentials.sock" (
+        resolved.credentials
+        ++ [
+          {
+            name = "second";
+            domain = "second.example.com";
+            upstream = "http://127.0.0.1:1";
+            placeholder = "fencr-second-placeholder";
+            header = "x-key";
+          }
+        ]
+      )
+    );
+  in
+  config.socket == "/run/x/credentials.sock"
+  &&
+    map (credential: credential.domain) config.credentials == [
+      "api.example.com"
+      "second.example.com"
+    ]
+  &&
+    (lib.head config.credentials) == {
+      name = "api";
+      domain = "api.example.com";
+      upstream = "https://api.example.com";
+      header = "Authorization";
+      placeholder = core.placeholderOf "sbx" "api";
+      allow = [ ];
+    }
+  && (lib.last config.credentials).header == "x-key"
+  && !lib.hasInfix "secret" (core.credentialConfig "/run/x/credentials.sock" resolved.credentials)
+) "unit check: the credential proxy's config drifted";
+# allow entries reach the proxy as methods and a path; "*" on either side
+# means no condition
+assert lib.assertMsg (
+  let
+    config = builtins.fromJSON (
+      core.credentialConfig "/run/x/credentials.sock" [
         {
-          name = "second";
-          domain = "second.example.com";
-          upstream = "http://127.0.0.1:1";
-          placeholder = "fencr-second-placeholder";
-          header = "x-key";
+          name = "gh";
+          domain = "api.github.com";
+          upstream = "https://api.github.com";
+          placeholder = "fencr-gh-placeholder";
+          header = "Authorization";
+          allow = [
+            "GET,HEAD *"
+            "POST /repos/*/pulls"
+            "* /user"
+          ];
         }
       ]
     );
   in
-  lib.hasInfix "https://api.example.com {" caddyfile
-  && lib.hasInfix "https://second.example.com {" caddyfile
-  && lib.hasInfix "tls internal" caddyfile
-  && lib.hasInfix "reverse_proxy https://api.example.com" caddyfile
-  && lib.hasInfix ''header_up Authorization "{file.{$CREDENTIALS_DIRECTORY}/api}"'' caddyfile
-  && lib.hasInfix ''header_up x-key "{file.{$CREDENTIALS_DIRECTORY}/second}"'' caddyfile
-  && !lib.hasInfix "handle" caddyfile
-) "unit check: credential proxy does not end tls for every granted domain with its own header";
-assert lib.assertMsg (
-  let
-    caddyfile = core.credentialCaddyfile "/run/x/credentials.sock" [
-      {
-        name = "gh";
-        domain = "api.github.com";
-        upstream = "https://api.github.com";
-        placeholder = "fencr-gh-placeholder";
-        header = "Authorization";
-        allow = [
-          "GET,HEAD *"
-          "POST /repos/*/pulls"
-          "* /user"
-        ];
-      }
-    ];
-  in
-  lib.hasInfix "  @allow0 {\n    method GET HEAD\n  }\n  handle @allow0 {\n    uri replace fencr-gh-placeholder {file.{$CREDENTIALS_DIRECTORY}/gh}\n    reverse_proxy https://api.github.com {" caddyfile
-  && lib.hasInfix "  @allow1 {\n    method POST\n    path /repos/*/pulls\n  }\n" caddyfile
-  && lib.hasInfix "  @allow2 {\n    path /user\n  }\n" caddyfile
-  && lib.hasInfix "  handle @allow2 {" caddyfile
-  && lib.hasInfix ''respond "fencr: request not allowed for credential gh" 403'' caddyfile
-  &&
-    lib.length (
-      lib.splitString ''header_up Authorization "{file.{$CREDENTIALS_DIRECTORY}/gh}"'' caddyfile
-    ) == 4
+  (lib.head config.credentials).allow == [
+    {
+      methods = [
+        "GET"
+        "HEAD"
+      ];
+      path = "";
+    }
+    {
+      methods = [ "POST" ];
+      path = "/repos/*/pulls";
+    }
+    {
+      methods = [ ];
+      path = "/user";
+    }
+  ]
   &&
     (core.parseAllow "GET /x") == {
       methods = [ "GET" ];
