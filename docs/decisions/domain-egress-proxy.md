@@ -140,3 +140,23 @@ reaches any public address, and a guest that wants to exfiltrate has
 simpler roads than dns. What it buys is that the guest talks to fencr's
 code instead of the host's resolver, that one vm cannot starve another,
 and that a dropped query is attributable.
+
+## 2026-09-11: port 53 belongs to the vm's unit
+
+Once the unit answers dns, a query to a resolver out on the internet is the
+guest going around the cap and the journal. It does not take an adversary:
+the guest's own resolved carries a fallback list of public servers and
+switches to them when link dns stalls, which is exactly when the cap
+matters. So the forward chain drops tcp and udp 53, logged as
+`dns-blocked`, for every vm the unit resolves for.
+
+- an explicit destination grant is accepted before the drop, so
+  `"192.168.10.5:53"` still reaches a resolver of the operator's choosing
+- a refused query appears in `fencr status` with the grant that would
+  admit it, so this fails visibly rather than as a timeout with no cause
+- a vm with no dns at all is untouched: there is nothing to go around
+
+This stops accidents and sloppiness, not an adversary. Encrypted dns is tls
+on 443 and looks like every other https connection, so an open grant cannot
+prevent it. The mode where dns cannot be smuggled out is a domain
+allowlist, where 443 itself is judged by name.

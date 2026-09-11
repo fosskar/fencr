@@ -77,8 +77,10 @@ configuration, SSH access and the checkpoint commands.
 
 - `outbound` defaults to empty, including no DNS grant. Explicit IPv4/CIDR
   and port entries grant TCP access; `"internet"` grants public IPv4 and DNS
-  but still blocks other special-use ranges. IPv6 is
-  dropped on the bridge. The vm's nftables filter chains run at `filter - 1`, before
+  but still blocks other special-use ranges. DNS means the VM's own egress
+  unit: once that unit answers, port 53 to anywhere else is dropped as
+  `dns-blocked`, unless an explicit destination grant names that resolver.
+  IPv6 is dropped on the bridge. The vm's nftables filter chains run at `filter - 1`, before
   the host firewall; preserve both the vm's tables and the host firewall integration.
 - Domain grants in `outbound` cannot accompany `"internet"`. Either way the
   VM's egress unit is the guest's resolver: for domain grants it answers

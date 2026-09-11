@@ -409,6 +409,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail("ss -lntupH | grep -E 'systemd-resolve.*10\\.11\\.[01]\\.1:53'")
       pid = host.succeed("systemctl show -p MainPID --value fencr-open-egress.service").strip()
       host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 2")
+      # a resolver out there is refused, so the unit is the one road for plain
+      # dns and the guest cannot fall back past the cap
+      host.fail(f"{ssh_open} 'dig +short +time=2 +tries=1 allowed.test @192.168.1.2'", timeout=60)
+      host.succeed("journalctl -k -o cat | grep -F 'fencr:open:dns-blocked'")
     '';
 
     meta.timeout = 1800;

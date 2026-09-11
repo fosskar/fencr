@@ -355,6 +355,10 @@ fn blocked(vm: &Vm, kernel: &str, proxy: Option<&str>) -> Vec<(String, u64)> {
                 format!("inbound {port}"),
             ),
             ("guest-blocked", None) => (format!("host  \u{2192} {}", peer("guest")), String::new()),
+            ("dns-blocked", _) => (
+                format!("guest \u{2192} {}", peer(dst)),
+                format!("dns is the vm's own; grant \"{dst}:53\" to use this one"),
+            ),
             ("host-blocked", Some("53")) if dst == vm.host_ip => (
                 format!("guest \u{2192} {}", peer("host")),
                 "outbound \"internet\" or a domain".to_string(),

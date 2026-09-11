@@ -123,7 +123,7 @@ Each `outbound` string grants one kind of access:
 | `"!gist.github.com"` | Refuses a name a wildcard grant would otherwise admit. |
 | `"host:8123"` | TCP to port 8123 on the host, over the VM's bridge. |
 | `"192.168.20.0/24:1234"` | TCP to an IPv4 address or subnet and port, including private destinations. |
-| `"internet"` | Public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly granted. |
+| `"internet"` | Public IPv4 internet access and DNS through the VM's own egress unit. Private and other special-use ranges remain blocked unless explicitly granted. |
 
 `"internet"` may accompany host/address grants, but not domain grants.
 Both lists default to empty: no explicit access, including DNS. SSH keys
@@ -143,6 +143,13 @@ the destination; with `"internet"` it relays queries to the host's stub
 resolver and passes the real answers back. The guest never reaches
 systemd-resolved itself, and one VM's queries cannot exhaust the host's
 resolver.
+
+Port 53 to any other resolver is then refused and shown in `fencr status`,
+so a guest cannot quietly fall back to a public resolver and around that
+limit. Grant an address explicitly, `"192.168.10.5:53"`, to use a resolver
+of your own. Encrypted DNS is TLS on port 443 and is not distinguishable
+from other HTTPS, so an `"internet"` grant cannot prevent it; a domain
+allowlist can.
 
 `inbound` does not authenticate clients: any process on the host can connect
 to an exposed port. Services on those ports must provide their own

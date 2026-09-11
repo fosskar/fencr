@@ -279,8 +279,30 @@ assert lib.assertMsg (
     lib.hasInfix "ip daddr 10.11.1.1 tcp dport 53 redirect to :33053"
       (core.firewallOf longName)."fencr-coding-agent-1-nat".content
   && !lib.hasInfix "dport 53 counter accept" (core.firewallOf longName)."fencr-coding-agent-1".content
-  && !lib.hasInfix "dport 53 " filterTable
+  && !lib.hasInfix "dport 53 counter accept" filterTable
 ) "core check: the guest can still reach resolved on the bridge";
+# a resolver out on the internet is refused, so the vm's own unit is the one
+# road for plain dns; an explicit destination grant is accepted before the
+# drop, and a vm the unit does not resolve for keeps its dns as it was
+assert lib.assertMsg (
+  let
+    pinned = resolve "sbx" {
+      id = 0;
+      outbound = [
+        "internet"
+        "192.168.10.5:53"
+      ];
+    };
+    order = core.forwardRules pinned;
+    accepted = ''ip daddr 192.168.10.5 tcp dport 53 counter accept comment "fencr:sbx:pin-192.168.10.5-53"'';
+    dropped = ''meta l4proto { tcp, udp } th dport 53 counter drop comment "fencr:sbx:dns-blocked"'';
+  in
+  lib.hasInfix "dns-blocked" (core.forwardRules longName)
+  && lib.hasInfix dropped order
+  && lib.hasInfix accepted order
+  && lib.strings.hasInfix accepted (lib.head (lib.splitString dropped order))
+  && !lib.hasInfix "dns-blocked" (core.forwardRules (resolve "sbx" { id = 0; }))
+) "core check: a public resolver is still reachable from the guest";
 assert lib.assertMsg (
   samePort.errors == [ "sbx: inbound port 22100 declared twice" ]
 ) "core check: repeated inbound port accepted";
