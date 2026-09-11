@@ -74,8 +74,8 @@ authority, ends the tls, replaces the header and sends the request on.
   process
 - one authority per host, `fencr-ca.service`, made on first use with
   openssl in `/var/lib/fencr/ca`, a directory root alone reads. The
-  credential unit gets the root as systemd credentials and lets caddy's
-  internal issuer sign each domain's leaf. A vm with a credential fetches
+  credential unit gets the root as systemd credentials and signs a
+  certificate for each domain with it. A vm with a credential fetches
   the root certificate beside its secrets at boot and rebuilds the system
   trust store in `/run/fencr`: the store bundle with the authority
   appended, on every path the bundle sits on. Python's certifi and node

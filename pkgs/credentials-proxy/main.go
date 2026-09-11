@@ -297,13 +297,13 @@ func record(r *http.Request, status int) {
 	log.Print(string(line))
 }
 
-// the host's authority, signing one leaf per domain the vm calls, kept for
-// the life of the process
+// the host's authority, signing one certificate per domain the vm calls,
+// kept for the life of the process
 type authority struct {
 	cert  *x509.Certificate
 	key   any
 	mu    sync.Mutex
-	leafs map[string]*tls.Certificate
+	certs map[string]*tls.Certificate
 }
 
 func loadAuthority() (*authority, error) {
@@ -319,7 +319,7 @@ func loadAuthority() (*authority, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &authority{cert: cert, key: pair.PrivateKey, leafs: map[string]*tls.Certificate{}}, nil
+	return &authority{cert: cert, key: pair.PrivateKey, certs: map[string]*tls.Certificate{}}, nil
 }
 
 func (a *authority) certificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -329,15 +329,15 @@ func (a *authority) certificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if leaf, ok := a.leafs[name]; ok {
-		return leaf, nil
+	if cached, ok := a.certs[name]; ok {
+		return cached, nil
 	}
-	leaf, err := a.issue(name)
+	issued, err := a.issue(name)
 	if err != nil {
 		return nil, err
 	}
-	a.leafs[name] = leaf
-	return leaf, nil
+	a.certs[name] = issued
+	return issued, nil
 }
 
 func (a *authority) issue(name string) (*tls.Certificate, error) {

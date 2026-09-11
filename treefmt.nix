@@ -8,7 +8,7 @@
     statix.enable = true;
     mdformat.enable = true;
     rustfmt.enable = true;
-    gofumpt.enable = true;
+    gofmt.enable = true;
     golangci-lint = {
       enable = true;
       # it loads packages through the go tool, which treefmt does not put
