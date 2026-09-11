@@ -155,3 +155,39 @@ Not yet: a value fetched at use time rather than read from a file — `gh auth t
 accepts an `AF_UNIX` socket as its source, so a socket-activated provider
 would keep the value off disk and out of the store; the refresh interval
 would then be systemd's, not fencr's.
+
+## 2026-09-10: a placeholder the guest may carry
+
+A payload had to invent a dummy key per provider, which is what sank the
+first credential design (above: hermes needed "a table of providers with
+their api roots and a placeholder key"). fencr now supplies one:
+`placeholderOf` derives `fencr-<24 hex>` from the vm and the credential
+name, so it is stable across rebuilds, differs per vm, and is no secret —
+it may sit in the store. The guest gets it in
+`agentSandbox.credentialPlaceholders`, and in an environment variable when
+the credential names one with `guestEnv`.
+
+What the proxy does with it: `uri replace <placeholder> {file …}` before
+the reverse proxy, so a credential can ride in the query of an api that
+takes no header. The header is still overwritten unconditionally, as
+before, so nothing that works today changes.
+
+Two limits, both measured rather than assumed:
+
+- caddy's `uri replace` reaches the path and the query, not the body.
+  Substituting inside a request body needs a handler caddy does not have;
+  that is the rest of issue 26, and it decides whether the credential proxy
+  stays caddy or becomes a second rust program
+- a value with a space in it produces an invalid request line when it lands
+  in a uri. The boot check saw the upstream answer 400 for
+  `?key=Bearer fencr-api-token`. The placeholder in a uri is for uri-safe
+  values; a header carries anything
+
+Not taken yet: refusing to inject unless the placeholder is present. It
+would mean a request the payload did not mark — a library's telemetry, a
+stray call from an injected agent — no longer gets the credential for free.
+It is not a boundary against the agent, which can read the placeholder from
+its own environment, but it makes intent explicit and a misdirected
+placeholder visible. It needs the matchers to carry a header condition
+beside the `allow` entries, and it would refuse traffic that works today,
+so it wants its own decision.

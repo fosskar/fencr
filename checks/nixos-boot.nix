@@ -8,18 +8,24 @@ let
     snakeOilEd25519PrivateKey
     snakeOilEd25519PublicKey
     ;
+  core = import ../modules/core { inherit (pkgs) lib; };
+  placeholder = core.placeholderOf "sbx" "api";
+  # a credential whose value is uri-safe, for the placeholder in a query
+  queryPlaceholder = core.placeholderOf "sbx" "query";
   documentRoot = pkgs.writeTextDir "index.html" "fencr ingress\n";
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
   # mutable, so the test can rotate it; a real host writes it with sops or agenix
   credentialFile = "/run/fencr-test/api-token";
   rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
-  # echoes the Authorization header it received
+  # echoes the Authorization header and the uri it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = ("authorization: %s\n" % self.headers.get("Authorization")).encode()
+            body = (
+                "authorization: %s\nuri: %s\n" % (self.headers.get("Authorization"), self.path)
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -104,9 +110,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${squatter}";
       };
       # stands in for sops or agenix: the secret exists before the proxy starts
-      systemd.tmpfiles.settings."10-fencr-test"."/run/fencr-test/api-token".f = {
-        mode = "0400";
-        argument = "Bearer fencr-api-token";
+      systemd.tmpfiles.settings."10-fencr-test" = {
+        "/run/fencr-test/api-token".f = {
+          mode = "0400";
+          argument = "Bearer fencr-api-token";
+        };
+        "/run/fencr-test/query-token".f = {
+          mode = "0400";
+          argument = "querytoken-9f3";
+        };
       };
       systemd.services.upstream-8765 = {
         wantedBy = [ "multi-user.target" ];
@@ -142,7 +154,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # the credential: the guest calls api.test over https as it would
         # any site, the host ends the tls and injects the bearer token,
         # the value never enters the vm
-        credentials = [ "api" ];
+        credentials = [
+          "api"
+          "query"
+        ];
         services = [
           (
             { agentSandbox, ... }:
@@ -172,6 +187,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         secretFile = credentialFile;
         # the credential rides on GET / and nothing else
         allow = [ "GET /" ];
+        guestEnv = "FENCR_TEST_KEY";
+      };
+
+      fencr.credentials.query = {
+        upstream = "http://127.0.0.1:8765";
+        domain = "api2.test";
+        header = "X-Key";
+        secretFile = "/run/fencr-test/query-token";
       };
 
       # a second vm with open egress: the host's resolved answers it on the
@@ -347,6 +370,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'curl --silent --max-time 10 -X POST https://api.test/other' | grep -Fx \"fencr: request not allowed for credential api\"", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 10 https://api.test/other' | grep -F authorization", timeout=60)
       host.succeed("fencr status sbx | grep -F 'POST api.test/ \u2192 403'")
+      # the placeholder: the guest is given it, may put it in the uri where a
+      # header has no room, and the proxy substitutes the value it never sees
+      host.succeed(f"{ssh} 'systemctl show ingress.service --property=Environment' | grep -F 'FENCR_TEST_KEY=${placeholder}'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -Fx 'uri: /?key=querytoken-9f3'", timeout=60)
+      # the guest's own value never reaches the upstream
+      host.fail(f"{ssh} 'curl --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -F '${queryPlaceholder}'", timeout=60)
       # a rotated secret reaches the proxy without anyone restarting it: the
       # path unit sees the write, the next request carries the new value
       host.succeed("install -m 0400 /dev/stdin /run/fencr-test/api-token <<< 'Bearer fencr-rotated-token'")

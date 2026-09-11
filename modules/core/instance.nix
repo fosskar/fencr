@@ -190,6 +190,8 @@ in
     "bridge"
     "cid"
     "credentialDomains"
+    "credentialEnv"
+    "credentialPlaceholders"
     "diskBandwidth"
     "dns"
     "hostIp"
@@ -221,7 +223,7 @@ in
       internet = values "internet" != [ ];
       domains = values "domain";
       denied = values "deny";
-      granted = credentialsOf options credentials;
+      granted = credentialsOf (options // { inherit name; }) credentials;
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
       # the guest's resolver is the proxy with domain grants, the host's
@@ -314,6 +316,16 @@ in
       memoryMax = if options.memoryMax != null then options.memoryMax else memoryMaxOf options.mem;
       credentials = granted;
       credentialDomains = map (credential: credential.domain) granted;
+      # what the guest may send in place of a credential; the proxy puts the
+      # real value where this appears
+      credentialEnv = lib.listToAttrs (
+        map (credential: lib.nameValuePair credential.guestEnv credential.placeholder) (
+          lib.filter (credential: credential.guestEnv or null != null) granted
+        )
+      );
+      credentialPlaceholders = lib.listToAttrs (
+        map (credential: lib.nameValuePair credential.name credential.placeholder) granted
+      );
       dns = if dnsProxy || hostDns then hostIpOf options else null;
       bridge = bridgeOf name;
       mac = macOf options;

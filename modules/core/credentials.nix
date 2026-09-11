@@ -11,6 +11,7 @@ let
     upstreamHost
     domainPatternError
     unitsOf
+    placeholderOf
     credentialSocketOf
     credentialCaddyfile
     parseAllow
@@ -115,6 +116,12 @@ in
     in
     if host == null then null else builtins.head host;
 
+  # the value the guest is given in place of the credential: not a secret,
+  # so it may sit in the store, and derived from the vm and the credential
+  # so it is stable across rebuilds and differs per vm
+  placeholderOf =
+    vm: name: "fencr-${builtins.substring 0 24 (builtins.hashString "sha256" "${vm}:${name}")}";
+
   credentialsOf =
     cfg: credentials:
     map (
@@ -122,6 +129,7 @@ in
       credentials.${name}
       // {
         inherit name;
+        placeholder = placeholderOf cfg.name name;
         domain =
           if credentials.${name}.domain != null then
             credentials.${name}.domain
@@ -205,7 +213,11 @@ in
           rules = map parseAllow (credential.allow or [ ]);
           indent =
             depth: lines: lib.concatMapStrings (line: "${lib.fixedWidthString depth " " ""}${line}\n") lines;
+          # the guest may also carry the placeholder in the uri, for an api
+          # whose key rides in the query rather than a header; caddy's uri
+          # replace reaches path and query, not the body (issue 26)
           proxy = [
+            "uri replace ${credential.placeholder} {file.{$CREDENTIALS_DIRECTORY}/${credential.name}}"
             "reverse_proxy ${credential.upstream} {"
             "  header_up Host {upstream_hostport}"
             "  header_up ${credential.header} \"{file.{$CREDENTIALS_DIRECTORY}/${credential.name}}\""

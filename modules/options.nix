@@ -60,6 +60,20 @@ in
                 proxy, so a rotated token is served without a rebuild.
               '';
             };
+            guestEnv = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              example = "ANTHROPIC_API_KEY";
+              description = ''
+                environment variable set in every vm granted this credential,
+                carrying a placeholder instead of the value. a client that
+                refuses to start without a key is satisfied by it, and the
+                proxy puts the real value wherever the placeholder appears
+                in the request's headers or uri. the placeholder is no
+                secret and is also in
+                `specialArgs.agentSandbox.credentialPlaceholders`.
+              '';
+            };
             allow = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];

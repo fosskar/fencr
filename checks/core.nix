@@ -296,6 +296,8 @@ assert lib.assertMsg (
     "bridge"
     "cid"
     "credentialDomains"
+    "credentialEnv"
+    "credentialPlaceholders"
     "diskBandwidth"
     "dns"
     "hostIp"
@@ -455,6 +457,22 @@ assert lib.assertMsg (
   == 1
   && occurrences ''oifname "br-sbx" counter drop comment "fencr:sbx:guest-blocked"'' == 1
 ) "core check: the host is not held to the guest's sshd and exposed ports";
+# the placeholder: stable for a vm and credential, different per vm, in the
+# guest's environment only where guestEnv names a variable
+assert lib.assertMsg (
+  let
+    placeholder = core.placeholderOf "sbx" "api";
+  in
+  lib.hasPrefix "fencr-" placeholder
+  && placeholder == core.placeholderOf "sbx" "api"
+  && placeholder != core.placeholderOf "other" "api"
+  && placeholder != core.placeholderOf "sbx" "other"
+  && resolved.credentialPlaceholders == { api = placeholder; }
+  && resolved.credentialEnv == { }
+  && lib.hasInfix "uri replace ${placeholder} {file.{$CREDENTIALS_DIRECTORY}/api}" (
+    core.credentialCaddyfile "/run/x/credentials.sock" resolved.credentials
+  )
+) "unit check: the credential placeholder drifted";
 # a rotated secretFile reaches the proxies: one watcher for the host, and
 # none at all where no credential is granted
 assert lib.assertMsg (
@@ -496,6 +514,7 @@ assert lib.assertMsg (
           name = "second";
           domain = "second.example.com";
           upstream = "http://127.0.0.1:1";
+          placeholder = "fencr-second-placeholder";
           header = "x-key";
         }
       ]
@@ -516,6 +535,7 @@ assert lib.assertMsg (
         name = "gh";
         domain = "api.github.com";
         upstream = "https://api.github.com";
+        placeholder = "fencr-gh-placeholder";
         header = "Authorization";
         allow = [
           "GET,HEAD *"
@@ -525,7 +545,7 @@ assert lib.assertMsg (
       }
     ];
   in
-  lib.hasInfix "  @allow0 {\n    method GET HEAD\n  }\n  handle @allow0 {\n    reverse_proxy https://api.github.com {" caddyfile
+  lib.hasInfix "  @allow0 {\n    method GET HEAD\n  }\n  handle @allow0 {\n    uri replace fencr-gh-placeholder {file.{$CREDENTIALS_DIRECTORY}/gh}\n    reverse_proxy https://api.github.com {" caddyfile
   && lib.hasInfix "  @allow1 {\n    method POST\n    path /repos/*/pulls\n  }\n" caddyfile
   && lib.hasInfix "  @allow2 {\n    path /user\n  }\n" caddyfile
   && lib.hasInfix "  handle @allow2 {" caddyfile

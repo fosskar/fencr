@@ -204,8 +204,11 @@ in
             source = lib.mkForce guestTrust.bundle;
           })
       );
-      environment.sessionVariables = lib.mkIf trusted trustVariables;
-      systemd.globalEnvironment = lib.mkIf trusted trustVariables;
+      # a client that refuses to start without a key gets the placeholder;
+      # the proxy puts the real value where it appears
+      environment.sessionVariables =
+        lib.optionalAttrs trusted trustVariables // agentSandbox.credentialEnv;
+      systemd.globalEnvironment = lib.optionalAttrs trusted trustVariables // agentSandbox.credentialEnv;
       # virtio's enp0sN names are unpredictable; v4 only so the host's v4 rules see everything
       systemd.network.networks."10-lan" = {
         matchConfig.MACAddress = agentSandbox.mac;

@@ -194,7 +194,10 @@ in
   };
 
   fencr.credentials = {
-    anthropic.secretFile = "/run/secrets/anthropic";
+    anthropic = {
+      secretFile = "/run/secrets/anthropic";
+      guestEnv = "ANTHROPIC_API_KEY";
+    };
     sbx-openrouter = {
       provider = "openrouter";
       header = "X-Custom";
