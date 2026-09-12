@@ -93,6 +93,10 @@ let
           *) exit 0 ;;
         esac
         printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
+        # the wildcard rule the command carries in pkgs/domain.rs: a
+        # subdomain counts, the case does not, and a name that merely ends
+        # in the pattern is not below it
+        printf 'allow api.github.com\nallow OTHER.GitHub.com\nallow evilgithub.com\n'
         printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
         printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
         printf '{"msg":"handled request","method":"GET","host":"api.test","uri":"/v1/models?x=1","status":404}\n'
@@ -124,7 +128,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
     ✓ TCP 22, 33627 (22: ssh)                   3 packets
   Outbound (otherwise denied):
     ✓ github.com TLS 443                        1 connection
-    · *.github.com TLS 443                      unused
+    ✓ *.github.com TLS 443                      2 connections
     ✓ !gist.github.com TLS 443 (denied)         1 connection
     ✓ api.test TLS 443 (credential api)         1 connection
 
