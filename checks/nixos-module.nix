@@ -12,6 +12,13 @@ in
   assertions = [
     {
       assertion =
+        !(config.systemd.services ? fencr-mcp-gateway)
+        && !(config.systemd.services ? fencr-mcp-tokens)
+        && !(config.fencr.credentials ? mcp-sbx);
+      message = "nixos module check: MCP gateway is not disabled by default";
+    }
+    {
+      assertion =
         guestConfig.systemd.sockets.sshd.socketConfig.ListenStream == [ "10.11.0.2:22" ]
         && guestConfig.systemd.sockets.sshd.socketConfig.FreeBind
         &&

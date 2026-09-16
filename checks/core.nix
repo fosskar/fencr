@@ -523,6 +523,16 @@ assert lib.assertMsg (
   &&
     (lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).placeholder == placeholder
 ) "unit check: the credential placeholder drifted";
+assert lib.assertMsg (
+  let
+    headerOnly = resolved // {
+      credentials = map (
+        credential: credential // { substitutePlaceholder = false; }
+      ) resolved.credentials;
+    };
+  in
+  (lib.head (builtins.fromJSON (core.egressConfig headerOnly)).credentials).placeholder == ""
+) "core check: header-only credential still substitutes tool arguments";
 # a rotated secretFile reaches the proxies: one watcher for the host, and
 # none at all where no credential is granted
 assert lib.assertMsg (

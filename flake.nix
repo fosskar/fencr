@@ -42,6 +42,7 @@
 
       packages = forAllSystems (pkgs: {
         egress = pkgs.callPackage ./pkgs/egress { };
+        mcp-gateway = pkgs.callPackage ./pkgs/mcp-gateway { };
       });
 
       herculesCI = import ./effects.nix {
@@ -60,6 +61,9 @@
         core = import ./checks/core.nix self pkgs;
 
         cli = import ./checks/cli.nix self pkgs;
+
+        mcp-gateway = (pkgs.callPackage ./pkgs/mcp-gateway { }).tests.contract;
+        mcp-module = import ./checks/mcp-module.nix self pkgs;
 
         # buildGoModule runs the package's own tests
         egress = pkgs.callPackage ./pkgs/egress { };

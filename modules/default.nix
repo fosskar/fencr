@@ -43,7 +43,10 @@ let
   ) instances;
 in
 {
-  imports = [ ./options.nix ];
+  imports = [
+    ./options.nix
+    ./mcp-gateway.nix
+  ];
 
   config = {
     fencr.guestSystems = guestSystems;

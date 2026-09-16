@@ -99,6 +99,16 @@ in
                 `specialArgs.agentSandbox.credentialPlaceholders`.
               '';
             };
+            substitutePlaceholder = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = ''
+                replace the placeholder in request URIs and small bodies as well
+                as injecting the header. disable for header-only protocols such
+                as MCP, where putting the credential in tool arguments could
+                disclose it through a tool response.
+              '';
+            };
             allow = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];

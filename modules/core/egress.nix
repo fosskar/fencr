@@ -310,7 +310,7 @@ in
           (credential.provider or null) != null
           && core.providers.${credential.provider}.header == "Authorization"
           && lib.toLower credential.header == "authorization";
-        placeholder = credential.placeholder or "";
+        placeholder = if credential.substitutePlaceholder or true then credential.placeholder or "" else "";
         allow = map (rule: {
           inherit (rule) methods;
           path = if rule.path == null then "" else rule.path;
