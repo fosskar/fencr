@@ -588,11 +588,99 @@ assert lib.assertMsg (
       upstream = "https://api.example.com";
       header = "Authorization";
       placeholder = core.placeholderOf "sbx" "api";
+      bearer = false;
       allow = [ ];
     }
   && (lib.last config.credentials).header == "x-key"
   && !lib.hasInfix "secret" (core.egressConfig resolved)
 ) "unit check: the egress config drifted";
+assert lib.assertMsg (
+  let
+    credentials = lib.genAttrs [ "opencode-go" "opencode-zen" ] (
+      name:
+      core.providers.${name}
+      // {
+        provider = name;
+        domain = null;
+        secretFile = "/run/secrets/${name}";
+      }
+    );
+    resolveShared =
+      credentials:
+      core.resolveInstance {
+        name = "shared";
+        inherit credentials;
+        options = {
+          id = 0;
+          credentials = builtins.attrNames credentials;
+        };
+      };
+    shared = resolveShared credentials;
+    rendered = (builtins.fromJSON (core.egressConfig shared)).credentials;
+    unscoped = resolveShared (
+      credentials
+      // {
+        opencode-go = credentials.opencode-go // {
+          allow = [ ];
+        };
+      }
+    );
+  in
+  shared.errors == [ ]
+  && shared.credentialEnv.OPENCODE_GO_API_KEY == core.placeholderOf "shared" "opencode-go"
+  && shared.credentialEnv.OPENCODE_ZEN_API_KEY == core.placeholderOf "shared" "opencode-zen"
+  &&
+    map (credential: credential.bearer) rendered == [
+      true
+      true
+    ]
+  &&
+    map (credential: credential.allow) rendered == [
+      [
+        {
+          methods = [ ];
+          path = "/zen/go/v1/*";
+        }
+      ]
+      [
+        {
+          methods = [ ];
+          path = "/zen/v1/*";
+        }
+      ]
+    ]
+  &&
+    unscoped.errors == [
+      "shared: credential \"opencode-go\" shares domain opencode.ai and needs non-empty allow entries"
+    ]
+) "core check: shared-domain provider credentials drifted";
+assert lib.assertMsg (
+  let
+    bearerFor =
+      provider: header:
+      (lib.head
+        (builtins.fromJSON (
+          core.egressConfig (
+            resolved
+            // {
+              credentials = [ ((lib.head resolved.credentials) // { inherit provider header; }) ];
+            }
+          )
+        )).credentials
+      ).bearer;
+  in
+  lib.all (provider: bearerFor provider "Authorization") [
+    "openai"
+    "openrouter"
+    "opencode"
+    "opencode-go"
+    "opencode-zen"
+  ]
+  && !(bearerFor "anthropic" "x-api-key")
+  && !(bearerFor "anthropic" "Authorization")
+  && !(bearerFor "openai" "X-Custom")
+  && !(bearerFor null "Authorization")
+) "core check: provider header formatting drifted";
 # allow entries reach the proxy as methods and a path; "*" on either side
 # means no condition
 assert lib.assertMsg (

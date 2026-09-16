@@ -54,7 +54,15 @@ in
         && config.fencr.credentials.sbx-openrouter.provider == "openrouter"
         && config.fencr.credentials.sbx-openrouter.upstream == "https://openrouter.ai"
         && config.fencr.credentials.sbx-openrouter.header == "X-Custom"
-        && config.fencr.credentials.local.provider == null;
+        && config.fencr.credentials.local.provider == null
+        && config.fencr.credentials.opencode-go.upstream == "https://opencode.ai"
+        && config.fencr.credentials.opencode-zen.upstream == "https://opencode.ai"
+        && config.fencr.credentials.opencode-go.allow == [ "* /zen/go/v1/*" ]
+        && config.fencr.credentials.opencode-zen.allow == [ "* /zen/v1/*" ]
+        && config.fencr.credentials.opencode-go.guestEnv == "OPENCODE_GO_API_KEY"
+        && config.fencr.credentials.opencode-zen.guestEnv == "OPENCODE_ZEN_API_KEY"
+        && lib.hasPrefix "fencr-" config.fencr.guestSystems.sealed.config.systemd.globalEnvironment.OPENCODE_GO_API_KEY
+        && lib.hasPrefix "fencr-" config.fencr.guestSystems.sealed.config.systemd.globalEnvironment.OPENCODE_ZEN_API_KEY;
       message = "nixos module check: provider defaults did not apply";
     }
     {
@@ -207,6 +215,8 @@ in
       header = "X-Custom";
       secretFile = "/run/secrets/openrouter";
     };
+    opencode-go.secretFile = "/run/secrets/opencode-go";
+    opencode-zen.secretCommand = [ "/host/token-provider" ];
     local = {
       upstream = "http://127.0.0.1:8764";
       domain = "local.fencr";
@@ -215,6 +225,10 @@ in
   };
 
   fencr.vms.sealed = {
+    credentials = [
+      "opencode-go"
+      "opencode-zen"
+    ];
     outbound = [
       "github.com"
       "*.github.com"

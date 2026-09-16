@@ -57,6 +57,36 @@ Inside the vm, `services` entries are ordinary NixOS configuration:
   ];
 ```
 
+## OpenCode credentials
+
+Go and Zen can be granted separately or together:
+
+```nix
+fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode-go";
+fencr.credentials.opencode-zen.secretFile = "/run/secrets/opencode-zen";
+fencr.vms.myagent.credentials = [ "opencode-go" "opencode-zen" ];
+```
+
+Each file contains only its API key. The presets add `Bearer ` to the
+`Authorization` header; existing files containing `Bearer <key>` still
+work. `secretCommand` can replace `secretFile`, with the same output format.
+It runs non-interactively on the host as an isolated `DynamicUser`, not in
+your logged-in password-manager session. Custom credentials without a
+provider, or with a custom header, still take the complete header value.
+
+The guest receives placeholders in `OPENCODE_GO_API_KEY` and
+`OPENCODE_ZEN_API_KEY` automatically. Configure the client to use
+`https://opencode.ai/zen/go/v1` for Go or `https://opencode.ai/zen/v1` for Zen.
+The proxy preserves request paths and queries: its upstream is the origin
+`https://opencode.ai`, not the client's API base URL.
+
+The presets' `allow` defaults select the credential by API path. With
+multiple credentials on one domain, every credential needs non-empty
+`allow` entries. Requests matching none or more than one receive 403;
+credential order never selects a key. The legacy `opencode` preset remains
+available without path restrictions; do not combine it with these presets
+on one VM without configuring non-overlapping `allow` entries.
+
 Day-two reading, when a need appears and not before:
 
 - [access.md](access.md) — ssh from other machines, the fencr command,

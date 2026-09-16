@@ -23,7 +23,8 @@ in
               default = if core.providers ? ${name} then name else null;
               defaultText = "the credential's name when it names a provider";
               description = ''
-                a known api, which supplies upstream and header:
+                a known api, which supplies upstream and header and may
+                supply guestEnv and allow defaults:
                 ${lib.concatStringsSep ", " (lib.attrNames core.providers)}.
               '';
             };
@@ -56,8 +57,11 @@ in
               type = lib.types.nullOr lib.types.path;
               default = null;
               description = ''
-                host file with the raw header value, for example "Bearer x";
-                never enters a vm. a write to it restarts the credential
+                host file containing the api key for a provider preset.
+                presets using Authorization add "Bearer " automatically;
+                existing values with that prefix remain accepted. without a
+                provider, or with a custom header, supply the complete header
+                value. the secret never enters a vm. a write to it restarts the credential
                 proxy, so a rotated token is served without a rebuild.
                 required without secretCommand.
               '';
@@ -71,15 +75,13 @@ in
                 "openrouter"
               ];
               description = ''
-                command whose output is the header value, for a secret with
-                no file of its own: a password manager entry, a token a
-                tool prints. it runs on the host as its own user, never in
-                a vm and never in the proxy, and the value it writes is the
-                credential's secretFile. it runs when its unit starts, so
-                "systemctl restart fencr-secret-<name>" picks up a rotated
-                value; a value that has not changed is never written and
-                restarts nothing, and a run that fails leaves the last one
-                in place.
+                command whose output supplies the api key or header value,
+                with the same formatting as secretFile. it runs on the host
+                as an isolated DynamicUser, never in a vm or in the proxy.
+                systemd reads its output through a socket when the vm's
+                egress unit starts; restarting that unit resolves it again.
+                the command must work non-interactively without access to
+                the logged-in user's session. required without secretFile.
               '';
             };
 
@@ -109,13 +111,17 @@ in
                 methods comma-separated or "*", a path with "*" standing
                 for any characters or "*" alone for any path. a request
                 matching no entry is answered 403 by the host and never
-                reaches the upstream. empty allows every request.
+                reaches the upstream. empty allows every request. credentials
+                sharing a domain must each declare allow entries; exactly one
+                credential must match a request, otherwise the host answers 403.
               '';
             };
           };
           config = lib.mkIf (config.provider != null) {
             upstream = lib.mkDefault core.providers.${config.provider}.upstream;
             header = lib.mkDefault core.providers.${config.provider}.header;
+            guestEnv = lib.mkDefault (core.providers.${config.provider}.guestEnv or null);
+            allow = lib.mkDefault (core.providers.${config.provider}.allow or [ ]);
           };
         }
       )

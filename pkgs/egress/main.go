@@ -60,9 +60,10 @@ func run(cfg *config) error {
 		return fmt.Errorf("%q is not an address", cfg.Bridge)
 	}
 
-	intercept := map[string]*credential{}
+	intercept := map[string][]*credential{}
 	for i := range cfg.Credentials {
-		intercept[strings.ToLower(cfg.Credentials[i].Domain)] = &cfg.Credentials[i]
+		domain := strings.ToLower(cfg.Credentials[i].Domain)
+		intercept[domain] = append(intercept[domain], &cfg.Credentials[i])
 	}
 	var terminator *http.Server
 	if len(intercept) > 0 {
@@ -140,7 +141,7 @@ func listenDNS(bridge net.IP, port int) (net.PacketConn, error) {
 	return nil, fmt.Errorf("the bridge never got its address")
 }
 
-func route(cfg *config, intercept map[string]*credential, handover chan net.Conn, conn net.Conn) {
+func route(cfg *config, intercept map[string][]*credential, handover chan net.Conn, conn net.Conn) {
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		conn.Close()
 		return

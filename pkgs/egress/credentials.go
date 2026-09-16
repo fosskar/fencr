@@ -28,6 +28,7 @@ type credential struct {
 	Domain      string `json:"domain"`
 	Upstream    string `json:"upstream"`
 	Header      string `json:"header"`
+	Bearer      bool   `json:"bearer"`
 	Placeholder string `json:"placeholder"`
 	Allow       []rule `json:"allow"`
 }
@@ -56,21 +57,33 @@ func secret(name string) (string, error) {
 	return strings.TrimRight(string(raw), "\r\n"), nil
 }
 
-func handler(byDomain map[string]*credential) http.Handler {
+func handler(byDomain map[string][]*credential) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
 		if i := strings.IndexByte(host, ':'); i >= 0 {
 			host = host[:i]
 		}
-		c, ok := byDomain[host]
+		candidates, ok := byDomain[host]
 		if !ok {
 			record(r, http.StatusNotFound)
 			http.Error(w, "fencr: no credential for this domain", http.StatusNotFound)
 			return
 		}
-		if !allowed(c, r) {
+		var c *credential
+		for _, candidate := range candidates {
+			if !allowed(candidate, r) {
+				continue
+			}
+			if c != nil {
+				record(r, http.StatusForbidden)
+				http.Error(w, "fencr: request matches multiple credentials", http.StatusForbidden)
+				return
+			}
+			c = candidate
+		}
+		if c == nil {
 			record(r, http.StatusForbidden)
-			http.Error(w, "fencr: request not allowed for credential "+c.Name, http.StatusForbidden)
+			http.Error(w, "fencr: request not allowed for any credential", http.StatusForbidden)
 			return
 		}
 		value, err := secret(c.Name)
@@ -192,7 +205,11 @@ func forward(c *credential, value string, w http.ResponseWriter, r *http.Request
 		Rewrite: func(p *httputil.ProxyRequest) {
 			p.SetURL(upstream)
 			p.Out.Host = upstream.Host
-			p.Out.Header.Set(c.Header, value)
+			headerValue := value
+			if c.Bearer && !strings.HasPrefix(strings.ToLower(value), "bearer ") {
+				headerValue = "Bearer " + value
+			}
+			p.Out.Header.Set(c.Header, headerValue)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			status = resp.StatusCode

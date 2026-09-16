@@ -283,9 +283,19 @@ in
           )
           ++ lib.concatMap credentialAllowErrors granted
         )
-        ++ map (domain: "${name}: credential domain ${domain} granted twice") (
-          duplicates (map (credential: credential.domain) granted)
-        )
+        ++
+          map
+            (
+              credential:
+              "${name}: credential \"${credential.name}\" shares domain ${credential.domain} and needs non-empty allow entries"
+            )
+            (
+              lib.filter (
+                credential:
+                (credential.allow or [ ]) == [ ]
+                && lib.elem credential.domain (duplicates (map (entry: entry.domain) granted))
+              ) granted
+            )
         ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates options.inbound);
     in
     {
@@ -319,7 +329,7 @@ in
       destinations = values "tcp";
       memoryMax = if options.memoryMax != null then options.memoryMax else memoryMaxOf options.mem;
       credentials = granted;
-      credentialDomains = map (credential: credential.domain) granted;
+      credentialDomains = lib.unique (map (credential: credential.domain) granted);
       # what the guest may send in place of a credential; the proxy puts the
       # real value where this appears
       credentialEnv = lib.listToAttrs (

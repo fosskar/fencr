@@ -185,6 +185,18 @@ in
       upstream = "https://opencode.ai";
       header = "Authorization";
     };
+    opencode-zen = {
+      upstream = "https://opencode.ai";
+      header = "Authorization";
+      guestEnv = "OPENCODE_ZEN_API_KEY";
+      allow = [ "* /zen/v1/*" ];
+    };
+    opencode-go = {
+      upstream = "https://opencode.ai";
+      header = "Authorization";
+      guestEnv = "OPENCODE_GO_API_KEY";
+      allow = [ "* /zen/go/v1/*" ];
+    };
   };
 
   upstreamHost =
@@ -294,6 +306,10 @@ in
           upstream
           header
           ;
+        bearer =
+          (credential.provider or null) != null
+          && core.providers.${credential.provider}.header == "Authorization"
+          && lib.toLower credential.header == "authorization";
         placeholder = credential.placeholder or "";
         allow = map (rule: {
           inherit (rule) methods;
