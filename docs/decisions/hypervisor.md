@@ -233,8 +233,13 @@ Considered and left:
   1.13 and later, so the virtio devices ride the newer, larger pci
   transport rather than mmio, which fencr does not need. A flag cannot
   be removed through `firecracker.extraArgs`; it needs an upstream option
-- the serial console: enabled by the runner, guest-controlled output into
-  the host journal, kept for now for boot debugging (issue 24)
+- the serial console: initially kept for boot debugging. Resolved issue 24
+  by discarding the runner's stdout on the host, not disabling `ttyS0` in
+  the guest, where root could reactivate it. Guest journald stays available
+  to agents. Firecracker diagnostics use `--log-path /proc/self/fd/2`, with
+  a pipe forwarding stderr to the host journal because Firecracker cannot
+  reopen journald's socket as a file. This loses early serial-only boot
+  diagnostics but keeps guest console data out of the host journal.
 - the jailer itself: its effects are all present in the unit now, and
   the unit is one place instead of two binaries
 

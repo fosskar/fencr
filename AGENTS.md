@@ -19,7 +19,7 @@ configuration, SSH access and the checkpoint commands.
 
 ## architecture
 
-- `modules/options.nix` declares the options; `modules/default.nix`
+- `modules/options.nix` and `modules/mcp-gateway.nix` declare the options; `modules/default.nix`
   composes host networking, systemd units, users, and guest evaluations. Guests
   use the host's `pkgs`; payloads receive the resolved contract through
   `specialArgs.agentSandbox`.
@@ -49,27 +49,48 @@ configuration, SSH access and the checkpoint commands.
   instance tables, tool paths and `pkgs/domain.rs` (`covers`, the one wildcard
   rule) at build. `checks/cli.nix` feeds the command a ruleset
   rendered by `firewallOf` and canned journal lines, so its parsers run on the
-  text the firewall writes.
+  text the firewall writes. `fencr status` also reads `GET /` from each VM's
+  Firecracker API socket with a two-second timeout. `VMM:` is separate from
+  systemd state; an unavailable API does not mean the VM is stopped.
 - `pkgs/egress/` is the vm's road out, one Go program, standard library only,
-  so `buildGoModule` takes `vendorHash = null`: `dns.go` answers every A query
-  with the bridge address, `sni.go` reads the server name from the client
-  hello, `main.go` splices an allowed name onward or hands a credential's
-  domain to `credentials.go`, which ends the TLS and injects the header. `nix build .#egress` builds it on its own and runs its tests.
-- The bridge is the road between host and guest: the guest's sshd and its
-  `inbound` ports listen on the guest's address, `fencr.vms.<name>.ip`, and the
-  firewall's output chain lets the host reach those ports and nothing else. vsock
+  so `buildGoModule` takes `vendorHash = null`: `dns.go` answers A queries
+  with the bridge address for domain grants and relays queries to the host
+  stub for `"internet"`; `sni.go` reads the server name from the client
+  hello, `main.go` splices an allowed name onward or terminates TLS for a
+  credential's domain using the authority and handler in `credentials.go`
+  to inject the header. `nix build .#egress` builds it on its own and runs its tests.
+- `modules/mcp-gateway.nix` wires the optional host gateway in
+  `pkgs/mcp-gateway/`, a Python program using the MCP SDK. Enabled VMs call
+  `https://mcp.fencr/mcp/` through their egress unit, which injects a per-VM
+  token from `/var/lib/fencr-mcp/<name>`. `gateway.py` keeps separate session
+  registries per principal and forwards to explicit host-loopback backends
+  with host-held tokens. `mcp.allow` matches `<server>.<tool>`; clients see
+  `<server>__<tool>`. Payloads configure their own MCP clients.
+- The bridge is the road between host and guest: the guest's sshd listens on
+  `fencr.vms.<name>.ip`; payloads provide listeners for `inbound` ports on
+  that address. The firewall's output chain lets the host reach those ports and
+  nothing else. vsock
   carries only the boot-time secrets fetch and the power button: Firecracker's
   unix socket `/run/fencr-<name>/vsock`, in a directory only the VM's user
   enters, with guest-to-host port N arriving on `vsock_N` beside it and
-  Firecracker's API socket at `api.sock`.
+  Firecracker's API socket at `api.sock`. Both Firecracker and this socket
+  live on the host. The run directory is mode 0700: host root and that VM's
+  host user can access the API, ordinary host users and guest root cannot.
+- Guest journald stays inside the VM for agents to inspect. The host VM unit
+  discards serial stdout with `StandardOutput=null`; Firecracker diagnostics
+  use `--log-path /proc/self/fd/2` through a pipe into the host journal. The
+  pipe is required because Firecracker reopens its log path and cannot reopen
+  journald's socket as a file. Early serial-only boot diagnostics are lost.
 - Each VM runs as `fencr-<name>` with persistent state at
   `/var/lib/fencr-vms/<name>/state.img`, mounted as the guest's root
-  filesystem: the whole guest persists across reboots and rebuilds, only
-  `/nix/store` is replaced. The guest closure is a read-only store image, not
+  filesystem: the root disk persists across reboots and rebuilds; volatile
+  mounts such as `/run` do not. The guest closure is replaced on rebuild
+  as a read-only store image at `/nix/store`, not
   a host store share. The state drive uses Firecracker's `Writeback` cache, so
   guest flushes reach the host disk; the runner's default would lose them.
-  Copies of the image live in `checkpoints/` beside it, taken after every
-  clean stop, by `fencr checkpoint` and by an optional timer, always with
+  Copies of the image live in `checkpoints/` beside it, taken after a
+  clean stop when `checkpoints.onStop` is enabled (the default), by
+  `fencr checkpoint` and by an optional timer, always with
   `cp --reflink=always` except on the stop path. Never mount a state image or
   a checkpoint on the host: `debugfs` reads them without the host kernel.
 
@@ -84,9 +105,10 @@ configuration, SSH access and the checkpoint commands.
   the host firewall; preserve both the vm's tables and the host firewall integration.
 - Domain grants in `outbound` cannot accompany `"internet"`. Either way the
   VM's egress unit is the guest's resolver: for domain grants it answers
-  every name with the bridge address and authorizes TLS by SNI without
+  A queries with the bridge address and authorizes TLS by SNI without
   decrypting it or using proxy environment variables; for `"internet"` it
-  relays the query to the host stub, capped at `maxQueries` in flight, and
+  relays to the host stub, with separate `maxQueries` caps for UDP queries
+  and TCP connections, and
   judges nothing. `*.example.com` does not include `example.com`, and
   `"!name"` refuses a name a wildcard grant would otherwise admit; a deny no
   grant covers, or one equal to a grant, is an evaluation error.
@@ -96,20 +118,37 @@ configuration, SSH access and the checkpoint commands.
   granted domain from the per-host
   authority `fencr-ca.service` keeps in `/var/lib/fencr/ca` and injects that
   credential's header, read from `$CREDENTIALS_DIRECTORY` per request rather
-  than from its environment, so a rotated `secretFile` needs no restart. A
+  than from its environment. `LoadCredential` copies the source at startup;
+  `reloadUnits` watches `secretFile` sources and restarts running credential
+  egress units through `fencr-credentials-reload.service` on changes. A
   credential declares `secretFile` or `secretCommand`, never both;
   `secretCommand` is served by `fencr-secret-<name>.socket`, a
   socket-activated resolver `LoadCredential` reads instead of a file, which
   the VM's egress unit requires before it starts; `secretSourceOf` picks
   file or socket. `allow` entries scope a
   credential to methods and paths, and the host answers 403 itself for the
-  rest; every request is logged without its headers, which `fencr status`
-  lists. The guest fetches the authority
+  rest. Credentials sharing a domain need non-empty `allow` entries;
+  exactly one credential must match a request, otherwise the host returns
+  403\. `opencode-go` and `opencode-zen` supply distinct path and `guestEnv`
+  defaults in `core.providers`. Provider presets using `Authorization`
+  accept bare API keys and existing `Bearer ` values. Every request is
+  logged without its headers, which `fencr status` lists. The guest fetches the authority
   beside its secrets and rebuilds the system trust store at boot in
   `/run/fencr`. Raw `secrets` instead enter guest `/run/agent-secrets`, fetched
   at boot over vsock port 5 from a socket-activated relay service that serves its
   own systemd credentials; they are readable by guest root. Never put real secret
   values in the Nix store.
+- `fencr.mcpGateway` is disabled by default; enabled VMs need explicit
+  `mcp.allow` grants. `approvalTools` defaults to `[ "*" ]`. The default
+  `approvalMode = "host"` invokes `approvalCommand` with principal, server,
+  tool and full arguments; a missing command, failure or timeout denies
+  the call. `approvalMode = "client"` uses MCP form elicitation and trusts
+  the requesting client to obtain human approval: a compromised client can
+  approve its own calls. Refusal, unsupported elicitation and timeout deny
+  the call; no human approval UI is bundled. Generated MCP credentials set
+  `substitutePlaceholder = false` so tool arguments cannot receive tokens
+  through placeholder substitution. Backend URLs must use host IPv4
+  loopback; guests cannot reach the gateway or backends directly by default.
 - SSH combines `fencr.adminKeys` and per-VM `authorizedKeys`; no keys means no
   SSH listener and no output-chain pinhole for it. Guest root is the intended
   privilege level. `inbound` opens a guest port to every host process; it does
@@ -117,12 +156,12 @@ configuration, SSH access and the checkpoint commands.
 - The secrets relay uses `requisite`, not `requires`, for the VM unit: a
   connection must not start a stopped VM. Keep relay identities separate from
   VM users.
-- Hosts need KVM and systemd-networkd, which brings systemd-resolved, the
-  stub at `127.0.0.53` the egress units resolve through. No guest reaches it:
-  the guest's 53 is redirected to the VM's own egress unit, which answers
-  with the bridge address where there is a name to judge and relays the
-  query otherwise. KSM is disabled. The VM unit runs as
-  the VM's user with `/dev/kvm` and `/dev/net/tun` as its only devices; group
+- Hosts need KVM, systemd-networkd and systemd-resolved, whose stub at
+  `127.0.0.53` the egress units resolve through. No guest reaches it:
+  with domain grants or `"internet"`, guest queries to the bridge's port 53
+  are redirected to the VM's own egress unit. It answers A queries with the
+  bridge address for domain grants and relays queries for `"internet"`. KSM is disabled. The VM unit runs as
+  the VM's user with `/dev/kvm` and `/dev/net/tun` as its explicit `DeviceAllow` entries; group
   `kvm` is for those two. The unit's root is an empty read-only tmpfs with the store, the
   run directory and the state directory bound in, which is what Firecracker's
   jailer builds with its chroot. On x86_64, a CPU template hides vmx and svm from the guest. Stopping presses the guest's vsock power
@@ -136,6 +175,10 @@ configuration, SSH access and the checkpoint commands.
 
 ## development and verification
 
+Use the Firecracker version in the pinned nixpkgs, currently 1.16.1. Upstream
+1.17.0 being released does not make it available in nixpkgs. Do not propose a
+custom build or upgrade as the solution to issues waiting on nixpkgs support.
+
 Flake outputs cover `x86_64-linux` and `aarch64-linux`. Commands below use
 `x86_64-linux`; substitute the builder's system when needed.
 
@@ -146,6 +189,8 @@ nix build .#checks.x86_64-linux.formatting --no-link
 nix build .#checks.x86_64-linux.core --no-link
 nix build .#checks.x86_64-linux.cli --no-link
 nix build .#checks.x86_64-linux.egress --no-link
+nix build .#checks.x86_64-linux.mcp-gateway --no-link
+nix build .#checks.x86_64-linux.mcp-module --no-link
 nix build .#checks.x86_64-linux.nixos-module --no-link
 nix build .#checks.x86_64-linux.nixos-boot --no-link -L
 nix flake check
@@ -159,6 +204,10 @@ nix flake check
 - `checks/cli.nix` exercises the compiled CLI with mocked system commands.
 - `checks.egress` is the package itself: `buildGoModule` runs `pkgs/egress`'s
   own `go test` cases in its check phase.
+- `checks.mcp-gateway` runs `pkgs/mcp-gateway/test_gateway.py` through
+  `tests.contract`, covering authorization, session isolation, both approval
+  modes and backend transport. `checks/mcp-module.nix` verifies gateway
+  options, credentials, unit wiring and validation.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.
 - `checks/nixos-boot.nix` runs a Firecracker guest inside a NixOS test VM,
@@ -168,6 +217,11 @@ nix flake check
   persistent state, the hypervisor's empty root, ingress, denied traffic,
   domain egress with a deny entry, credential injection with `allow`
   entries and the access log, checkpoints and restore, and a clean stop.
+  It also checks MCP tool filtering, session isolation, missing host approval,
+  token secrecy and persistence, and blocked direct gateway/backend access.
+  It checks guest-local logs, serial suppression, Firecracker diagnostics,
+  API permissions, and bounded `fencr status` behavior with a stopped VMM
+  process (`SIGSTOP`, then `SIGCONT`), without changing systemd's active state.
   Its timeout is 1800 seconds; `nix flake check` includes this integration
   test.
 - `effects.nix` defines nixbot's scheduled flake-input updates.
