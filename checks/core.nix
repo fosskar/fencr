@@ -414,6 +414,8 @@ assert lib.assertMsg (
     vm = (core.vmService pkgs resolved "/nix/store/runner").serviceConfig;
   in
   vm.User == "fencr-sbx"
+  && vm.StandardOutput == "null"
+  && vm.StandardError == "journal"
   && vm.CapabilityBoundingSet == ""
   && vm.RestrictSUIDSGID
   && vm.PrivateIPC

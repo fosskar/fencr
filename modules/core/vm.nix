@@ -42,7 +42,12 @@ in
               ${pkgs.coreutils}/bin/truncate -s ${toString instance.stateSize}M ${image}
             fi
           '';
-          ExecStart = "${runner}/bin/microvm-run";
+          # firecracker reopens its log path; journald's socket cannot be reopened as a file
+          ExecStart = pkgs.writeShellScript "fencr-${instance.name}-run" ''
+            exec ${runner}/bin/microvm-run 2> >(exec ${pkgs.coreutils}/bin/cat >&2)
+          '';
+          StandardOutput = "null";
+          StandardError = "journal";
           # wait for the exit so the guest unmounts its state; one that never
           # answers is killed at the stop timeout
           ExecStop = pkgs.writeShellScript "fencr-${instance.name}-stop" ''

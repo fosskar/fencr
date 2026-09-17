@@ -39,6 +39,10 @@ in
         hypervisor = "firecracker";
         # nixpkgs' glibc build ships an empty seccomp policy; only musl gets the allowlist
         firecracker.package = pkgs.pkgsStatic.firecracker;
+        firecracker.extraArgs = [
+          "--log-path"
+          "/proc/self/fd/2"
+        ];
         inherit (agentSandbox) vcpu mem;
         vsock.cid = agentSandbox.cid;
         # the runner wipes its own vsock path on every start; the secrets socket beside it must survive
