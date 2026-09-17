@@ -5,7 +5,8 @@ A vm has an ssh door only when keys authorize it: `fencr.adminKeys`
 guest's sshd on the vm's address on its bridge, `fencr.vms.<name>.ip`,
 and the vm's firewall lets the host reach that port and the vm's `inbound` ports,
 nothing else. You are root inside the vm; the vm boundary is the privilege
-boundary.
+boundary. An `inbound` port has no SSH key check: every host process can
+connect to it. See [network access](networking.md) for that distinction.
 
 ## on the host the vm runs on
 
@@ -62,6 +63,10 @@ fencr restore sbx <name>      # stop, put the copy in place, start
 configuration means changing the system configuration and running
 `nixos-rebuild`.
 
+For the optional [MCP gateway](mcp-gateway.md), `fencr status` shows HTTP
+requests to `mcp.fencr`, not individual tool calls or approval decisions.
+Gateway diagnostics are in `journalctl -u fencr-mcp-gateway.service`.
+
 ## host root, stated plainly
 
 For host root, ssh is a convenience, not the boundary: it owns the vm's
@@ -100,6 +105,12 @@ The copy is a reflink, instant and sharing blocks with the image until
 either side writes; btrfs, xfs and OpenZFS 2.3 with `block_cloning`
 have them. Without reflinks only stop checkpoints are taken, as plain
 sparse copies.
+
+Checkpoints contain disk state, not memory. A running checkpoint does not
+pause the VM or flush application buffers; treat it like recovery after a
+crash, not an application-consistent backup. Restore reboots the guest into
+the saved disk state. Host-side credentials and MCP gateway state are not
+part of a guest checkpoint.
 
 ## reusing root's authorized keys as adminKeys
 

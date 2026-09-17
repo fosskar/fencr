@@ -1,5 +1,9 @@
 # credentials
 
+For current configuration, see [credentials and secrets](../credentials.md)
+and the [MCP gateway](../mcp-gateway.md). The dated entries below record
+previous designs as well as the reasons for changing them.
+
 How a secret a vm needs reaches the place it is used without the vm ever
 holding it. This is the history of that mechanism: two designs on one day,
 what each was chosen for, and what turned the first into the second.

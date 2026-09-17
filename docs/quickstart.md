@@ -1,6 +1,6 @@
 # quickstart
 
-One sealed vm for one agent. Everything else in this repo is optional.
+One VM for one workload. The host needs KVM and systemd-networkd.
 
 ```nix
 # flake input
@@ -8,89 +8,109 @@ inputs.fencr.url = "github:fosskar/fencr";
 
 # host configuration
 imports = [ fencr.nixosModules.fencr ];
+networking.useNetworkd = true;
 
 fencr.vms.myagent = {
-  services = [ my-agent-module ];                   # any nixos modules
-  authorizedKeys = [ "ssh-ed25519 AAAA... you" ];   # ssh way in
-  inbound = [ 9119 ];                               # web ui from the host
+  services = [ my-agent-module ];
+  authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
 };
 ```
 
-What this gives you, with no further options:
+Replace `my-agent-module` with your agent's NixOS module and the public key
+with your own. Deploy with `nixos-rebuild`, then connect with `ssh myagent`.
+fencr does not install or configure an agent for you.
 
-- the vm has no network egress, including dns
-- nothing reaches the vm except `ssh myagent` (your key) and port 9119 at
-  the vm's address (its web ui); the address is `fencr.vms.myagent.ip`
-- the vm's disk survives reboots and rebuilds; only `/nix/store` is replaced,
-  and a copy of the disk is kept from each of the last five clean stops
-- 4 vcpus, 4 GiB with a hard cap the agent cannot exceed, 2048 open
-  connections at most
+With no further grants:
 
-Each further line is one permission or one limit:
+- the VM has no network egress, including DNS;
+- the host can reach only its key-authenticated SSH listener;
+- the whole guest filesystem persists across reboots and rebuilds, except
+  that its read-only `/nix/store` image is replaced;
+- each clean stop takes a disk checkpoint, retaining the last five.
 
-```nix
-  outbound = [ "github.com" "*.github.com" "!gist.github.com" "192.168.1.50:8123" ];
-  credentials = [ "anthropic" ];                      # api key the vm uses, never sees
-  secrets."nostr.key" = "/run/secrets/nostr.key";     # a key the program must hold itself
-  vcpu = 8; mem = 8192;                               # bigger box
-  networkBandwidth = 50;                              # MiB/s on the tap
-  checkpoints.interval = "hourly";                    # copies of the disk while it runs
-```
+## grant access
 
-Domain entries grant TLS on 443, `"!name"` takes one name back out of a
-wildcard; address entries grant TCP on the stated port. Add `"host:8080"`
-to reach a host service. For public internet and DNS
-instead of selected domains, use `outbound = [ "internet" ];`. It can
-accompany host/address entries, but not domains. Private networks remain
-blocked unless explicitly granted. Replies need no separate grant.
-
-`inbound` accepts integer TCP ports, reachable only from the host at the
-vm's address; it does not publish them to other machines. `fencr status`
-shows the effective grants, including automatic SSH and credential access.
-
-Inside the vm, `services` entries are ordinary NixOS configuration:
+Add only the permissions the workload needs:
 
 ```nix
-  services = [
-    my-agent-module
-    { environment.systemPackages = [ pkgs.ripgrep pkgs.nodejs ]; }
-  ];
+fencr.vms.myagent = {
+  outbound = [ "github.com" "*.github.com" "!gist.github.com" ];
+  inbound = [ 9119 ];
+};
 ```
 
-## OpenCode credentials
+Domains grant TLS on port 443. `"!name"` narrows a wildcard grant. You can
+also grant an address and TCP port, `"192.168.1.50:8123"`, or a host port,
+`"host:8080"`. Use `"internet"` instead of domain grants for public IPv4 access
+and DNS; private networks remain blocked unless explicitly granted.
 
-Go and Zen can be granted separately or together:
+`inbound` opens guest TCP ports to **every host process**, not only your SSH
+key. The service must listen on the guest's address, `fencr.vms.myagent.ip`,
+and provide any required authentication. It is not published to other machines.
+See [network access](networking.md).
+
+For a provider credential:
 
 ```nix
 fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode-go";
-fencr.credentials.opencode-zen.secretFile = "/run/secrets/opencode-zen";
-fencr.vms.myagent.credentials = [ "opencode-go" "opencode-zen" ];
+fencr.vms.myagent.credentials = [ "opencode-go" ];
 ```
 
-Each file contains only its API key. The presets add `Bearer ` to the
-`Authorization` header; existing files containing `Bearer <key>` still
-work. `secretCommand` can replace `secretFile`, with the same output format.
-It runs non-interactively on the host as an isolated `DynamicUser`, not in
-your logged-in password-manager session. Custom credentials without a
-provider, or with a custom header, still take the complete header value.
+The host file contains just the API key. The guest gets an
+`OPENCODE_GO_API_KEY` placeholder; the proxy inserts the real header.
+The agent still needs to select OpenCode Go. See
+[credentials and secrets](credentials.md) for other providers, Go and Zen
+together, host commands and raw guest secrets.
 
-The guest receives placeholders in `OPENCODE_GO_API_KEY` and
-`OPENCODE_ZEN_API_KEY` automatically. Configure the client to use
-`https://opencode.ai/zen/go/v1` for Go or `https://opencode.ai/zen/v1` for Zen.
-The proxy preserves request paths and queries: its upstream is the origin
-`https://opencode.ai`, not the client's API base URL.
+For MCP tools, see the [optional gateway](mcp-gateway.md). It automatically
+wires per-VM credentials, with explicit tool grants and host-side approvals
+by default. Client-mediated same-chat approval is an explicit, less secure
+opt-in; there is no bundled human approval UI.
 
-The presets' `allow` defaults select the credential by API path. With
-multiple credentials on one domain, every credential needs non-empty
-`allow` entries. Requests matching none or more than one receive 403;
-credential order never selects a key. The legacy `opencode` preset remains
-available without path restrictions; do not combine it with these presets
-on one VM without configuring non-overlapping `allow` entries.
+## workload and resource limits
 
-Day-two reading, when a need appears and not before:
+`services` accepts ordinary NixOS modules:
 
-- [access.md](access.md) — ssh from other machines, the fencr command,
-  checkpoints, why the disk image is never mounted on the host
-- [decisions/credentials.md](decisions/credentials.md)
-  — using an api without the key ever entering the vm, and narrowing what
-  it may be used for
+```nix
+fencr.vms.myagent.services = [
+  my-agent-module
+  { environment.systemPackages = [ pkgs.ripgrep pkgs.nodejs ]; }
+];
+```
+
+Default resources and the options that change them:
+
+| Options | Default |
+| --- | --- |
+| `vcpu`, `mem` | 4 vCPUs, 4096 MiB guest memory |
+| `cpuQuota`, `memoryMax` | `400%`, guest memory plus 512 MiB |
+| `stateSize` | 32768 MiB sparse root disk |
+| `diskBandwidth`, `networkBandwidth` | Unset; configure in MiB/s |
+| `maxConnections` | 2048 per connection-counting firewall chain |
+| `checkpoints.onStop`, `checkpoints.keep` | Enabled, five automatic checkpoints of each kind |
+| `checkpoints.interval` | Unset; for example `"hourly"` |
+
+These are per-VM options under `fencr.vms.<name>`. Increasing `stateSize`
+grows the disk at the next start; decreasing it does not shrink existing
+images. Checkpoints while running require a reflink-capable host filesystem;
+stop checkpoints can fall back to ordinary sparse copies.
+
+Each VM's `id` defaults to its position in name order and derives its network
+addresses. Set `id` explicitly to keep them stable when adding or removing
+other VMs. The host enables nftables and disables KSM. Unencrypted host swap
+can contain guest memory; fencr warns when a swap device lacks
+`randomEncryption`.
+
+## operate the VM
+
+```console
+fencr list
+fencr status myagent
+fencr checkpoint myagent before-refactor
+fencr checkpoints myagent
+fencr restore myagent before-refactor
+```
+
+`restore` stops the VM and replaces its disk state. Read
+[access and operation](access.md) for SSH from other machines, checkpoint
+retention and safe inspection of state images.
