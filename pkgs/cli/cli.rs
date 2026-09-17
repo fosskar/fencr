@@ -46,6 +46,7 @@ struct Vm {
     unit: &'static str,
     checkpoint_unit: &'static str,
     state_dir: &'static str,
+    api_socket: &'static str,
 }
 
 struct Style {
@@ -421,6 +422,31 @@ fn unit_health(p: &Result<BTreeMap<String, String>, String>, s: &Style) -> Strin
     }
 }
 
+fn vmm_state(vm: &Vm) -> Result<String, String> {
+    let response = output(
+        CURL,
+        &[
+            "--disable",
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--noproxy",
+            "*",
+            "--max-time",
+            "2",
+            "--max-filesize",
+            "4096",
+            "--unix-socket",
+            vm.api_socket,
+            "http://localhost/",
+        ],
+    )?;
+    match json_field(&response, "state") {
+        Some(state @ ("Not started" | "Running" | "Paused")) => Ok(state.to_string()),
+        _ => Err("invalid VMM state response".to_string()),
+    }
+}
+
 fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
     let mut services = Vec::new();
     for (vm, unit, _) in PROXIED {
@@ -472,6 +498,10 @@ fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec
     out.push(format!(
         "{}{}{}  {state}  {}{memory}",
         s.bold, vm.name, s.reset, vm.ip
+    ));
+    out.push(format!(
+        "VMM: {}",
+        vmm_state(vm).unwrap_or_else(|reason| unavailable(&reason, s))
     ));
     let proxy = egress_log(vm.name);
     for (heading, grants) in [

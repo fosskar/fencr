@@ -103,6 +103,17 @@ let
         ;;
     esac
   '';
+  curl = pkgs.writeShellScriptBin "curl" ''
+    set -eu
+    printf '%s\n' "$*" >> "$TEST_LOG"
+    case "''${TEST_API-Running}" in
+      timeout) echo 'curl: (28) Operation timed out' >&2; exit 28 ;;
+      denied) echo 'curl: permission denied' >&2; exit 7 ;;
+      missing) echo 'curl: socket unavailable' >&2; exit 7 ;;
+      invalid) echo '{}'; exit 0 ;;
+    esac
+    printf '{"state":"%s"}\n' "''${TEST_API-Running}"
+  '';
   cli = import ../pkgs/cli {
     inherit lib;
     pkgs = pkgs // {
@@ -114,6 +125,7 @@ let
         ];
       };
       nftables = nft;
+      inherit curl;
     };
     inherit instances;
   };
@@ -124,6 +136,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   ${cli}/bin/fencr status sbx > actual
   cat > expected <<'EOF'
   sbx  RUNNING  10.11.0.2  memory 1M
+  VMM: Running
   Inbound (from host):
     ✓ TCP 22, 33627 (22: ssh)                   3 packets
   Outbound (otherwise denied):
@@ -151,10 +164,20 @@ pkgs.runCommand "fencr-cli-check" { } ''
   cat > expected-queries <<'EOF'
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent,ActiveEnterTimestamp
   -k -q --no-pager -g fencr: -o cat --since Tue 2026-09-08 05:11:18 UTC
+  --disable --silent --show-error --fail --noproxy * --max-time 2 --max-filesize 4096 --unix-socket /run/fencr-sbx/api.sock http://localhost/
   -u fencr-sbx-egress.service -q -n 400 --no-pager -o cat
   show fencr-sbx-egress.service --property=LoadState,ActiveState
   EOF
   diff -u expected-queries "$TEST_LOG"
+  for state in Running Paused 'Not started'; do
+    TEST_API="$state" ${cli}/bin/fencr status sbx > actual
+    grep -Fx "VMM: $state" actual
+  done
+  for state in timeout denied missing invalid; do
+    TEST_API="$state" ${cli}/bin/fencr status sbx > actual
+    grep -F 'sbx  RUNNING' actual
+    grep -F 'VMM: unavailable:' actual
+  done
   TEST_QUIET=1 ${cli}/bin/fencr status sbx > actual
   grep -Fx '  ✗ guest → evil.test:443/tls         x1     outbound "evil.test"' actual
   if grep -F '1.2.3.4' actual; then exit 1; fi

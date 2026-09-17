@@ -320,6 +320,19 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail("journalctl -u fencr-sbx.service -o cat | grep -F fencr-serial-private")
       host.fail("journalctl -u fencr-sbx.service -o cat | grep -F fencr-guest-journal")
       host.succeed("journalctl -u fencr-sbx.service -o cat | grep -F 'Running Firecracker v'")
+      host.succeed("fencr status sbx | grep -Fx 'VMM: Running'")
+      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx)\" = fencr-sbx:700")
+      host.fail("su -s /bin/sh nobody -c 'curl --fail --max-time 2 --unix-socket /run/fencr-sbx/api.sock http://localhost/'")
+      host.succeed("su -s /bin/sh fencr-sbx -c 'curl --fail --max-time 2 --unix-socket /run/fencr-sbx/api.sock http://localhost/'")
+      host.succeed(f"{ssh} 'test ! -e /run/fencr-sbx/api.sock'", timeout=60)
+      host.succeed("systemctl kill --kill-whom=main --signal=STOP fencr-sbx.service")
+      try:
+          status = host.succeed("timeout 10 fencr status sbx", timeout=15)
+          assert "sbx  RUNNING" in status, status
+          assert "VMM: unavailable:" in status and "(28)" in status, status
+      finally:
+          host.succeed("systemctl kill --kill-whom=main --signal=CONT fencr-sbx.service")
+      host.succeed("fencr status sbx | grep -Fx 'VMM: Running'")
       # a raw secret arrived over vsock, readable by guest root only
       host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
