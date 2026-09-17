@@ -27,6 +27,7 @@ let
       ];
     }).config;
   config = evaluate { };
+  clientConfig = evaluate { fencr.mcpGateway.approvalMode = "client"; };
   errors =
     config:
     map (entry: entry.message) (
@@ -36,6 +37,14 @@ let
   gateway = config.systemd.services.fencr-mcp-gateway;
 in
 assert errors config == [ ];
+assert config.fencr.mcpGateway.approvalMode == "host";
+assert errors clientConfig == [ ];
+assert lib.any (warning: lib.hasInfix "compromised guest/client" warning) clientConfig.warnings;
+assert
+  errors (evaluate {
+    fencr.mcpGateway.approvalMode = "client";
+    fencr.mcpGateway.approvalCommand = [ "/bin/true" ];
+  }) != [ ];
 assert config.fencr.vms.agent.credentials == [ "mcp-agent" ];
 assert config.fencr.vms.reader.credentials == [ "mcp-reader" ];
 assert config.fencr.vms.agent.mcp.allow == [ ];
@@ -79,6 +88,9 @@ pkgs.runCommand "fencr-mcp-module" { } ''
   assert config["servers"]["calendar"]["approval_tools"] == ["*"]
   assert config["servers"]["calendar"]["token_credential"] == "backend-calendar"
   assert config["approval_command"] == []
+  assert config["approval_mode"] == "host"
+  client = json.loads(Path("${clientConfig.systemd.services.fencr-mcp-gateway.environment.MCP_GATEWAY_CONFIG}").read_text())
+  assert client["approval_mode"] == "client"
   PY
   touch "$out"
 ''

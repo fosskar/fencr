@@ -79,7 +79,26 @@ async def approve(command: list[str], timeout: float, request: dict[str, Any]) -
         await process.wait()
 
 
-def create_server(name, principal, servers, approval_command, approval_timeout):
+async def approve_client(context, timeout, request):
+    params = context.session.client_params
+    capability = params.capabilities.elicitation if params else None
+    # legacy clients advertise form elicitation as an empty capability object
+    if capability is None or (capability.form is None and capability.url is not None):
+        raise PermissionError("client does not support form elicitation")
+    try:
+        async with asyncio.timeout(timeout):
+            result = await context.session.elicit_form(
+                "Approve this tool call? " + json.dumps(request, sort_keys=True),
+                {"type": "object", "properties": {}},
+                related_request_id=context.request_id,
+            )
+    except TimeoutError as error:
+        raise PermissionError("client approval timed out") from error
+    if result.action != "accept":
+        raise PermissionError("client approval refused")
+
+
+def create_server(name, principal, servers, approval_mode, approval_command, approval_timeout):
     gateway = Server("fencr-mcp-gateway")
 
     def permitted(server_name, tool_name):
@@ -116,10 +135,14 @@ def create_server(name, principal, servers, approval_command, approval_timeout):
             raise ValueError("unknown MCP gateway tool")
         server = servers[server_name]
         if matches(tool_name, server["approval_tools"]):
-            await approve(approval_command, approval_timeout, {
+            request = {
                 "principal": name, "server": server_name,
                 "tool": tool_name, "arguments": arguments,
-            })
+            }
+            if approval_mode == "client":
+                await approve_client(gateway.request_context, approval_timeout, request)
+            else:
+                await approve(approval_command, approval_timeout, request)
         async with downstream(server) as session:
             return await session.call_tool(tool_name, arguments)
 
@@ -127,6 +150,8 @@ def create_server(name, principal, servers, approval_command, approval_timeout):
 
 
 def create_app(config):
+    if config["approval_mode"] not in ("host", "client"):
+        raise ValueError("unknown approval mode")
     tokens = {}
     managers = []
     for name, principal in config["principals"].items():
@@ -134,9 +159,10 @@ def create_app(config):
         if not token.startswith("Bearer ") or token.encode() in tokens:
             raise RuntimeError("gateway principals need distinct bearer credentials")
         manager = StreamableHTTPSessionManager(
-            app=create_server(name, principal, config["servers"],
+            app=create_server(name, principal, config["servers"], config["approval_mode"],
                               config["approval_command"], config["approval_timeout"]),
-            json_response=True,
+            # elicitation requests must reach the client before the tool call completes
+            json_response=config["approval_mode"] == "host",
             session_idle_timeout=1800,
         )
         managers.append(manager)

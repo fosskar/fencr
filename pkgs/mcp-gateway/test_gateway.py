@@ -2,15 +2,21 @@ import asyncio
 import contextlib
 import json
 import os
+import socket
+import time
 from pathlib import Path
 import sys
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-from mcp import types
+import httpx
+import uvicorn
+from mcp import ClientSession, types
+from mcp.client.streamable_http import streamable_http_client
 from starlette.testclient import TestClient
 
 import gateway
@@ -53,7 +59,7 @@ class GatewayTest(unittest.TestCase):
                 "agent": {"token_credential": "agent", "allow": ["calendar.*"]},
                 "reader": {"token_credential": "reader", "allow": ["calendar.read"]},
             },
-            "approval_command": [], "approval_timeout": 1,
+            "approval_mode": "host", "approval_command": [], "approval_timeout": 1,
         }
         self.backend = Backend()
 
@@ -152,6 +158,134 @@ class GatewayTest(unittest.TestCase):
                     })
                     self.assertTrue(result["isError"])
                     self.assertEqual(self.backend.calls, [])
+
+    @contextlib.contextmanager
+    def live_gateway(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            server = uvicorn.Server(uvicorn.Config(
+                gateway.create_app(self.config), log_level="error", timeout_graceful_shutdown=1,
+            ))
+            thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]})
+            thread.start()
+            try:
+                deadline = time.monotonic() + 5
+                while not server.started and thread.is_alive() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(server.started, "gateway failed to start")
+                yield f"http://127.0.0.1:{listener.getsockname()[1]}/mcp/"
+            finally:
+                server.should_exit = True
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive(), "gateway failed to stop")
+
+    def test_client_elicitation_over_http(self):
+        arguments = {"summary": "untrusted\ntext", "nested": {"x": [1, 2]}}
+        for action in ["accept", "decline", "cancel", "timeout", "error", "unsupported"]:
+            with self.subTest(action=action):
+                self.backend.calls.clear()
+                self.config["approval_mode"] = "client"
+                self.config["approval_timeout"] = 0.1 if action == "timeout" else 2
+                prompts = []
+
+                async def callback(context, params):
+                    prompts.append(params.message)
+                    if action == "timeout":
+                        await asyncio.sleep(0.3)
+                        return types.ElicitResult(action="accept")
+                    if action == "error":
+                        return types.ErrorData(code=-32603, message="elicitation failed")
+                    return types.ElicitResult(action=action)
+
+                async def run(url):
+                    async with (
+                        httpx.AsyncClient(headers=self.headers(), trust_env=False) as http,
+                        streamable_http_client(url, http_client=http) as (read, write, _),
+                        ClientSession(read, write, elicitation_callback=None if action == "unsupported" else callback) as session,
+                    ):
+                        await session.initialize()
+                        result = await session.call_tool("calendar__write", arguments)
+                        self.assertEqual(result.isError, action != "accept", result)
+
+                with self.live_gateway() as url:
+                    asyncio.run(run(url))
+                if action == "unsupported":
+                    self.assertEqual(prompts, [])
+                else:
+                    self.assertEqual(len(prompts), 1)
+                    self.assertEqual(json.loads(prompts[0].removeprefix("Approve this tool call? ")), {
+                        "principal": "agent", "server": "calendar", "tool": "write", "arguments": arguments,
+                    })
+                self.assertEqual(self.backend.calls, [("write", arguments)] if action == "accept" else [])
+
+    def test_legacy_form_capability_and_url_only_client(self):
+        for capability, supported in [({}, True), ({"form": {}}, True), ({"url": {}}, False)]:
+            with self.subTest(capability=capability):
+                session = SimpleNamespace(
+                    client_params=SimpleNamespace(capabilities=types.ClientCapabilities(elicitation=capability)),
+                    elicit_form=AsyncMock(return_value=types.ElicitResult(action="accept")),
+                )
+                context = SimpleNamespace(session=session, request_id=7)
+                if supported:
+                    asyncio.run(gateway.approve_client(context, 1, {"tool": "write"}))
+                    self.assertEqual(session.elicit_form.await_args.kwargs["related_request_id"], 7)
+                else:
+                    with self.assertRaises(PermissionError):
+                        asyncio.run(gateway.approve_client(context, 1, {"tool": "write"}))
+                    session.elicit_form.assert_not_awaited()
+
+    def test_client_prompts_do_not_replace_authorization_or_host_approval(self):
+        for mode, principal in [("client", "reader"), ("host", "agent")]:
+            with self.subTest(mode=mode, principal=principal):
+                self.config["approval_mode"] = mode
+                prompts = []
+
+                async def callback(context, params):
+                    prompts.append(params.message)
+                    return types.ElicitResult(action="accept")
+
+                async def run(url):
+                    async with (
+                        httpx.AsyncClient(headers=self.headers(principal), trust_env=False) as http,
+                        streamable_http_client(url, http_client=http) as (read, write, _),
+                        ClientSession(read, write, elicitation_callback=callback) as session,
+                    ):
+                        await session.initialize()
+                        result = await session.call_tool("calendar__write", {})
+                        self.assertTrue(result.isError)
+
+                with self.live_gateway() as url:
+                    asyncio.run(run(url))
+                self.assertEqual(prompts, [])
+                self.assertEqual(self.backend.calls, [])
+
+    def test_other_principal_cannot_answer_elicitation(self):
+        self.config["approval_mode"] = "client"
+        prompts = []
+
+        async def run(url):
+            async def callback(context, params):
+                prompts.append(params.message)
+                response = await http.post(url, headers=self.headers("reader", session_id()), json={
+                    "jsonrpc": "2.0", "id": context.request_id, "result": {"action": "accept"},
+                })
+                self.assertEqual(response.status_code, 404)
+                return types.ElicitResult(action="decline")
+
+            async with (
+                httpx.AsyncClient(headers=self.headers(), trust_env=False) as http,
+                streamable_http_client(url, http_client=http) as (read, write, session_id),
+                ClientSession(read, write, elicitation_callback=callback) as session,
+            ):
+                await session.initialize()
+                result = await session.call_tool("calendar__write", {})
+                self.assertTrue(result.isError)
+
+        with self.live_gateway() as url:
+            asyncio.run(run(url))
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(self.backend.calls, [])
 
     def test_host_approval_receives_exact_invocation(self):
         decision = str(Path(self.directory.name, "decision.json"))

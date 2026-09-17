@@ -17,6 +17,7 @@ let
   gatewayConfig = pkgs.writeText "fencr-mcp-gateway.json" (
     builtins.toJSON {
       inherit (cfg) port;
+      approval_mode = cfg.approvalMode;
       approval_command = cfg.approvalCommand;
       approval_timeout = cfg.approvalTimeout;
       servers = lib.mapAttrs (name: server: {
@@ -40,6 +41,20 @@ in
       default = 8764;
       description = "host loopback port for the gateway; never opened to guests directly.";
     };
+    approvalMode = lib.mkOption {
+      type = lib.types.enum [
+        "host"
+        "client"
+      ];
+      default = "host";
+      description = ''
+        host requires approvalCommand to approve protected calls independently
+        of the guest. client sends MCP form elicitation to the requesting client,
+        which may display it in the same chat. client mode trusts that client to
+        obtain human approval; a compromised client can approve its own calls.
+        refusal, unsupported elicitation and timeout deny the call in either case.
+      '';
+    };
     approvalCommand = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -56,7 +71,7 @@ in
     approvalTimeout = lib.mkOption {
       type = lib.types.ints.positive;
       default = 120;
-      description = "seconds to wait for an independent host approval before denying the call.";
+      description = "seconds to wait for approval in either mode before denying the call.";
     };
     servers = lib.mkOption {
       default = { };
@@ -81,7 +96,7 @@ in
             approvalTools = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ "*" ];
-              description = "tool-name globs requiring independent approval. all tools by default; explicitly exclude only tools safe to call without approval.";
+              description = "tool-name globs requiring approval through approvalMode. all tools by default; explicitly exclude only tools safe to call without approval.";
             };
             hiddenTools = lib.mkOption {
               type = lib.types.listOf lib.types.str;
@@ -124,6 +139,9 @@ in
       ];
     }
     (lib.mkIf cfg.enable {
+      warnings =
+        lib.optional (cfg.approvalMode == "client")
+          "fencr.mcpGateway: client approval trusts the requesting MCP client; a compromised guest/client can approve its own tool calls.";
       assertions = [
         {
           assertion = cfg.servers != { } && members != { };
@@ -144,6 +162,10 @@ in
         {
           assertion = cfg.approvalCommand == [ ] || lib.hasPrefix "/" (lib.head cfg.approvalCommand);
           message = "fencr.mcpGateway.approvalCommand must name an absolute executable path.";
+        }
+        {
+          assertion = cfg.approvalMode != "client" || cfg.approvalCommand == [ ];
+          message = "fencr.mcpGateway: approvalCommand is only used with approvalMode = host; remove it to select client approval.";
         }
       ]
       ++ lib.mapAttrsToList (name: vm: {
