@@ -139,9 +139,6 @@ in
       ];
     }
     (lib.mkIf cfg.enable {
-      warnings =
-        lib.optional (cfg.approvalMode == "client")
-          "fencr.mcpGateway: client approval trusts the requesting MCP client; a compromised guest/client can approve its own tool calls.";
       assertions = [
         {
           assertion = cfg.servers != { } && members != { };

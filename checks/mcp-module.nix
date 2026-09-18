@@ -39,7 +39,7 @@ in
 assert errors config == [ ];
 assert config.fencr.mcpGateway.approvalMode == "host";
 assert errors clientConfig == [ ];
-assert lib.any (warning: lib.hasInfix "compromised guest/client" warning) clientConfig.warnings;
+assert !(lib.any (warning: lib.hasPrefix "fencr.mcpGateway:" warning) clientConfig.warnings);
 assert
   errors (evaluate {
     fencr.mcpGateway.approvalMode = "client";
