@@ -160,13 +160,15 @@ in
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
 
-  # the eval-time twin of covers() in pkgs/domain.rs
+  # the eval-time twin of covers() in pkgs/domain.rs, case-insensitive as
+  # that one and matchesAny in pkgs/egress are
   domainCovers =
     pattern: host:
-    if lib.hasPrefix "*." pattern then
-      lib.hasSuffix (lib.removePrefix "*" pattern) host
-    else
-      pattern == host;
+    let
+      lower = lib.toLower pattern;
+      name = lib.toLower host;
+    in
+    if lib.hasPrefix "*." lower then lib.hasSuffix (lib.removePrefix "*" lower) name else lower == name;
 
   # secrets and credentials become systemd credential ids
   credentialId = value: builtins.match "[A-Za-z0-9_.-]+" value != null;
@@ -253,7 +255,7 @@ in
         )
         # a deny that covers nothing is a typo; one equal to a grant empties it
         ++ map (pattern: "${name}: outbound entry \"!${pattern}\" denies the whole grant \"${pattern}\"") (
-          lib.filter (pattern: lib.elem pattern domains) denied
+          lib.filter (pattern: lib.elem (lib.toLower pattern) (map lib.toLower domains)) denied
         )
         ++
           map
@@ -263,7 +265,7 @@ in
             (
               lib.filter (
                 pattern:
-                !lib.elem pattern domains
+                !lib.elem (lib.toLower pattern) (map lib.toLower domains)
                 && !lib.any (allowed: domainCovers allowed (lib.removePrefix "*." pattern)) domains
               ) denied
             )

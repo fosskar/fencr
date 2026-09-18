@@ -4,6 +4,14 @@ _self: pkgs:
 let
   inherit (pkgs) lib;
   core = import ../modules/core { inherit lib; };
+  # every false fact is named, and all of them are reported at once; a fact
+  # that throws still aborts evaluation, as any assert here does
+  facts =
+    subject: table:
+    let
+      broken = lib.attrNames (lib.filterAttrs (_: held: !held) table);
+    in
+    lib.assertMsg (broken == [ ]) "core check: ${subject}: ${lib.concatStringsSep "; " broken}";
   resolve =
     name: options:
     core.resolveInstance {
@@ -193,6 +201,21 @@ assert check "deny entries no grant covers"
     "sbx: outbound entry \"!*github.com\": a deny entry names a domain pattern; \"*github.com\": a wildcard must be its own label (\"*.example.com\"); \"*example.com\" also matches evilexample.com"
     "sbx: outbound entry \"!github.com\" denies the whole grant \"github.com\""
     "sbx: outbound entry \"!gist.github.com\" denies nothing: no domain grant covers gist.github.com"
+  ];
+# the twin of covers() in pkgs/domain.rs and matchesAny in pkgs/egress, both
+# of which lower the pattern and the host before comparing
+assert check "a grant in another case still covers a deny"
+  (resolve "sbx" {
+    id = 0;
+    outbound = [
+      "*.GitHub.com"
+      "Example.com"
+      "!gist.github.com"
+      "!example.COM"
+    ];
+  }).errors
+  [
+    "sbx: outbound entry \"!example.COM\" denies the whole grant \"example.COM\""
   ];
 assert check "deny entry with internet"
   (resolve "sbx" {
@@ -763,7 +786,9 @@ assert lib.assertMsg (
       };
     }).errors == [ "sbx: credential \"api\": allow entry \"GET\": expected \"<methods> <path>\"" ]
 ) "unit check: credential allow entries are not rendered or validated";
-assert lib.assertMsg (
+# one fact per message: a group of fifteen conjuncts named only itself, so a
+# changed flag in the script said "checkpoints are not wired" and nothing more
+assert facts "checkpoint" (
   let
     template = units.services."fencr-sbx-checkpoint@".serviceConfig;
     script = core.checkpointText pkgs resolved;
@@ -778,28 +803,31 @@ assert lib.assertMsg (
       checkpoints.onStop = false;
     }) "/run/x";
   in
-  template.User == "fencr-sbx"
-  && template.TemporaryFileSystem == "/:ro"
-  && lib.elem "/var/lib/fencr-vms/sbx" template.BindPaths
-  && template.RestrictAddressFamilies == [ "AF_UNIX" ]
-  && lib.hasSuffix " %i" template.ExecStart
-  && lib.hasInfix "cp --reflink=always " script
-  && lib.hasInfix "sync -f " script
-  && lib.hasInfix "head -n -5 " script
-  && lib.hasInfix "curl --silent --fail --max-time 5 --unix-socket \"$socket\" http://localhost/" script
-  && lib.hasInfix "/run/fencr-sbx/api.sock" script
-  && units.timers == { }
-  &&
-    timed.timers.fencr-sbx-checkpoint.timerConfig == {
-      OnCalendar = "hourly";
-      Unit = "fencr-sbx-checkpoint@timer.service";
-    }
-  && lib.hasInfix "head -n -3 " (core.checkpointText pkgs hourly)
-  &&
-    lib.any (lib.hasSuffix " stop")
-      (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost
-  && silent.serviceConfig.ExecStopPost == [ ]
-) "unit check: checkpoints are not wired";
+  {
+    "the copy runs as the vm's user" = template.User == "fencr-sbx";
+    "the copy runs in the vm unit's empty root" =
+      template.TemporaryFileSystem == "/:ro" && lib.elem "/var/lib/fencr-vms/sbx" template.BindPaths;
+    "the copy reaches nothing but a unix socket" = template.RestrictAddressFamilies == [ "AF_UNIX" ];
+    "the template takes the checkpoint name" = lib.hasSuffix " %i" template.ExecStart;
+    "a running copy is a reflink" = lib.hasInfix "cp --reflink=always " script;
+    "the copy is on disk before it is announced" = lib.hasInfix "sync -f " script;
+    "keep bounds each automatic kind" = lib.hasInfix "head -n -5 " script;
+    "the timer probe is bounded" =
+      lib.hasInfix "curl --silent --fail --max-time 5 --unix-socket \"$socket\" http://localhost/" script;
+    "the probe asks the vm's own api socket" = lib.hasInfix "/run/fencr-sbx/api.sock" script;
+    "no interval means no timer" = units.timers == { };
+    "an interval becomes a timer for the template" =
+      timed.timers.fencr-sbx-checkpoint.timerConfig == {
+        OnCalendar = "hourly";
+        Unit = "fencr-sbx-checkpoint@timer.service";
+      };
+    "keep follows the instance" = lib.hasInfix "head -n -3 " (core.checkpointText pkgs hourly);
+    "a clean stop leaves a checkpoint" =
+      lib.any (lib.hasSuffix " stop")
+        (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost;
+    "onStop = false leaves none" = silent.serviceConfig.ExecStopPost == [ ];
+  }
+);
 # a credential whose value comes from a command: a socket-activated resolver
 # serves it, LoadCredential reads the socket, and the value never lands in a
 # file for a watcher to watch
