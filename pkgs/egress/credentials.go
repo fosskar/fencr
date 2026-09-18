@@ -40,7 +40,6 @@ type rule struct {
 
 // a request body is substituted only when it is small enough to hold; a
 // larger or unmeasured one is forwarded untouched rather than buffered
-// larger or unmeasured one is forwarded untouched rather than buffered
 const maxBody = 1 << 20
 
 // without a restart; the path watcher restarts the unit for LoadCredential,
@@ -66,10 +65,14 @@ func handler(byDomain map[string][]*credential) http.Handler {
 		// what the guest sent: substitute puts the credential in the uri, and
 		// the journal must carry the placeholder it replaced, not the value
 		uri := r.URL.RequestURI()
+		// the journal and the guest must never disagree on how a request ended
+		refuse := func(status int, message string) {
+			record(r, uri, status)
+			http.Error(w, message, status)
+		}
 		candidates, ok := byDomain[host]
 		if !ok {
-			record(r, uri, http.StatusNotFound)
-			http.Error(w, "fencr: no credential for this domain", http.StatusNotFound)
+			refuse(http.StatusNotFound, "fencr: no credential for this domain")
 			return
 		}
 		var c *credential
@@ -78,28 +81,24 @@ func handler(byDomain map[string][]*credential) http.Handler {
 				continue
 			}
 			if c != nil {
-				record(r, uri, http.StatusForbidden)
-				http.Error(w, "fencr: request matches multiple credentials", http.StatusForbidden)
+				refuse(http.StatusForbidden, "fencr: request matches multiple credentials")
 				return
 			}
 			c = candidate
 		}
 		if c == nil {
-			record(r, uri, http.StatusForbidden)
-			http.Error(w, "fencr: request not allowed for any credential", http.StatusForbidden)
+			refuse(http.StatusForbidden, "fencr: request not allowed for any credential")
 			return
 		}
 		value, err := secret(c.Name)
 		if err != nil {
 			log.Printf("fencr: %s: %v", c.Name, err)
-			record(r, uri, http.StatusBadGateway)
-			http.Error(w, "fencr: credential unavailable", http.StatusBadGateway)
+			refuse(http.StatusBadGateway, "fencr: credential unavailable")
 			return
 		}
 		if err := substitute(r, c.Placeholder, value); err != nil {
 			log.Printf("fencr: %s: %v", c.Name, err)
-			record(r, uri, http.StatusBadGateway)
-			http.Error(w, "fencr: request too large to carry a credential", http.StatusBadGateway)
+			refuse(http.StatusBadGateway, "fencr: request too large to carry a credential")
 			return
 		}
 		forward(c, value, uri, w, r)
