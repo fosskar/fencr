@@ -83,8 +83,10 @@ in
       iifname "${cfg.bridge}" ct state established,related accept
     ''
     + connectionCap cfg
+    # the bridge address alone: a host service bound to the lan is not what
+    # "host:<port>" grants, and every other rule here is scoped the same way
     + lib.optionalString (cfg.hostPorts != [ ]) ''
-      iifname "${cfg.bridge}" tcp dport { ${
+      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport { ${
         lib.concatMapStringsSep ", " toString cfg.hostPorts
       } } counter accept comment "${tag cfg "host"}"
     ''

@@ -317,7 +317,8 @@ in
               ];
               description = ''
                 connections the vm may initiate: a domain grants TLS on 443,
-                host:<port> grants TCP to the host, and <ipv4[/prefix]>:<port>
+                host:<port> grants TCP to the host at the vm's bridge
+                address (`hostIp`), and <ipv4[/prefix]>:<port>
                 grants TCP to that address or subnet, including private ranges.
                 "internet" grants public IPv4 internet access and DNS, excluding
                 special-use ranges; it cannot accompany domain grants.

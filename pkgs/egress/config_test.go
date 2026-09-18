@@ -10,6 +10,7 @@ import (
 // the shape modules/core/egress.nix renders: a domain grant answers every
 // name itself, so resolver is empty and that is not a fault
 const rendered = `{"bridge":"10.11.0.1","dnsPort":33053,"tlsPort":33443,"resolver":"",` +
+	`"blocked":["10.11.0.0/26"],` +
 	`"domains":["allowed.test"],"denied":[],"credentials":[{"name":"api","domain":"api.test",` +
 	`"upstream":"http://127.0.0.1:8765","header":"Authorization","bearer":true,"placeholder":"",` +
 	`"allow":[{"methods":["GET"],"path":"/"}]}]}`
@@ -41,6 +42,8 @@ func TestADriftedConfigIsRefused(t *testing.T) {
 		{"no bridge", strings.Replace(rendered, `"10.11.0.1"`, `""`, 1), "is not an address"},
 		{"port zero", strings.Replace(rendered, `33053`, `0`, 1), "is not a port"},
 		{"credential without a header", strings.Replace(rendered, `"Authorization"`, `""`, 1), "has no header"},
+		{"no blocked ranges", strings.Replace(rendered, `"10.11.0.0/26"`, ``, 1), "no blocked ranges"},
+		{"blocked is not a network", strings.Replace(rendered, `10.11.0.0/26`, `10.11.0.1`, 1), "is not a network"},
 		{"two configurations", rendered + rendered, "more than one configuration"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -297,7 +297,12 @@ in
       tlsPort = egressTlsPort;
       # the stub resolved listens on for the host itself; with domain grants
       # there is a name to judge and no query leaves this unit
-      resolver = if cfg.hostDns then "127.0.0.53:53" else "";
+      resolver = if cfg.internet then "127.0.0.53:53" else "";
+      # the one range IPAddressDeny cannot refuse: IPAddressAllow has to
+      # carry the vm's own subnet for the guest to be reachable, and that /26
+      # outranks the /8 on prefix length. the other special-use ranges are
+      # denied at the socket, where a host's own carve-out still counts
+      blocked = [ cfg.subnet ];
       inherit (cfg) domains denied;
       credentials = map (credential: {
         inherit (credential)

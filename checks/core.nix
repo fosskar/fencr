@@ -289,13 +289,20 @@ assert lib.assertMsg (
   && (builtins.fromJSON (core.egressConfig resolved)).resolver == ""
   && longName.egress
   && longName.dnsEgress
-  && longName.hostDns
+  && longName.internet
   && longName.dns == "10.11.1.1"
   && (builtins.fromJSON (core.egressConfig longName)).resolver == "127.0.0.53:53"
   && !(resolve "sbx" { id = 0; }).egress
   && !(resolve "sbx" { id = 0; }).dnsEgress
   && (resolve "sbx" { id = 0; }).dns == null
 ) "core check: the vm's unit is not the guest's resolver";
+# IPAddressAllow carries the vm's own /26 so the guest stays reachable, and
+# that beats the /8 in IPAddressDeny, so the unit is told to refuse a granted
+# name that resolves onto its own bridge or guest
+assert lib.assertMsg (
+  (builtins.fromJSON (core.egressConfig resolved)).blocked == [ "10.11.0.0/26" ]
+  && (builtins.fromJSON (core.egressConfig longName)).blocked == [ "10.11.1.0/26" ]
+) "core check: the egress unit may dial its own subnet";
 assert lib.assertMsg (
   longName.errors
   == [ "vm name \"coding-agent-1\" is too long: \"tap-coding-agent-1\" exceeds IFNAMSIZ" ]
@@ -406,7 +413,9 @@ assert lib.assertMsg (
       "10.11.0.0/26"
     ]
   && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-egress".serviceConfig.IPAddressAllow
-  && occurrences ''iifname "br-sbx" tcp dport { 443 } counter accept comment "fencr:sbx:host"'' == 1
+  &&
+    occurrences ''iifname "br-sbx" ip daddr 10.11.0.1 tcp dport { 443 } counter accept comment "fencr:sbx:host"''
+    == 1
   &&
     occurrences ''iifname "br-sbx" ip daddr 192.168.1.50 tcp dport 8123 counter accept comment "fencr:sbx:pin-192.168.1.50-8123"''
     == 1

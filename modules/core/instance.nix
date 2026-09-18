@@ -184,8 +184,9 @@ in
     else
       "\"${pattern}\": not a hostname pattern; expected \"example.com\" or \"*.example.com\"";
 
-  # the one list the guest's firewall and the host's output chain both take
-  guestPortsOf = cfg: lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.inbound;
+  # the one list the guest's firewall and the host's output chain both take;
+  # unique here, since inbound may name 22 beside the keys that open it
+  guestPortsOf = cfg: lib.unique (lib.optional (cfg.sshKeys != [ ]) 22 ++ cfg.inbound);
 
   # agentSandbox: the machine's shape and network posture, no host path
   guestFields = [
@@ -225,6 +226,8 @@ in
       internet = values "internet" != [ ];
       domains = values "domain";
       denied = values "deny";
+      # a deny and the grant it names need not agree on case
+      grantedExactly = pattern: lib.elem (lib.toLower pattern) (map lib.toLower domains);
       granted = credentialsOf (options // { inherit name; }) credentials;
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
@@ -234,7 +237,6 @@ in
       # speaks to resolved itself
       egress = domains != [ ] || granted != [ ] || internet;
       dnsEgress = domains != [ ] || internet;
-      hostDns = internet;
       errors =
         lib.optional (
           options.id < 0 || options.id >= idRange
@@ -255,7 +257,7 @@ in
         )
         # a deny that covers nothing is a typo; one equal to a grant empties it
         ++ map (pattern: "${name}: outbound entry \"!${pattern}\" denies the whole grant \"${pattern}\"") (
-          lib.filter (pattern: lib.elem (lib.toLower pattern) (map lib.toLower domains)) denied
+          lib.filter grantedExactly denied
         )
         ++
           map
@@ -265,7 +267,7 @@ in
             (
               lib.filter (
                 pattern:
-                !lib.elem (lib.toLower pattern) (map lib.toLower domains)
+                !grantedExactly pattern
                 && !lib.any (allowed: domainCovers allowed (lib.removePrefix "*." pattern)) domains
               ) denied
             )
@@ -312,7 +314,6 @@ in
         denied
         egress
         dnsEgress
-        hostDns
         ;
       inherit (options)
         id
@@ -342,7 +343,7 @@ in
       credentialPlaceholders = lib.listToAttrs (
         map (credential: lib.nameValuePair credential.name credential.placeholder) granted
       );
-      dns = if dnsEgress || hostDns then hostIpOf options else null;
+      dns = if dnsEgress then hostIpOf options else null;
       bridge = bridgeOf name;
       mac = macOf options;
       cid = cidOf options;

@@ -10,9 +10,15 @@ import (
 	"time"
 )
 
-// the only address a granted name must never reach: the loopback the unit
-// allows for a credential's upstream
-func TestLoopbackAddressesAreNotDialled(t *testing.T) {
+// the addresses a granted name must never reach: the loopback the unit
+// allows for a credential's upstream, and the vm's own subnet, which
+// IPAddressAllow has to carry so the guest stays reachable
+func TestLoopbackAndTheVmsOwnSubnetAreNotDialled(t *testing.T) {
+	_, subnet, err := net.ParseCIDR("10.11.0.0/26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := []*net.IPNet{subnet}
 	for _, test := range []struct {
 		resolved []string
 		want     []string
@@ -21,20 +27,27 @@ func TestLoopbackAddressesAreNotDialled(t *testing.T) {
 		{[]string{"127.0.0.53", "127.1.2.3"}, nil},
 		{[]string{"127.0.0.1", "93.184.215.14"}, []string{"93.184.215.14"}},
 		{[]string{"93.184.215.14"}, []string{"93.184.215.14"}},
+		// the bridge and the guest, which IPAddressDeny cannot refuse
+		{[]string{"10.11.0.1"}, nil},
+		{[]string{"10.11.0.2", "93.184.215.14"}, []string{"93.184.215.14"}},
+		// another vm's subnet is already denied at the socket, and a host
+		// that allowed an address on purpose keeps it
+		{[]string{"10.11.1.1"}, []string{"10.11.1.1"}},
+		{[]string{"192.168.1.2"}, []string{"192.168.1.2"}},
 	} {
 		var resolved []net.IP
 		for _, address := range test.resolved {
 			resolved = append(resolved, net.ParseIP(address))
 		}
 		var got []string
-		for _, address := range publicAddresses(resolved) {
+		for _, address := range publicAddresses(resolved, blocked) {
 			got = append(got, address.String())
 		}
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
 			t.Errorf("%v: got %v, want %v", test.resolved, got, test.want)
 		}
 	}
-	if _, err := dialPublic("localhost", "443"); err == nil {
+	if _, err := dialPublic("localhost", "443", blocked); err == nil {
 		t.Fatal("a name on loopback was dialled")
 	}
 }

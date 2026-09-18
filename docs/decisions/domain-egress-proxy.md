@@ -22,7 +22,8 @@ name the client itself puts in the tls handshake:
   holds no certificate authority
 - the proxy unit denies private, link-local, multicast and other
   special-use destination ranges, so an allowed hostname cannot grant lan
-  access by resolving to a private address
+  access by resolving to a private address (2026-09-18: every range but the
+  vm's own subnet, which the unit must reach and the proxy refuses itself)
 - the input chain admits only the proxy's two redirected ports
   from the bridge to the host; a raw address on 443 hits the closed
   forward chain
@@ -160,3 +161,27 @@ This stops accidents and sloppiness, not an adversary. Encrypted dns is tls
 on 443 and looks like every other https connection, so an open grant cannot
 prevent it. The mode where dns cannot be smuggled out is a domain
 allowlist, where 443 itself is judged by name.
+
+## 2026-09-18: the vm's own subnet is refused in the proxy
+
+The bullet above credited the unit's deny list with the whole job. It cannot
+do the whole job. `IPAddressDeny` carries the special-use ranges, but
+`IPAddressAllow` has to carry `cfg.subnet` beside them: the unit listens on
+the bridge address, and systemd's access lists do not distinguish the
+direction of a connection, so admitting the guest to the unit's dns and tls
+ports also admits the unit to dial that range. The two lists resolve by
+longest prefix, so the vm's `/26` outranks the `10.0.0.0/8` it sits inside.
+No deny list can cover it, however it is written.
+
+So `egressConfig` carries `blocked`, the vm's own subnet, and `dialPublic`
+refuses an allowed name resolving onto the bridge or the guest before it
+connects. Until this, such a name was dialled and the guest's tls spliced to
+whatever the host served on 443 — the nat redirect does not intervene, since
+it matches `iifname "<bridge>"` and a host process reaching a local address
+never arrives there.
+
+That one range and no more. The rest stays at the socket layer, where the
+deny list does enforce it and where a host's own `IPAddressAllow` carve-out
+still counts — `checks/nixos-boot.nix` relies on exactly such a carve-out to
+stand in for the public internet. A `blocked` that is empty or unparseable
+fails the unit at startup rather than quietly restoring the old reach.

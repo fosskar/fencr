@@ -31,10 +31,15 @@ type config struct {
 	TLSPort int    `json:"tlsPort"`
 	// where a query goes when there is no name to judge; empty means every
 	// name is answered with the bridge address instead
-	Resolver    string       `json:"resolver"`
+	Resolver string `json:"resolver"`
+	// the vm's own subnet: IPAddressAllow must carry it for the guest to be
+	// reachable, so IPAddressDeny cannot refuse it and this check must
+	Blocked     []string     `json:"blocked"`
 	Domains     []string     `json:"domains"`
 	Denied      []string     `json:"denied"`
 	Credentials []credential `json:"credentials"`
+
+	blocked []*net.IPNet
 }
 
 func main() {
@@ -83,6 +88,17 @@ func load(path string) (*config, error) {
 		if port.value < 1 || port.value > 65535 {
 			return nil, fmt.Errorf("%s: %s %d is not a port", path, port.name, port.value)
 		}
+	}
+	// an empty list would leave a granted name free to name the bridge
+	if len(cfg.Blocked) == 0 {
+		return nil, fmt.Errorf("%s: no blocked ranges", path)
+	}
+	for _, entry := range cfg.Blocked {
+		_, network, err := net.ParseCIDR(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%s: blocked %q is not a network", path, entry)
+		}
+		cfg.blocked = append(cfg.blocked, network)
 	}
 	for _, c := range cfg.Credentials {
 		for _, field := range []struct {
@@ -209,15 +225,15 @@ func route(cfg *config, intercept map[string][]*credential, handover chan net.Co
 		return
 	}
 	log.Printf("allow %s", name)
-	splice(replayed, name)
+	splice(replayed, name, cfg.blocked)
 }
 
 // the unit's IPAddressDeny is what keeps an allowed name out of the lan, so
 // a refused destination shows up as a dial that never completes. only that
 // is worth a line; a copy ends when one side hangs up, which is not news
-func splice(client net.Conn, name string) {
+func splice(client net.Conn, name string, blocked []*net.IPNet) {
 	defer client.Close()
-	upstream, err := dialPublic(name, "443")
+	upstream, err := dialPublic(name, "443", blocked)
 	if err != nil {
 		log.Printf("relay: %v", err)
 		return
@@ -232,19 +248,20 @@ func splice(client net.Conn, name string) {
 	<-done
 }
 
-// the address that passed the check is the one connected to: the unit's
-// IPAddressDeny stops every special-use range but the loopback a
-// credential's upstream needs, and no allowed name may reach that
-func dialPublic(name, port string) (net.Conn, error) {
+// the address that passed the check is the one connected to. IPAddressDeny
+// stops the special-use ranges, but IPAddressAllow has to carry the vm's own
+// subnet so the guest stays reachable, and that /26 outranks the /8; a
+// granted name resolving onto the bridge or the guest is refused here
+func dialPublic(name, port string, blocked []*net.IPNet) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resolved, err := net.DefaultResolver.LookupIP(ctx, "ip4", name)
 	if err != nil {
 		return nil, err
 	}
-	addresses := publicAddresses(resolved)
+	addresses := publicAddresses(resolved, blocked)
 	if len(addresses) == 0 {
-		return nil, fmt.Errorf("dial %s: every address is loopback", name)
+		return nil, fmt.Errorf("dial %s: every address is loopback or on the vm's own subnet", name)
 	}
 	var failure error
 	for _, address := range addresses {
@@ -257,15 +274,24 @@ func dialPublic(name, port string) (net.Conn, error) {
 	return nil, failure
 }
 
-func publicAddresses(resolved []net.IP) []net.IP {
+func publicAddresses(resolved []net.IP, blocked []*net.IPNet) []net.IP {
 	var addresses []net.IP
 	for _, address := range resolved {
-		if address.IsLoopback() {
+		if address.IsLoopback() || withinAny(blocked, address) {
 			continue
 		}
 		addresses = append(addresses, address)
 	}
 	return addresses
+}
+
+func withinAny(networks []*net.IPNet, address net.IP) bool {
+	for _, network := range networks {
+		if network.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 type halfCloser interface{ CloseWrite() error }
