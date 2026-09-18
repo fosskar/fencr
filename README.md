@@ -76,6 +76,7 @@ client—a compromised client can approve its own calls.
 
 ## Documentation
 
+- [How fencr works](docs/overview.md) — the units, the road out and what is refused where
 - [Quickstart](docs/quickstart.md) — create a VM, defaults and resource limits
 - [Network access](docs/networking.md) — inbound ports, egress grants and their limits
 - [Credentials and secrets](docs/credentials.md) — provider presets, files, commands and OpenCode Go/Zen
