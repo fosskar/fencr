@@ -316,16 +316,8 @@ func allowedName(domains, denied []string, host string) bool {
 }
 
 func matchesAny(patterns []string, host string) bool {
-	host = strings.ToLower(host)
 	for _, pattern := range patterns {
-		pattern = strings.ToLower(pattern)
-		if suffix, wildcard := strings.CutPrefix(pattern, "*."); wildcard {
-			if strings.HasSuffix(host, "."+suffix) {
-				return true
-			}
-			continue
-		}
-		if host == pattern {
+		if covers(pattern, host) {
 			return true
 		}
 	}

@@ -227,7 +227,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
       failed) health=FAILED ;;
       inactive) health=STOPPED ;;
       missing) health=MISSING ;;
-      unavailable) health="unavailable: exit status: 1" ;;
+      unavailable) health="unavailable: exit status 1" ;;
     esac
     ${cli}/bin/fencr status sbx > actual
     grep -F "sbx  $health  10.11.0.2" actual

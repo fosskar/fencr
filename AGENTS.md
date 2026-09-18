@@ -44,10 +44,13 @@ configuration, SSH access and the checkpoint commands.
   `domains`, `denied`, `hostPorts` and `destinations`, one flat record with
   `inbound` and the derived names; `guestOf` selects the `guestFields` the
   guest receives as `agentSandbox`. Builders read those fields.
-- `pkgs/cli/cli.rs` is the fencr command, `pkgs.writers.writeRustBin` with
-  Rust edition 2024, not a Cargo workspace; `pkgs/cli/default.nix` appends its
-  instance tables, tool paths and `pkgs/domain.rs` (`covers`, the one wildcard
-  rule) at build. `checks/cli.nix` feeds the command a ruleset
+- `pkgs/cli/cli.go` is the fencr command, one Go program with the standard
+  library as its whole dependency tree, so `buildGoModule` takes
+  `vendorHash = null`; `pkgs/cli/default.nix` composes its source at build
+  from `cli.go`, a generated `tables.go` holding the instance tables and tool
+  paths, and `pkgs/domain.go`. That last file is the one wildcard rule,
+  `covers`, shared with the egress unit rather than written twice —
+  `instance.nix` still carries it a third time for evaluation. `checks/cli.nix` feeds the command a ruleset
   rendered by `firewallOf` and canned journal lines, so its parsers run on the
   text the firewall writes. `fencr status` also reads `GET /` from each VM's
   Firecracker API socket with a two-second timeout. `VMM:` is separate from
@@ -201,7 +204,7 @@ nix build .#checks.x86_64-linux.nixos-boot --no-link -L
 nix flake check
 ```
 
-- `treefmt.nix` enables nixfmt, deadnix, statix, mdformat, rustfmt and gofmt. The dev
+- `treefmt.nix` enables nixfmt, deadnix, statix, mdformat and gofmt. The dev
   shell provides the treefmt wrapper. There is no default package to build;
   the CLI is installed by the NixOS module when VMs are declared.
 - `checks/core.nix` probes pure builders and generated configuration through
