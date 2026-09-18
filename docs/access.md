@@ -1,7 +1,9 @@
 # accessing a vm
 
 A vm has an ssh door only when keys authorize it: `fencr.adminKeys`
-(every vm) or `fencr.vms.<name>.authorizedKeys` (that vm). The door is the
+(every vm) or `fencr.vms.<name>.authorizedKeys` (that vm). Without either,
+`fencr ssh` refuses by name, rather than letting the bare name fall through
+to dns and reach whatever else answers to it. The door is the
 guest's sshd on the vm's address on its bridge, `fencr.vms.<name>.ip`,
 and the vm's firewall lets the host reach that port and the vm's `inbound` ports,
 nothing else. You are root inside the vm; the vm boundary is the privilege

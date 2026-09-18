@@ -5,9 +5,8 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, exit};
 use std::{thread, time};
 
-// the instance tables and tool paths are appended by cli.nix at build:
-// VMS, PROXIED, SSH, SYSTEMCTL, JOURNALCTL, NFT, CP; so is
-// pkgs/domain.rs with covers()
+// the instance tables (VMS, PROXIED) and the tool path consts are appended
+// by cli.nix at build, along with pkgs/domain.rs and its covers()
 
 /// the kind out of the firewall's "fencr:<vm>:<kind>" tag
 fn kind<'a>(line: &'a str, name: &str) -> Option<&'a str> {
@@ -47,6 +46,9 @@ struct Vm {
     checkpoint_unit: &'static str,
     state_dir: &'static str,
     api_socket: &'static str,
+    // without keys the module writes no Host alias, and a bare name would
+    // resolve to whatever else answers to it
+    ssh: bool,
 }
 
 struct Style {
@@ -271,51 +273,34 @@ fn grant_lines(
     out: &mut Vec<String>,
 ) {
     for grant in grants {
-        let line = match &grant.source {
-            Source::Counter(tag) => grant_line(
-                grant,
-                ruleset
-                    .as_ref()
-                    .map(|ruleset| packets(ruleset, vm.name, tag))
-                    .map_err(Clone::clone),
-                "packet",
-                s,
-            ),
-            Source::Domain(pattern) => grant_line(
-                grant,
-                proxy
-                    .as_ref()
-                    .expect("a domain grant runs the egress unit")
-                    .as_ref()
-                    .map(|log| connections(log, "allow ", |host| covers(pattern, host)))
-                    .map_err(Clone::clone),
-                "connection",
-                s,
-            ),
-            Source::Denied(pattern) => grant_line(
-                grant,
-                proxy
-                    .as_ref()
-                    .expect("a deny entry runs the egress unit")
-                    .as_ref()
-                    .map(|log| connections(log, "deny ", |host| covers(pattern, host)))
-                    .map_err(Clone::clone),
-                "connection",
-                s,
-            ),
-            Source::Credential(domain) => grant_line(
-                grant,
-                proxy
-                    .as_ref()
-                    .expect("a credential runs the egress unit")
-                    .as_ref()
-                    .map(|log| connections(log, "intercept ", |host| host == *domain))
-                    .map_err(Clone::clone),
-                "connection",
-                s,
-            ),
+        let (verb, pattern) = match &grant.source {
+            Source::Counter(tag) => {
+                out.push(grant_line(
+                    grant,
+                    ruleset
+                        .as_ref()
+                        .map(|ruleset| packets(ruleset, vm.name, tag))
+                        .map_err(Clone::clone),
+                    "packet",
+                    s,
+                ));
+                continue;
+            }
+            Source::Domain(pattern) => ("allow ", pattern),
+            Source::Denied(pattern) => ("deny ", pattern),
+            Source::Credential(pattern) => ("intercept ", pattern),
         };
-        out.push(line);
+        out.push(grant_line(
+            grant,
+            proxy
+                .as_ref()
+                .expect("a domain, deny or credential grant runs the egress unit")
+                .as_ref()
+                .map(|log| connections(log, verb, |host| covers(pattern, host)))
+                .map_err(Clone::clone),
+            "connection",
+            s,
+        ));
     }
 }
 
@@ -463,10 +448,21 @@ fn service_lines(name: &str, s: &Style, out: &mut Vec<String>) {
 }
 
 fn kernel_log(started: Option<&str>) -> Result<String, String> {
-    let mut args = vec!["-k", "-q", "--no-pager", "-g", "fencr:", "-o", "cat"];
-    match started {
-        Some(started) => args.extend(["--since", started]),
-        None => args.extend(["-n", "400"]),
+    // bounded either way: under --watch this is re-read every two seconds,
+    // and a vm that has been up for weeks has a whole boot's worth of lines
+    let mut args = vec![
+        "-k",
+        "-q",
+        "--no-pager",
+        "-g",
+        "fencr:",
+        "-o",
+        "cat",
+        "-n",
+        "400",
+    ];
+    if let Some(started) = started {
+        args.extend(["--since", started]);
     }
     // journalctl exits 1 when -g matches nothing: no denials, not a failure
     match output(JOURNALCTL, &args) {
@@ -516,7 +512,9 @@ fn render_vm(vm: &Vm, ruleset: &Result<String, String>, s: &Style, out: &mut Vec
         }
     }
     out.push(String::new());
-    out.push("Blocked (journal):".to_string());
+    // the log rule is capped at 5/second while the drop beside it is not, so
+    // a flood is counted far lower than it happened
+    out.push("Blocked (journal, rate-limited sample):".to_string());
     match &kernel {
         Ok(kernel) => {
             let proxy = match &proxy {
@@ -612,12 +610,16 @@ fn checkpoint_file(vm: &Vm, name: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
-fn checkpoints(vm: &Vm) -> Vec<(String, u64, std::time::SystemTime)> {
+/// a directory that was never created holds no checkpoints; one this user
+/// may not read is not the same answer
+fn checkpoints(vm: &Vm) -> Result<Vec<(String, u64, std::time::SystemTime)>, String> {
     use std::os::unix::fs::MetadataExt;
     let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(std::path::Path::new(vm.state_dir).join("checkpoints"))
-    else {
-        return found;
+    let dir = std::path::Path::new(vm.state_dir).join("checkpoints");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+        Err(error) => return Err(format!("{}: {error}", dir.display())),
     };
     for entry in entries.flatten() {
         let file = entry.file_name();
@@ -633,11 +635,14 @@ fn checkpoints(vm: &Vm) -> Vec<(String, u64, std::time::SystemTime)> {
         }
     }
     found.sort_by(|a, b| b.2.cmp(&a.2));
-    found
+    Ok(found)
 }
 
 fn print_checkpoints(vm: &Vm) {
-    let found = checkpoints(vm);
+    let found = checkpoints(vm).unwrap_or_else(|reason| {
+        eprintln!("fencr: {reason}");
+        exit(1)
+    });
     if found.is_empty() {
         println!("{} has no checkpoints", vm.name);
     }
@@ -650,6 +655,70 @@ fn print_checkpoints(vm: &Vm) {
         };
         println!("{name:<32}  {:>8}  {age}", human(bytes));
     }
+}
+
+/// btrfs clones only between files whose nodatacow attribute matches, and
+/// the runner sets it on the image; checkpoint.nix carries it the same way.
+/// the filesystem comes from the directory, which always exists, so a vm
+/// that has never started is a quiet "nothing to carry" rather than an error
+fn nodatacow(dir: &str, image: &str) -> Result<bool, String> {
+    if output(STAT, &["-f", "-c", "%T", dir])?.trim() != "btrfs" {
+        return Ok(false);
+    }
+    match output(LSATTR, &["-d", image]) {
+        Ok(line) => Ok(line
+            .split_whitespace()
+            .next()
+            .is_some_and(|flags| flags.contains('C'))),
+        Err(_) if !std::path::Path::new(image).exists() => Ok(false),
+        Err(reason) => Err(format!("lsattr {image}: {reason}")),
+    }
+}
+
+/// the copy lands beside the image and replaces it by rename, so a restore
+/// that runs out of space leaves the vm the disk it had. the half-written
+/// copy goes with it: the run that fails for space is the one that must not
+/// leave a second image behind
+fn replace(source: &std::path::Path, dir: &str, image: &str) -> Result<(), String> {
+    let tmp = format!("{image}.tmp");
+    let staged = stage(source, dir, image, &tmp);
+    if staged.is_err()
+        && let Err(error) = std::fs::remove_file(&tmp)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!("fencr: {tmp}: {error}");
+    }
+    staged?;
+    std::fs::rename(&tmp, image).map_err(|error| format!("{image}: {error}"))
+}
+
+fn stage(source: &std::path::Path, dir: &str, image: &str, tmp: &str) -> Result<(), String> {
+    let fault = |error: std::io::Error| format!("{tmp}: {error}");
+    // a copy that died before the rename left this behind
+    match std::fs::remove_file(tmp) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(fault(error)),
+        _ => {}
+    }
+    // nodatacow only takes on an empty file, so it is set before the copy
+    std::fs::File::create(tmp).map_err(fault)?;
+    if nodatacow(dir, image)? {
+        output(CHATTR, &["+C", tmp])?;
+    }
+    output(
+        CP,
+        &[
+            "--reflink=auto",
+            "--sparse=always",
+            "--preserve=mode,ownership",
+            source.to_str().ok_or("the checkpoint path is not utf-8")?,
+            tmp,
+        ],
+    )?;
+    // a rename reaching the directory before the data would leave the vm an
+    // image with the new name and the old contents
+    std::fs::File::open(tmp)
+        .and_then(|file| file.sync_all())
+        .map_err(fault)
 }
 
 fn run(cmd: &str, args: &[&str]) {
@@ -677,12 +746,14 @@ fn main() {
         Some("ssh") => {
             // the module's Host <vm> alias carries address, user and host key policy
             let name = args.get(1).map(String::as_str).unwrap_or_else(|| usage());
-            fail(
-                Command::new(SSH)
-                    .arg(find(name).name)
-                    .args(&args[2..])
-                    .exec(),
-            );
+            let vm = find(name);
+            if !vm.ssh {
+                eprintln!(
+                    "fencr: {name} has no ssh keys; set fencr.adminKeys or fencr.vms.{name}.authorizedKeys"
+                );
+                exit(1)
+            }
+            fail(Command::new(SSH).arg(vm.name).args(&args[2..]).exec());
         }
         Some("status") => {
             let vm = args
@@ -752,16 +823,10 @@ fn main() {
             });
             let image = format!("{}/state.img", vm.state_dir);
             run(SYSTEMCTL, &["stop", vm.unit]);
-            run(
-                CP,
-                &[
-                    "--reflink=auto",
-                    "--sparse=always",
-                    "--preserve=mode,ownership",
-                    file.to_str().unwrap_or_else(|| usage()),
-                    &image,
-                ],
-            );
+            if let Err(reason) = replace(&file, vm.state_dir, &image) {
+                eprintln!("fencr: restore failed, the vm keeps its disk: {reason}");
+                exit(1)
+            }
             run(SYSTEMCTL, &["start", vm.unit]);
             println!("{} restored from {name}", vm.name);
         }

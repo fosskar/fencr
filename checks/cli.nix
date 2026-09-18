@@ -114,6 +114,11 @@ let
     esac
     printf '{"state":"%s"}\n' "''${TEST_API-Running}"
   '';
+  # the refusal is worthless if it prints and execs anyway, so the mock
+  # records the call the command must not make
+  ssh = pkgs.writeShellScriptBin "ssh" ''
+    printf 'ssh %s\n' "$*" >> "$TEST_LOG"
+  '';
   cli = import ../pkgs/cli {
     inherit lib;
     pkgs = pkgs // {
@@ -125,6 +130,7 @@ let
         ];
       };
       nftables = nft;
+      openssh = ssh;
       inherit curl;
     };
     inherit instances;
@@ -145,7 +151,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
     ✓ !gist.github.com TLS 443 (denied)         1 connection
     ✓ api.test TLS 443 (credential api)         1 connection
 
-  Blocked (journal):
+  Blocked (journal, rate-limited sample):
     ✗ guest → 1.2.3.4:443/tcp           x2     outbound "1.2.3.4:443"
     ✗ guest → 140.82.121.4:443/tcp      x1     over maxConnections
     ✗ guest → evil.test:443/tls         x1     outbound "evil.test"
@@ -163,7 +169,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
   diff -u expected actual
   cat > expected-queries <<'EOF'
   show fencr-sbx.service --property=LoadState,ActiveState,MemoryCurrent,ActiveEnterTimestamp
-  -k -q --no-pager -g fencr: -o cat --since Tue 2026-09-08 05:11:18 UTC
+  -k -q --no-pager -g fencr: -o cat -n 400 --since Tue 2026-09-08 05:11:18 UTC
   --disable --silent --show-error --fail --noproxy * --max-time 2 --max-filesize 4096 --unix-socket /run/fencr-sbx/api.sock http://localhost/
   -u fencr-sbx-egress.service -q -n 400 --no-pager -o cat
   show fencr-sbx-egress.service --property=LoadState,ActiveState
@@ -202,6 +208,13 @@ pkgs.runCommand "fencr-cli-check" { } ''
   if grep -F 'stop fencr-sbx.service' "$TEST_LOG"; then exit 1; fi
   if ${cli}/bin/fencr checkpoints sbx --rm '../state' 2> actual; then exit 1; fi
   grep -Fx 'fencr: "../state" is not a checkpoint name' actual
+  # no keys means no Host alias, so the bare name must not reach ssh at all
+  if ${cli}/bin/fencr ssh sealed 2> actual; then exit 1; fi
+  grep -Fx 'fencr: sealed has no ssh keys; set fencr.adminKeys or fencr.vms.sealed.authorizedKeys' actual
+  if grep -F 'ssh sealed' "$TEST_LOG"; then exit 1; fi
+  # a vm with keys reaches ssh under the alias the module wrote
+  ${cli}/bin/fencr ssh sbx uptime
+  grep -Fx 'ssh sbx uptime' "$TEST_LOG"
   ${cli}/bin/fencr status keyed > actual
   grep -Fx '  ✓ api.test TLS 443 (credential api)         1 connection' actual
   if grep -F 'github.com TLS 443' actual; then exit 1; fi

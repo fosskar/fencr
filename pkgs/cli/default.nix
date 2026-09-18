@@ -14,7 +14,7 @@ let
   inbound =
     cfg:
     let
-      opened = lib.unique (core.guestPortsOf cfg);
+      opened = core.guestPortsOf cfg;
     in
     lib.optional (opened != [ ]) (
       counted (
@@ -39,7 +39,9 @@ let
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''Vm { name: "${name}", id: ${toString cfg.id}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${(core.unitsOf name).vm}.service", checkpoint_unit: "${(core.unitsOf name).checkpoint}@", state_dir: "${core.stateDirOf name}", api_socket: "${core.apiSocketOf name}" },'';
+    ''Vm { name: "${name}", id: ${toString cfg.id}, ip: "${cfg.ip}", host_ip: "${cfg.hostIp}", inbound: &[${lib.concatStrings (inbound cfg)}], outbound: &[${lib.concatStrings (outbound cfg)}], unit: "${(core.unitsOf name).vm}.service", checkpoint_unit: "${(core.unitsOf name).checkpoint}@", state_dir: "${core.stateDirOf name}", api_socket: "${core.apiSocketOf name}", ssh: ${
+      if cfg.sshKeys != [ ] then "true" else "false"
+    } },'';
 
   # the journal the command reads, and whether a credential writes to it
   proxiedRows =
@@ -74,6 +76,9 @@ pkgs.writers.writeRustBin "fencr"
       const JOURNALCTL: &str = "${pkgs.systemd}/bin/journalctl";
       const NFT: &str = "${pkgs.nftables}/bin/nft";
       const CP: &str = "${pkgs.coreutils}/bin/cp";
+      const STAT: &str = "${pkgs.coreutils}/bin/stat";
+      const LSATTR: &str = "${pkgs.e2fsprogs}/bin/lsattr";
+      const CHATTR: &str = "${pkgs.e2fsprogs}/bin/chattr";
       const CURL: &str = "${pkgs.curl}/bin/curl";
     ''
   )
