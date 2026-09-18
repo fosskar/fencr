@@ -42,12 +42,8 @@ func main() {
 	if len(os.Args) != 2 {
 		log.Fatal("usage: fencr-egress <config.json>")
 	}
-	raw, err := os.ReadFile(os.Args[1])
+	cfg, err := load(os.Args[1])
 	if err != nil {
-		log.Fatal(err)
-	}
-	cfg := &config{}
-	if err := json.Unmarshal(raw, cfg); err != nil {
 		log.Fatal(err)
 	}
 	if err := run(cfg); err != nil {
@@ -55,11 +51,54 @@ func main() {
 	}
 }
 
+// nix renders this file and the fields are typed out on both sides, so a
+// key neither side recognizes means the two have drifted apart. an
+// unmarshal that filled in the zero value would leave a unit that starts
+// and serves nothing: no resolver, or a listener on port 0
+func load(path string) (*config, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	cfg := &config{}
+	if err := decoder.Decode(cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("%s: more than one configuration", path)
+	}
+	// resolver, domains, denied and a credential's placeholder are empty in
+	// configurations that are exactly right: a domain grant answers every
+	// name itself, and a credential may refuse substitution
+	if net.ParseIP(cfg.Bridge) == nil {
+		return nil, fmt.Errorf("%s: bridge %q is not an address", path, cfg.Bridge)
+	}
+	for _, port := range []struct {
+		name  string
+		value int
+	}{{"dnsPort", cfg.DNSPort}, {"tlsPort", cfg.TLSPort}} {
+		if port.value < 1 || port.value > 65535 {
+			return nil, fmt.Errorf("%s: %s %d is not a port", path, port.name, port.value)
+		}
+	}
+	for _, c := range cfg.Credentials {
+		for _, field := range []struct {
+			name  string
+			value string
+		}{{"name", c.Name}, {"domain", c.Domain}, {"upstream", c.Upstream}, {"header", c.Header}} {
+			if field.value == "" {
+				return nil, fmt.Errorf("%s: credential %q has no %s", path, c.Name, field.name)
+			}
+		}
+	}
+	return cfg, nil
+}
+
 func run(cfg *config) error {
 	bridge := net.ParseIP(cfg.Bridge)
-	if bridge == nil {
-		return fmt.Errorf("%q is not an address", cfg.Bridge)
-	}
 
 	intercept := map[string][]*credential{}
 	for i := range cfg.Credentials {
