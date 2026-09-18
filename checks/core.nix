@@ -413,9 +413,7 @@ assert lib.assertMsg (
       "10.11.0.0/26"
     ]
   && !lib.elem "0.0.0.0/0" units.services."fencr-sbx-egress".serviceConfig.IPAddressAllow
-  &&
-    occurrences ''iifname "br-sbx" ip daddr 10.11.0.1 tcp dport { 443 } counter accept comment "fencr:sbx:host"''
-    == 1
+  && occurrences ''iifname "br-sbx" tcp dport { 443 } counter accept comment "fencr:sbx:host"'' == 1
   &&
     occurrences ''iifname "br-sbx" ip daddr 192.168.1.50 tcp dport 8123 counter accept comment "fencr:sbx:pin-192.168.1.50-8123"''
     == 1
@@ -547,6 +545,11 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   let
     placeholder = core.placeholderOf "sbx" "api";
+    substituting = resolved // {
+      credentials = map (
+        credential: credential // { substitutePlaceholder = true; }
+      ) resolved.credentials;
+    };
   in
   lib.hasPrefix "fencr-" placeholder
   && placeholder == core.placeholderOf "sbx" "api"
@@ -554,19 +557,13 @@ assert lib.assertMsg (
   && placeholder != core.placeholderOf "sbx" "other"
   && resolved.credentialPlaceholders == { api = placeholder; }
   && resolved.credentialEnv == { }
+  # the guest holds the placeholder either way; the uri and body pass is
+  # what a credential has to ask for
+  && (lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).placeholder == ""
   &&
-    (lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).placeholder == placeholder
+    (lib.head (builtins.fromJSON (core.egressConfig substituting)).credentials).placeholder
+    == placeholder
 ) "unit check: the credential placeholder drifted";
-assert lib.assertMsg (
-  let
-    headerOnly = resolved // {
-      credentials = map (
-        credential: credential // { substitutePlaceholder = false; }
-      ) resolved.credentials;
-    };
-  in
-  (lib.head (builtins.fromJSON (core.egressConfig headerOnly)).credentials).placeholder == ""
-) "core check: header-only credential still substitutes tool arguments";
 # a rotated secretFile reaches the proxies: one watcher for the host, and
 # none at all where no credential is granted
 assert lib.assertMsg (
@@ -631,7 +628,7 @@ assert lib.assertMsg (
       domain = "api.example.com";
       upstream = "https://api.example.com";
       header = "Authorization";
-      placeholder = core.placeholderOf "sbx" "api";
+      placeholder = "";
       bearer = false;
       allow = [ ];
     }

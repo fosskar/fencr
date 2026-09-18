@@ -315,7 +315,10 @@ in
           (credential.provider or null) != null
           && core.providers.${credential.provider}.header == "Authorization"
           && lib.toLower credential.header == "authorization";
-        placeholder = if credential.substitutePlaceholder or true then credential.placeholder or "" else "";
+        # the header is injected either way; this is the uri and body pass,
+        # which only a credential that asks for it gets
+        placeholder =
+          if credential.substitutePlaceholder or false then credential.placeholder or "" else "";
         allow = map (rule: {
           inherit (rule) methods;
           path = if rule.path == null then "" else rule.path;

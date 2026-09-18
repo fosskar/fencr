@@ -83,10 +83,12 @@ in
       iifname "${cfg.bridge}" ct state established,related accept
     ''
     + connectionCap cfg
-    # the bridge address alone: a host service bound to the lan is not what
-    # "host:<port>" grants, and every other rule here is scoped the same way
+    # any address of the host's the guest can route to over the bridge, which
+    # is every local one but loopback: the nat table redirects 443 on the
+    # bridge address to the proxy, so scoping this rule there would leave
+    # "host:443" matching nothing at all
     + lib.optionalString (cfg.hostPorts != [ ]) ''
-      iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport { ${
+      iifname "${cfg.bridge}" tcp dport { ${
         lib.concatMapStringsSep ", " toString cfg.hostPorts
       } } counter accept comment "${tag cfg "host"}"
     ''

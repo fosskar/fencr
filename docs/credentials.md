@@ -112,7 +112,6 @@ fencr.credentials.example = {
   upstream = "https://api.example.com";
   header = "x-api-key";
   secretFile = "/run/secrets/example";
-  substitutePlaceholder = false;
 };
 ```
 
@@ -125,7 +124,6 @@ fencr.credentials.local-api = {
   upstream = "http://127.0.0.1:8765";
   domain = "api.fencr";
   secretFile = "/run/secrets/local-api-authorization";
-  substitutePlaceholder = false;
 };
 ```
 
@@ -141,7 +139,6 @@ HTTP method/path rules:
 fencr.credentials.github = {
   upstream = "https://api.github.com";
   secretFile = "/run/secrets/github-authorization";
-  substitutePlaceholder = false;
   allow = [
     "GET,HEAD *"
     "POST /repos/*/pulls"
@@ -155,13 +152,14 @@ list allows every request for that credential; provider presets may set a
 narrower default. Unmatched requests receive 403 without reaching upstream.
 `fencr status` shows request methods, paths and status codes, not headers.
 
-By default, `substitutePlaceholder` also replaces the placeholder in request
-URIs and known-length bodies up to 1 MiB. **Disable it for header-only APIs.**
-Otherwise a client can put its placeholder into data that an API echoes or
-stores, potentially disclosing the real credential; URI substitutions also
-appear in request logs. The MCP integration disables substitution automatically.
-Keeping keys on the host is not a guarantee against disclosure by the APIs
-you allow the guest to call.
+The header is injected either way, so most credentials need nothing further.
+`substitutePlaceholder = true` additionally replaces the placeholder in
+request URIs and known-length bodies up to 1 MiB — **enable it only for an
+API that takes the key in a query parameter or a body field.** It is off by
+default because a client can put its placeholder into data that an API echoes
+or stores, disclosing the real credential in a response the guest reads; URI
+substitutions also appear in request logs. Keeping keys on the host is not a
+guarantee against disclosure by the APIs you allow the guest to call.
 
 ## transport and trust
 

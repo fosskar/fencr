@@ -43,8 +43,12 @@ SSH has its own key authentication; see [access](access.md).
 A deny entry must narrow an existing wildcard grant; it cannot equal a grant
 or name something no grant covers. IPv6 is blocked on the bridge.
 
-A `host:` grant reaches the host's bridge address, not its loopback listeners.
-For a host-loopback HTTP API with credentials, use a
+A `host:` grant reaches the host on any address the guest can route to over
+the bridge — its bridge address and its LAN addresses — but never its
+loopback listeners, which the guest has no route to. One exception: on the
+bridge address, port 443 belongs to the VM's egress unit, which the firewall
+redirects it to, so `"host:443"` only ever reaches the host's other
+addresses. For a host-loopback HTTP API with credentials, use a
 [credential proxy](credentials.md#custom-apis); for MCP tools, use the
 [optional gateway](mcp-gateway.md).
 

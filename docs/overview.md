@@ -67,7 +67,7 @@ outbound = [
   "github.com"           # TLS 443 by name
   "*.github.com"         # not github.com itself
   "!gist.github.com"     # a carve-out inside the wildcard
-  "host:8080"            # the bridge address only
+  "host:8080"            # the host, on any address the bridge routes to
   "192.168.1.0/24:8123"
   "internet"             # cannot accompany domain grants
 ];
@@ -156,10 +156,13 @@ fencr.credentials.anthropic = {
 fencr.vms.agent.credentials = [ "anthropic" ];
 ```
 
-The guest gets a placeholder, not a key: `guestEnv` carries `fencr-<hash>`.
-The host sets the real header itself, and separately replaces the
-placeholder wherever the guest put it in the uri or a body small enough to
-hold.
+The guest gets a placeholder, not a key: `guestEnv` carries `fencr-<hash>`,
+which satisfies a client that refuses to start without one. The host sets the
+real header itself, so that placeholder never has to be substituted anywhere.
+`substitutePlaceholder = true` additionally replaces it in the uri or a small
+body, for an api that takes the key there instead of in a header. It is off
+by default: an upstream that echoes a request back would otherwise hand the
+real value to the guest in the response.
 
 Raw `secrets` are the other door, for keys a program must hold itself. They
 are fetched over vsock at boot into `/run/agent-secrets`, readable by guest
@@ -191,9 +194,9 @@ modules/
 
 pkgs/
 ├── egress/        # go, stdlib only — dns, sni, splice, credentials
-├── cli/           # rust, instance tables baked in at build
+├── cli/           # go, instance tables generated at build
 ├── mcp-gateway/   # python, MCP SDK
-└── domain.rs      # the wildcard rule the cli carries
+└── domain.go      # the wildcard rule, shared by both go programs
 ```
 
 The command:
@@ -215,7 +218,7 @@ The checks:
 
 | check | what it covers |
 | --- | --- |
-| `formatting` | nixfmt, deadnix, statix, mdformat, rustfmt, gofmt |
+| `formatting` | nixfmt, deadnix, statix, mdformat, gofmt |
 | `core` | the pure builders, no host, nothing built |
 | `cli` | the compiled binary against mocked tools |
 | `egress` | `go test` in the package build |

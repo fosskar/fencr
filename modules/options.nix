@@ -101,12 +101,14 @@ in
             };
             substitutePlaceholder = lib.mkOption {
               type = lib.types.bool;
-              default = true;
+              default = false;
               description = ''
-                replace the placeholder in request URIs and small bodies as well
-                as injecting the header. disable for header-only protocols such
-                as MCP, where putting the credential in tool arguments could
-                disclose it through a tool response.
+                also replace the placeholder where it appears in the request
+                uri or a small body. the header is injected either way, so
+                this is only needed by an api that takes the key in a query
+                parameter or a body field. off by default: an upstream that
+                echoes a request back would otherwise hand the real value to
+                the guest in the response.
               '';
             };
             allow = lib.mkOption {
@@ -317,8 +319,8 @@ in
               ];
               description = ''
                 connections the vm may initiate: a domain grants TLS on 443,
-                host:<port> grants TCP to the host at the vm's bridge
-                address (`hostIp`), and <ipv4[/prefix]>:<port>
+                host:<port> grants TCP to the host on any address the guest
+                can route to over the bridge, and <ipv4[/prefix]>:<port>
                 grants TCP to that address or subnet, including private ranges.
                 "internet" grants public IPv4 internet access and DNS, excluding
                 special-use ranges; it cannot accompany domain grants.

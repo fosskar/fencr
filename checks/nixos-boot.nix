@@ -225,11 +225,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         guestEnv = "FENCR_TEST_KEY";
       };
 
+      # the one credential that asks for the uri and body pass, which is off
+      # by default: the header alone is what every other credential needs
       fencr.credentials.query = {
         upstream = "http://127.0.0.1:8765";
         domain = "api2.test";
         header = "X-Key";
         secretFile = "/run/fencr-test/query-token";
+        substitutePlaceholder = true;
       };
 
       # a credential with no file of its own: the command prints whatever
