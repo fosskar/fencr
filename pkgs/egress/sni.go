@@ -15,6 +15,14 @@ type prefixed struct {
 
 func (p prefixed) Read(b []byte) (int, error) { return p.reader.Read(b) }
 
+func (p prefixed) CloseWrite() error {
+	closer, ok := p.Conn.(halfCloser)
+	if !ok {
+		return nil
+	}
+	return closer.CloseWrite()
+}
+
 // whole tls records until the client hello is complete, kept for the replay
 func readClientHello(conn net.Conn) ([]byte, string, error) {
 	var raw, handshake []byte
@@ -35,7 +43,7 @@ func readClientHello(conn net.Conn) ([]byte, string, error) {
 		raw = append(raw, body...)
 		handshake = append(handshake, body...)
 		if want < 0 && len(handshake) >= 4 {
-			want = 4 + int(handshake[1])<<16 | int(handshake[2])<<8 | int(handshake[3])
+			want = 4 + (int(handshake[1])<<16 | int(handshake[2])<<8 | int(handshake[3]))
 		}
 		if want >= 0 && len(handshake) >= want {
 			name, err := serverName(handshake[:want])

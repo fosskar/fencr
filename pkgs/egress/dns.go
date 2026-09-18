@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"log"
 	"net"
 	"time"
@@ -96,15 +95,10 @@ func (conn dnsStream) Write(buffer []byte) (int, error) {
 	return conn.Conn.Write(buffer)
 }
 
+func (conn dnsStream) CloseWrite() error { return conn.Conn.(halfCloser).CloseWrite() }
+
 func copyDNSStream(destination, source *net.TCPConn) {
-	_, err := io.Copy(dnsStream{destination}, dnsStream{source})
-	if err == nil {
-		err = destination.CloseWrite()
-	}
-	if err != nil {
-		source.Close()
-		destination.Close()
-	}
+	copyStream(dnsStream{destination}, dnsStream{source})
 }
 
 // a truncated udp answer sends the guest to tcp, so that road has to exist

@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -169,15 +170,15 @@ func route(cfg *config, intercept map[string][]*credential, handover chan net.Co
 		return
 	}
 	log.Printf("allow %s", name)
-	splice(replayed, net.JoinHostPort(name, "443"))
+	splice(replayed, name)
 }
 
 // the unit's IPAddressDeny is what keeps an allowed name out of the lan, so
 // a refused destination shows up as a dial that never completes. only that
 // is worth a line; a copy ends when one side hangs up, which is not news
-func splice(client net.Conn, address string) {
+func splice(client net.Conn, name string) {
 	defer client.Close()
-	upstream, err := net.DialTimeout("tcp4", address, 10*time.Second)
+	upstream, err := dialPublic(name, "443")
 	if err != nil {
 		log.Printf("relay: %v", err)
 		return
@@ -185,11 +186,62 @@ func splice(client net.Conn, address string) {
 	defer upstream.Close()
 	done := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(client, upstream)
+		copyStream(client, upstream)
 		close(done)
 	}()
-	_, _ = io.Copy(upstream, client)
+	copyStream(upstream, client)
 	<-done
+}
+
+// the address that passed the check is the one connected to: the unit's
+// IPAddressDeny stops every special-use range but the loopback a
+// credential's upstream needs, and no allowed name may reach that
+func dialPublic(name, port string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resolved, err := net.DefaultResolver.LookupIP(ctx, "ip4", name)
+	if err != nil {
+		return nil, err
+	}
+	addresses := publicAddresses(resolved)
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("dial %s: every address is loopback", name)
+	}
+	var failure error
+	for _, address := range addresses {
+		conn, err := net.DialTimeout("tcp4", net.JoinHostPort(address.String(), port), 10*time.Second)
+		if err == nil {
+			return conn, nil
+		}
+		failure = err
+	}
+	return nil, failure
+}
+
+func publicAddresses(resolved []net.IP) []net.IP {
+	var addresses []net.IP
+	for _, address := range resolved {
+		if address.IsLoopback() {
+			continue
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses
+}
+
+type halfCloser interface{ CloseWrite() error }
+
+// a direction that ends must reach the other side, or a peer that says
+// nothing holds both connections open
+func copyStream(destination, source net.Conn) {
+	_, err := io.Copy(destination, source)
+	if closer, ok := destination.(halfCloser); ok && err == nil {
+		err = closer.CloseWrite()
+	}
+	if err != nil {
+		source.Close()
+		destination.Close()
+	}
 }
 
 // `*.example.com` covers the names below example.com, not example.com

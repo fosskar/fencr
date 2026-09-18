@@ -42,16 +42,20 @@ let
 
     HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
   '';
+  # a host already serving *:443 and *:53, and the loopback service a granted
+  # name must not reach through the vm's egress unit
   squatter = pkgs.writeText "fencr-test-squatter.py" ''
-    import socket, time
+    import os, socket, ssl
+    from http.server import SimpleHTTPRequestHandler, HTTPServer
 
-    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp.bind(("0.0.0.0", 443))
-    tcp.listen()
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp.bind(("0.0.0.0", 53))
-    while True:
-        time.sleep(3600)
+    os.chdir("${targetRoot}")
+    server = HTTPServer(("0.0.0.0", 443), SimpleHTTPRequestHandler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain("${tlsCert}/cert.pem", "${tlsCert}/key.pem")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
   '';
   tlsCert = pkgs.runCommand "fencr-test-cert" { nativeBuildInputs = [ pkgs.openssl ]; } ''
     mkdir $out
@@ -267,6 +271,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         "denied.test"
       ];
       networking.hosts."192.168.1.1" = [ "private.test" ];
+      # a granted name on host loopback: the unit allows loopback for a
+      # credential's upstream, and an allowed name must not inherit it
+      networking.hosts."127.0.0.1" = [ "loopback.allowed.test" ];
       # the test network is a private range the proxy unit denies; allow
       # the one target, which is the "internet" here
       systemd.services.fencr-sbx-egress.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
@@ -393,6 +400,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # the firewall, probed with real packets from inside the vm
       host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
       host.succeed("nft list table inet fencr-sbx | grep -q 'ct count over 2048'")
+      host.fail(f"{ssh} 'curl --insecure --silent --max-time 5 https://loopback.allowed.test/'", timeout=60)
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'every address is loopback'")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.2:80'", timeout=60)
       host.wait_for_unit("host-80.service")

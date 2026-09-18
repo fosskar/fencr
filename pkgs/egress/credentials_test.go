@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -108,6 +111,33 @@ func TestCredentialHeaderFormatting(t *testing.T) {
 				t.Fatalf("got %d %q, want 200 %q", response.Code, response.Body.String(), test.want)
 			}
 		})
+	}
+}
+
+// the placeholder rides in the uri, and the journal is the one place the
+// substituted value must not land
+func TestTheAccessLogCarriesThePlaceholder(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	if err := os.WriteFile(filepath.Join(directory, "key"), []byte("api-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upstream.Close()
+	var logged bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(previous)
+	proxy := handler(map[string][]*credential{"api.test": {
+		{Name: "key", Upstream: upstream.URL, Header: "Authorization", Placeholder: "fencr-placeholder"},
+	}})
+	proxy.ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "https://api.test/v1/models/fencr-placeholder?key=fencr-placeholder", nil))
+	if strings.Contains(logged.String(), "api-secret") {
+		t.Fatalf("the credential reached the journal: %s", logged.String())
+	}
+	if !strings.Contains(logged.String(), "/v1/models/fencr-placeholder?key=fencr-placeholder") {
+		t.Fatalf("the request the guest sent is not on record: %s", logged.String())
 	}
 }
 

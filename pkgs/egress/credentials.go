@@ -63,9 +63,12 @@ func handler(byDomain map[string][]*credential) http.Handler {
 		if i := strings.IndexByte(host, ':'); i >= 0 {
 			host = host[:i]
 		}
+		// what the guest sent: substitute puts the credential in the uri, and
+		// the journal must carry the placeholder it replaced, not the value
+		uri := r.URL.RequestURI()
 		candidates, ok := byDomain[host]
 		if !ok {
-			record(r, http.StatusNotFound)
+			record(r, uri, http.StatusNotFound)
 			http.Error(w, "fencr: no credential for this domain", http.StatusNotFound)
 			return
 		}
@@ -75,31 +78,31 @@ func handler(byDomain map[string][]*credential) http.Handler {
 				continue
 			}
 			if c != nil {
-				record(r, http.StatusForbidden)
+				record(r, uri, http.StatusForbidden)
 				http.Error(w, "fencr: request matches multiple credentials", http.StatusForbidden)
 				return
 			}
 			c = candidate
 		}
 		if c == nil {
-			record(r, http.StatusForbidden)
+			record(r, uri, http.StatusForbidden)
 			http.Error(w, "fencr: request not allowed for any credential", http.StatusForbidden)
 			return
 		}
 		value, err := secret(c.Name)
 		if err != nil {
 			log.Printf("fencr: %s: %v", c.Name, err)
-			record(r, http.StatusBadGateway)
+			record(r, uri, http.StatusBadGateway)
 			http.Error(w, "fencr: credential unavailable", http.StatusBadGateway)
 			return
 		}
 		if err := substitute(r, c.Placeholder, value); err != nil {
 			log.Printf("fencr: %s: %v", c.Name, err)
-			record(r, http.StatusBadGateway)
+			record(r, uri, http.StatusBadGateway)
 			http.Error(w, "fencr: request too large to carry a credential", http.StatusBadGateway)
 			return
 		}
-		forward(c, value, w, r)
+		forward(c, value, uri, w, r)
 	})
 }
 
@@ -190,11 +193,11 @@ func substitute(r *http.Request, placeholder, value string) error {
 	return nil
 }
 
-func forward(c *credential, value string, w http.ResponseWriter, r *http.Request) {
+func forward(c *credential, value, uri string, w http.ResponseWriter, r *http.Request) {
 	upstream, err := url.Parse(c.Upstream)
 	if err != nil {
 		log.Printf("fencr: %s: %v", c.Name, err)
-		record(r, http.StatusBadGateway)
+		record(r, uri, http.StatusBadGateway)
 		http.Error(w, "fencr: bad upstream", http.StatusBadGateway)
 		return
 	}
@@ -222,19 +225,19 @@ func forward(c *credential, value string, w http.ResponseWriter, r *http.Request
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
 	proxy.ServeHTTP(w, r)
-	record(r, status)
+	record(r, uri, status)
 }
 
 // one line per request in the journal: what it was and how it ended, never
 // a header, since the credential and whatever the guest sent live there
-func record(r *http.Request, status int) {
+func record(r *http.Request, uri string, status int) {
 	line, err := json.Marshal(struct {
 		Msg    string `json:"msg"`
 		Method string `json:"method"`
 		Host   string `json:"host"`
 		URI    string `json:"uri"`
 		Status int    `json:"status"`
-	}{"handled request", r.Method, r.Host, r.URL.RequestURI(), status})
+	}{"handled request", r.Method, r.Host, uri, status})
 	if err != nil {
 		return
 	}
