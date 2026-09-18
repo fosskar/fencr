@@ -64,7 +64,7 @@ in
     esac
 
     # the api answers only while firecracker runs
-    if [ "$label" = timer ] && ! curl --silent --fail --unix-socket "$socket" http://localhost/ > /dev/null; then
+    if [ "$label" = timer ] && ! curl --silent --fail --max-time 5 --unix-socket "$socket" http://localhost/ > /dev/null; then
       echo "fencr: no timer checkpoint: the vm is not running" >&2
       exit 0
     fi

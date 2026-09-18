@@ -70,7 +70,9 @@ bare pause/resume, fixed in 1.17 (`#6100`), and the power button on vsock
 port 4 rides on it, so every stop after a checkpoint ran into the 60 s
 timeout and left no stop checkpoint. The pause would only have shrunk
 the window of guest writes not yet flushed; the clone's atomicity gives
-the consistency. Issue 23 brings it back with 1.17.
+the consistency, so pausing was not brought back: issue 23 was closed as
+not planned on 2026-09-17. An application-consistent copy needs the guest
+to quiesce, which a vm pause does not give.
 
 ## the image is never mounted on the host
 

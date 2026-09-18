@@ -278,9 +278,9 @@ in
                 default = core.defaults.checkpoints.interval;
                 example = "hourly";
                 description = ''
-                  a systemd calendar expression; at each tick a running vm
-                  is paused for the instant the copy takes and the result
-                  is "timer-<utc stamp>". null for none.
+                  a systemd calendar expression; at each tick a running vm's
+                  disk is copied without pausing it and the result is
+                  "timer-<utc stamp>". null for none.
                 '';
               };
               keep = lib.mkOption {

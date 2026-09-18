@@ -84,7 +84,7 @@ fn usage() -> ! {
     eprintln!("  ssh <vm> [cmd]   open a shell (or run a command) in a vm");
     eprintln!("  status [vm]      vm health and traffic [--watch]; --full <vm> for systemctl");
     eprintln!("  checkpoint <vm> [name]");
-    eprintln!("                   copy the vm's disk now, paused for the instant it takes");
+    eprintln!("                   copy the vm's disk now, without pausing it");
     eprintln!("  checkpoints <vm> [--rm <name>]");
     eprintln!("                   list the vm's checkpoints, or remove one");
     eprintln!("  restore <vm> <name>");

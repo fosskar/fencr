@@ -786,7 +786,7 @@ assert lib.assertMsg (
   && lib.hasInfix "cp --reflink=always " script
   && lib.hasInfix "sync -f " script
   && lib.hasInfix "head -n -5 " script
-  && lib.hasInfix "curl --silent --fail --unix-socket \"$socket\" http://localhost/" script
+  && lib.hasInfix "curl --silent --fail --max-time 5 --unix-socket \"$socket\" http://localhost/" script
   && lib.hasInfix "/run/fencr-sbx/api.sock" script
   && units.timers == { }
   &&
