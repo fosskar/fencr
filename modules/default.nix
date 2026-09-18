@@ -25,6 +25,8 @@ let
     }
   ) instances;
   unitSets = lib.mapAttrs (_: core.hostUnits pkgs) resolvedInstances;
+  secretUnits = core.secretUnits pkgs config.fencr.credentials;
+  reloadUnits = core.reloadUnits pkgs resolvedInstances;
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
   guestSystems = lib.mapAttrs (
     name: cfg:
@@ -114,11 +116,14 @@ in
     systemd.tmpfiles.rules = [
       "d /var/lib/fencr-vms 0710 root kvm -"
     ]
-    ++ map (name: "d ${core.stateDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances)
-    ++ map (name: "d ${core.checkpointDirOf name} 0700 ${core.userOf name} kvm -") (
-      lib.attrNames instances
-    )
-    ++ map (name: "d ${core.runDirOf name} 0700 ${core.userOf name} kvm -") (lib.attrNames instances);
+    ++ lib.concatMap (
+      name:
+      map (dir: "d ${dir} 0700 ${core.userOf name} kvm -") [
+        (core.stateDirOf name)
+        (core.checkpointDirOf name)
+        (core.runDirOf name)
+      ]
+    ) (lib.attrNames instances);
 
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
@@ -132,18 +137,19 @@ in
           {
             ${core.caUnit} = core.caService pkgs config.networking.hostName;
           }
-      ++ [ ((core.reloadUnits pkgs resolvedInstances).services or { }) ]
-      ++ [ ((core.secretUnits pkgs config.fencr.credentials).services or { }) ]
+      ++ [
+        (reloadUnits.services or { })
+        (secretUnits.services or { })
+      ]
     );
 
     systemd.sockets = lib.mkMerge (
-      map (units: units.sockets) (lib.attrValues unitSets)
-      ++ [ ((core.secretUnits pkgs config.fencr.credentials).sockets or { }) ]
+      map (units: units.sockets) (lib.attrValues unitSets) ++ [ (secretUnits.sockets or { }) ]
     );
 
     systemd.timers = lib.mkMerge (map (units: units.timers) (lib.attrValues unitSets));
 
-    systemd.paths = (core.reloadUnits pkgs resolvedInstances).paths or { };
+    systemd.paths = reloadUnits.paths or { };
 
     # masquerade by source address, so the module needs no uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkIf (instances != { }) (
