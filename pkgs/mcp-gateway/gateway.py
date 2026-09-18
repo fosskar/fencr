@@ -98,7 +98,11 @@ async def approve_client(context, timeout, request):
         raise PermissionError("client approval refused")
 
 
-def create_server(name, principal, servers, approval_mode, approval_command, approval_timeout):
+def create_server(name, principal, config):
+    servers = config["servers"]
+    approval_mode = config["approval_mode"]
+    approval_command = config["approval_command"]
+    approval_timeout = config["approval_timeout"]
     gateway = Server("fencr-mcp-gateway")
 
     def permitted(server_name, tool_name):
@@ -153,20 +157,16 @@ def create_app(config):
     if config["approval_mode"] not in ("host", "client"):
         raise ValueError("unknown approval mode")
     tokens = {}
-    managers = []
     for name, principal in config["principals"].items():
         token = secret(principal["token_credential"])
         if not token.startswith("Bearer ") or token.encode() in tokens:
             raise RuntimeError("gateway principals need distinct bearer credentials")
-        manager = StreamableHTTPSessionManager(
-            app=create_server(name, principal, config["servers"], config["approval_mode"],
-                              config["approval_command"], config["approval_timeout"]),
+        tokens[token.encode()] = StreamableHTTPSessionManager(
+            app=create_server(name, principal, config),
             # elicitation requests must reach the client before the tool call completes
             json_response=config["approval_mode"] == "host",
             session_idle_timeout=1800,
         )
-        managers.append(manager)
-        tokens[token.encode()] = manager
 
     async def handle(scope, receive, send):
         authorization = [value for key, value in scope["headers"] if key == b"authorization"]
@@ -180,7 +180,7 @@ def create_app(config):
     @contextlib.asynccontextmanager
     async def lifespan(_):
         async with contextlib.AsyncExitStack() as stack:
-            for manager in managers:
+            for manager in tokens.values():
                 await stack.enter_async_context(manager.run())
             yield
 
