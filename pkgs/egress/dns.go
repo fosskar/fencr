@@ -80,12 +80,39 @@ func relayQuery(conn net.PacketConn, peer net.Addr, query []byte, resolver strin
 	_, _ = conn.WriteTo(reply[:n], peer)
 }
 
+type dnsStream struct{ net.Conn }
+
+func (conn dnsStream) Read(buffer []byte) (int, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return 0, err
+	}
+	return conn.Conn.Read(buffer)
+}
+
+func (conn dnsStream) Write(buffer []byte) (int, error) {
+	if err := conn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return 0, err
+	}
+	return conn.Conn.Write(buffer)
+}
+
+func copyDNSStream(destination, source *net.TCPConn) {
+	_, err := io.Copy(dnsStream{destination}, dnsStream{source})
+	if err == nil {
+		err = destination.CloseWrite()
+	}
+	if err != nil {
+		source.Close()
+		destination.Close()
+	}
+}
+
 // a truncated udp answer sends the guest to tcp, so that road has to exist
 // too; the bytes are relayed unread
-func forwardDNSStream(listener net.Listener, resolver string) {
+func forwardDNSStream(listener *net.TCPListener, resolver string) {
 	slots := make(chan struct{}, maxQueries)
 	for {
-		conn, err := listener.Accept()
+		conn, err := listener.AcceptTCP()
 		if err != nil {
 			log.Printf("dns: %v", err)
 			return
@@ -107,10 +134,10 @@ func forwardDNSStream(listener net.Listener, resolver string) {
 			defer upstream.Close()
 			done := make(chan struct{})
 			go func() {
-				_, _ = io.Copy(conn, upstream)
+				copyDNSStream(conn, upstream.(*net.TCPConn))
 				close(done)
 			}()
-			_, _ = io.Copy(upstream, conn)
+			copyDNSStream(upstream.(*net.TCPConn), conn)
 			<-done
 		}()
 	}
