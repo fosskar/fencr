@@ -159,35 +159,6 @@ in
       ++ [
         (reloadUnits.services or { })
         (secretUnits.services or { })
-        # the state directory was /var/lib/fencr-sandboxes until sandboxes stopped being
-        # called sandboxes. a host that misses this would boot every sandbox onto a fresh
-        # disk and leave the real ones sitting under the old name, so it runs ahead
-        # of tmpfiles, which would otherwise create the new path and make the move
-        # look unnecessary. delete once no host has the old path
-        (lib.optionalAttrs (instances != { }) {
-          fencr-state-path = {
-            description = "move fencr state to its current path";
-            wantedBy = [ "sysinit.target" ];
-            before = [ "systemd-tmpfiles-setup.service" ];
-            # the same window tmpfiles itself runs in: /var has to be there first
-            after = [ "local-fs.target" ];
-            unitConfig = {
-              ConditionPathExists = "/var/lib/fencr-sandboxes";
-              DefaultDependencies = false;
-            };
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              ExecStart = pkgs.writeShellScript "fencr-state-path" ''
-                if [ -e /var/lib/fencr-sandboxes ]; then
-                  echo "fencr: /var/lib/fencr-sandboxes and /var/lib/fencr-sandboxes both exist; move the images by hand" >&2
-                  exit 1
-                fi
-                ${pkgs.coreutils}/bin/mv /var/lib/fencr-sandboxes /var/lib/fencr-sandboxes
-              '';
-            };
-          };
-        })
       ]
     );
 
