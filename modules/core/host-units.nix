@@ -5,8 +5,8 @@ let
     unitsOf
     vsockOf
     secretsPort
-    caUnit
-    caCert
+    caUnitOf
+    caCertOf
     guestTrust
     hardened
     egressServiceConfig
@@ -21,7 +21,7 @@ in
     let
       units = unitsOf instance.name;
       vmUnit = "${units.vm}.service";
-      caService = "${caUnit}.service";
+      caService = "${caUnitOf instance.name}.service";
       checkpoints = checkpointUnits pkgs instance;
       # the socket, not the resolver: systemd connects to it while starting
       # the egress unit, which starts an instance of the service behind it
@@ -50,7 +50,7 @@ in
               RestrictAddressFamilies = "none";
               LoadCredential =
                 lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
-                ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCert}";
+                ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCertOf instance.name}";
               ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
                 exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
               '';

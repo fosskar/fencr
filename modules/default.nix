@@ -138,11 +138,12 @@ in
             guestSystems.${name}.config.microvm.declaredRunner;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)
-      ++
-        lib.optional (lib.any (instance: instance.credentials != [ ]) (lib.attrValues resolvedInstances))
-          {
-            ${core.caUnit} = core.caService pkgs config.networking.hostName;
-          }
+      ++ lib.mapAttrsToList (
+        name: instance:
+        lib.optionalAttrs (instance.credentials != [ ]) {
+          ${core.caUnitOf name} = core.caServiceOf pkgs config.networking.hostName name;
+        }
+      ) resolvedInstances
       ++ [
         (reloadUnits.services or { })
         (secretUnits.services or { })

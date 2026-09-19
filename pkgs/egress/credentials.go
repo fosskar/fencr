@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,20 +31,48 @@ type credential struct {
 	Header      string `json:"header"`
 	Bearer      bool   `json:"bearer"`
 	Placeholder string `json:"placeholder"`
+	Substitute  bool   `json:"substitute"`
 	Allow       []rule `json:"allow"`
+
+	// everything below is fixed by the configuration and the credentials
+	// systemd delivered at start, so it is derived once in prepare()
+	value    string
+	upstream *url.URL
 }
 
 type rule struct {
 	Methods []string `json:"methods"`
 	Path    string   `json:"path"`
+
+	pattern *regexp.Regexp
+}
+
+// LoadCredential copies the source once, at start, and the path unit
+// restarts this unit when a watched file is written; so the value cannot
+// change under a running process and is read here rather than per request
+func prepare(c *credential) error {
+	value, err := secret(c.Name)
+	if err != nil {
+		return fmt.Errorf("credential %q: %w", c.Name, err)
+	}
+	c.value = value
+	upstream, err := url.Parse(c.Upstream)
+	if err != nil {
+		return fmt.Errorf("credential %q: %w", c.Name, err)
+	}
+	c.upstream = upstream
+	for at := range c.Allow {
+		if c.Allow[at].Path != "" {
+			c.Allow[at].pattern = pathPattern(c.Allow[at].Path)
+		}
+	}
+	return nil
 }
 
 // a request body is substituted only when it is small enough to hold; a
 // larger or unmeasured one is forwarded untouched rather than buffered
 const maxBody = 1 << 20
 
-// without a restart; the path watcher restarts the unit for LoadCredential,
-// this keeps the window short
 func secret(name string) (string, error) {
 	dir := os.Getenv("CREDENTIALS_DIRECTORY")
 	if dir == "" {
@@ -90,18 +119,12 @@ func handler(byDomain map[string][]*credential) http.Handler {
 			refuse(http.StatusForbidden, "fencr: request not allowed for any credential")
 			return
 		}
-		value, err := secret(c.Name)
-		if err != nil {
-			log.Printf("fencr: %s: %v", c.Name, err)
-			refuse(http.StatusBadGateway, "fencr: credential unavailable")
-			return
-		}
-		if err := substitute(r, c.Placeholder, value); err != nil {
+		if err := substitute(r, c, c.value); err != nil {
 			log.Printf("fencr: %s: %v", c.Name, err)
 			refuse(http.StatusBadGateway, "fencr: request too large to carry a credential")
 			return
 		}
-		forward(c, value, uri, w, r)
+		forward(c, uri, w, r)
 	})
 }
 
@@ -132,20 +155,15 @@ func (entry rule) covers(r *http.Request) bool {
 			return false
 		}
 	}
-	if entry.Path == "" {
+	if entry.pattern == nil {
 		return true
 	}
-	return pathPattern(entry.Path).MatchString(r.URL.Path)
+	return entry.pattern.MatchString(r.URL.Path)
 }
-
-var patterns sync.Map
 
 // "*" stands for any characters, "/" included: an allow entry scopes a
 // credential by path, and a path is not a place to be subtle
 func pathPattern(pattern string) *regexp.Regexp {
-	if cached, ok := patterns.Load(pattern); ok {
-		return cached.(*regexp.Regexp)
-	}
 	var b strings.Builder
 	b.WriteString("^")
 	for _, part := range strings.Split(pattern, "*") {
@@ -155,15 +173,14 @@ func pathPattern(pattern string) *regexp.Regexp {
 		b.WriteString(regexp.QuoteMeta(part))
 	}
 	b.WriteString("$")
-	compiled := regexp.MustCompile(b.String())
-	patterns.Store(pattern, compiled)
-	return compiled
+	return regexp.MustCompile(b.String())
 }
 
-// the guest may carry the placeholder where a header has no room: in the
-// uri, or in the body of a request small enough to hold
-func substitute(r *http.Request, placeholder, value string) error {
-	if placeholder == "" {
+// the header is injected either way; this pass is for an api that wants the
+// key in the uri or a body instead, and only a credential that asks for it
+func substitute(r *http.Request, c *credential, value string) error {
+	placeholder := c.Placeholder
+	if !c.Substitute || placeholder == "" {
 		return nil
 	}
 	if strings.Contains(r.URL.RawQuery, placeholder) {
@@ -192,14 +209,38 @@ func substitute(r *http.Request, placeholder, value string) error {
 	return nil
 }
 
-func forward(c *credential, value, uri string, w http.ResponseWriter, r *http.Request) {
-	upstream, err := url.Parse(c.Upstream)
-	if err != nil {
-		log.Printf("fencr: %s: %v", c.Name, err)
-		record(r, uri, http.StatusBadGateway)
-		http.Error(w, "fencr: bad upstream", http.StatusBadGateway)
-		return
+// an upstream that echoes a request back would hand the guest the real
+// value, which is the one way a credential leaks through a proxy that never
+// gives it out. the placeholder goes back where it came from. bounded like
+// the request pass: a streamed or unmeasured body is forwarded untouched
+func scrub(resp *http.Response, value, placeholder string) error {
+	if placeholder == "" || value == "" {
+		return nil
 	}
+	for name, values := range resp.Header {
+		for at, text := range values {
+			resp.Header[name][at] = strings.ReplaceAll(text, value, placeholder)
+		}
+	}
+	if resp.Body == nil || resp.ContentLength <= 0 || resp.ContentLength > maxBody {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if closeErr := resp.Body.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	body = bytes.ReplaceAll(body, []byte(value), []byte(placeholder))
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return nil
+}
+
+func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) {
+	value, upstream := c.value, c.upstream
 	status := http.StatusBadGateway
 	proxy := &httputil.ReverseProxy{
 		// server-sent events and other long-lived streams must not be held
@@ -215,7 +256,7 @@ func forward(c *credential, value, uri string, w http.ResponseWriter, r *http.Re
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			status = resp.StatusCode
-			return nil
+			return scrub(resp, value, c.Placeholder)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			log.Printf("fencr: %s: %v", c.Name, err)

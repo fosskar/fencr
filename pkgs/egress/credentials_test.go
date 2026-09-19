@@ -28,7 +28,7 @@ func TestSharedDomainCredentials(t *testing.T) {
 	zen := &credential{Name: "zen", Upstream: upstream.URL, Header: "Authorization", Bearer: true, Allow: []rule{{Path: "/zen/v1/*"}}}
 	goProvider := &credential{Name: "go", Upstream: upstream.URL, Header: "Authorization", Bearer: true, Allow: []rule{{Path: "/zen/go/v1/*"}}}
 	for _, candidates := range [][]*credential{{zen, goProvider}, {goProvider, zen}, {zen}, {goProvider}} {
-		proxy := handler(map[string][]*credential{"opencode.ai": candidates})
+		proxy := handler(map[string][]*credential{"opencode.ai": prepared(t, candidates...)})
 		for _, test := range []struct {
 			path string
 			name string
@@ -65,6 +65,13 @@ func TestSharedDomainCredentials(t *testing.T) {
 }
 
 func TestAmbiguousCredentialsAreRefused(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	for _, name := range []string{"first", "second"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("ambiguous request reached upstream")
 	}))
@@ -74,12 +81,24 @@ func TestAmbiguousCredentialsAreRefused(t *testing.T) {
 		{{Name: "first", Upstream: upstream.URL, Allow: []rule{{Path: "/zen/*"}}}, {Name: "second", Upstream: upstream.URL, Allow: []rule{{Path: "/zen/go/v1/*"}}}},
 	} {
 		response := httptest.NewRecorder()
-		handler(map[string][]*credential{"opencode.ai": candidates}).ServeHTTP(response,
+		handler(map[string][]*credential{"opencode.ai": prepared(t, candidates...)}).ServeHTTP(response,
 			httptest.NewRequest(http.MethodGet, "https://opencode.ai/zen/go/v1/models", nil))
 		if response.Code != http.StatusForbidden {
 			t.Fatalf("got status %d, want 403", response.Code)
 		}
 	}
+}
+
+// run() prepares every credential before serving: the value systemd
+// delivered, the parsed upstream and the compiled allow patterns
+func prepared(t *testing.T, credentials ...*credential) []*credential {
+	t.Helper()
+	for _, c := range credentials {
+		if err := prepare(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return credentials
 }
 
 func TestCredentialHeaderFormatting(t *testing.T) {
@@ -104,7 +123,8 @@ func TestCredentialHeaderFormatting(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(directory, "key"), []byte(test.value), 0600); err != nil {
 				t.Fatal(err)
 			}
-			proxy := handler(map[string][]*credential{"api.test": {{Name: "key", Upstream: upstream.URL, Header: test.header, Bearer: test.bearer}}})
+			proxy := handler(map[string][]*credential{"api.test": prepared(t,
+				&credential{Name: "key", Upstream: upstream.URL, Header: test.header, Bearer: test.bearer})})
 			response := httptest.NewRecorder()
 			proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://api.test/v1/models", nil))
 			if response.Code != http.StatusOK || response.Body.String() != test.want {
@@ -128,9 +148,8 @@ func TestTheAccessLogCarriesThePlaceholder(t *testing.T) {
 	previous := log.Writer()
 	log.SetOutput(&logged)
 	defer log.SetOutput(previous)
-	proxy := handler(map[string][]*credential{"api.test": {
-		{Name: "key", Upstream: upstream.URL, Header: "Authorization", Placeholder: "fencr-placeholder"},
-	}})
+	proxy := handler(map[string][]*credential{"api.test": prepared(t,
+		&credential{Name: "key", Upstream: upstream.URL, Header: "Authorization", Placeholder: "fencr-placeholder"})})
 	proxy.ServeHTTP(httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "https://api.test/v1/models/fencr-placeholder?key=fencr-placeholder", nil))
 	if strings.Contains(logged.String(), "api-secret") {
@@ -151,7 +170,8 @@ func TestSingleCredentialStillAllowsEveryPath(t *testing.T) {
 		io.WriteString(w, r.Header.Get("x-api-key"))
 	}))
 	defer upstream.Close()
-	proxy := handler(map[string][]*credential{"api.test": {{Name: "legacy", Upstream: upstream.URL, Header: "x-api-key"}}})
+	proxy := handler(map[string][]*credential{"api.test": prepared(t,
+		&credential{Name: "legacy", Upstream: upstream.URL, Header: "x-api-key"})})
 	response := httptest.NewRecorder()
 	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://api.test/any/path", nil))
 	if response.Code != http.StatusOK || response.Body.String() != "legacy-secret" {

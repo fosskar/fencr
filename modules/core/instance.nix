@@ -20,7 +20,7 @@ let
     credentialSecretError
     credentialAllowErrors
     credentialId
-    caMembers
+    caMemberNames
     guestTrust
     domainPatternError
     domainCovers
@@ -47,7 +47,10 @@ in
     };
     credentials = [ ];
     inbound = [ ];
-    outbound = [ ];
+    # public IPv4 and dns, as every other agent sandbox ships. special-use
+    # ranges stay closed, and a domain allowlist replaces this rather than
+    # joining it, since the two cannot combine
+    outbound = [ "internet" ];
     secrets = { };
   };
 
@@ -160,7 +163,7 @@ in
   duplicates =
     values: lib.unique (lib.filter (value: lib.count (other: other == value) values > 1) values);
 
-  # the eval-time twin of covers() in pkgs/domain.rs, case-insensitive as
+  # the eval-time twin of covers() in pkgs/domain.go, case-insensitive as
   # that one and matchesAny in pkgs/egress are
   domainCovers =
     pattern: host:
@@ -229,6 +232,7 @@ in
       # a deny and the grant it names need not agree on case
       grantedExactly = pattern: lib.elem (lib.toLower pattern) (map lib.toLower domains);
       granted = credentialsOf (options // { inherit name; }) credentials;
+      sharedDomains = duplicates (map (credential: credential.domain) granted);
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
       # the guest's resolver is always the vm's egress unit, which answers
@@ -280,7 +284,7 @@ in
         ) (lib.filter (credential: !credentialId credential.name) granted)
         ++ map (
           credential: "${name}: credential name \"${credential.name}\" is reserved for the authority"
-        ) (lib.filter (credential: caMembers ? ${credential.name}) granted)
+        ) (lib.filter (credential: lib.elem credential.name caMemberNames) granted)
         ++ map (error: "${name}: ${error}") (
           lib.filter (error: error != null) (
             map credentialDomainError granted ++ map credentialSecretError granted
@@ -295,9 +299,7 @@ in
             )
             (
               lib.filter (
-                credential:
-                (credential.allow or [ ]) == [ ]
-                && lib.elem credential.domain (duplicates (map (entry: entry.domain) granted))
+                credential: (credential.allow or [ ]) == [ ] && lib.elem credential.domain sharedDomains
               ) granted
             )
         ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates options.inbound);

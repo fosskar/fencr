@@ -13,6 +13,7 @@ const rendered = `{"bridge":"10.11.0.1","dnsPort":33053,"tlsPort":33443,"resolve
 	`"blocked":["10.11.0.0/26"],` +
 	`"domains":["allowed.test"],"denied":[],"credentials":[{"name":"api","domain":"api.test",` +
 	`"upstream":"http://127.0.0.1:8765","header":"Authorization","bearer":true,"placeholder":"",` +
+	`"substitute":false,` +
 	`"allow":[{"methods":["GET"],"path":"/"}]}]}`
 
 func write(t *testing.T, text string) string {

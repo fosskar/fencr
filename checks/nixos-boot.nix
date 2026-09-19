@@ -20,12 +20,29 @@ let
   # echoes the Authorization header and the uri it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
     from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import urlparse, parse_qs
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            # this upstream echoes what it received, which the proxy scrubs
+            # back to the placeholder on the way out. a length is not a secret
+            # and survives that, so the test can still tell a real value from
+            # a placeholder, and one rotation from the next
+            authorization = self.headers.get("Authorization") or ""
+            fetched = self.headers.get("X-Fetched") or ""
+            key = parse_qs(urlparse(self.path).query).get("key", [""])[0]
             body = (
-                "authorization: %s\nx-fetched: %s\nuri: %s\n"
-                % (self.headers.get("Authorization"), self.headers.get("X-Fetched"), self.path)
+                "authorization: %s\nlength: %d\n"
+                "x-fetched: %s\nfetched-length: %d\n"
+                "uri: %s\nkey-length: %d\n"
+                % (
+                    self.headers.get("Authorization"),
+                    len(authorization),
+                    self.headers.get("X-Fetched"),
+                    len(fetched),
+                    self.path,
+                    len(key),
+                )
             ).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
@@ -34,7 +51,7 @@ let
 
         def do_POST(self):
             sent = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            body = ("body: %s\n" % sent.decode()).encode()
+            body = ("body-length: %d\nbody: %s\n" % (len(sent), sent.decode())).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -439,7 +456,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # whatever it sent as a header is replaced
       host.wait_for_unit("upstream-8765.service")
       host.wait_for_unit("fencr-sbx-egress.service")
-      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/root.key)\" = root:600")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/sbx/root.key)\" = root:600")
       # one process holds both listeners, so no socket carries a credential
       # between two of them
       host.fail("systemctl cat fencr-sbx-credentials.service")
@@ -447,7 +464,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 2")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
       host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/fencr-ca.crt'", timeout=60)
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: Bearer fencr-api-token'", timeout=60)
+      # the upstream echoes the header it received, so the placeholder coming
+      # back proves both halves at once: the proxy put the real value in, and
+      # scrubbed it out of the response the guest reads. had injection failed
+      # the echo would read "Bearer placeholder", the guest's own value
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: ${placeholder}'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
       # the access log holds the request without the headers it carried
@@ -460,28 +481,34 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{ssh} 'curl --silent --max-time 10 https://api.test/other' | grep -F authorization", timeout=60)
       host.succeed("fencr status sbx | grep -F 'POST api.test/ \u2192 403'")
       # the placeholder: the guest is given it, may put it in the uri where a
-      # header has no room, and the proxy substitutes the value it never sees
+      # header has no room, and the proxy substitutes the value it never sees.
+      # the length the upstream reports is how the test tells the two apart:
+      # "querytoken-9f3" is 14, the placeholder 30
       host.succeed(f"{ssh} 'systemctl show ingress.service --property=Environment' | grep -F 'FENCR_TEST_KEY=${placeholder}'", timeout=60)
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -Fx 'uri: /?key=querytoken-9f3'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -Fx 'key-length: 14'", timeout=60)
       # and in a request body, which the caddy proxy could not reach
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -d \"{{\\\"key\\\":\\\"${queryPlaceholder}\\\"}}\" https://api2.test/' | grep -Fx 'body: {{\"key\":\"querytoken-9f3\"}}'", timeout=60)
-      # the guest's own value never reaches the upstream
-      host.fail(f"{ssh} 'curl --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -F '${queryPlaceholder}'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -d \"{{\\\"key\\\":\\\"${queryPlaceholder}\\\"}}\" https://api2.test/' | grep -Fx 'body-length: 24'", timeout=60)
+      # and the value never comes back: this upstream echoes what it received,
+      # so the guest reads its own placeholder where the secret would have been
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -Fx 'uri: /?key=${queryPlaceholder}'", timeout=60)
+      host.fail(f"{ssh} 'curl --silent --max-time 10 \"https://api2.test/?key=${queryPlaceholder}\"' | grep -F querytoken", timeout=60)
       # a rotated secret reaches the proxy without anyone restarting it: the
       # path unit sees the write, the next request carries the new value
       host.succeed("install -m 0400 /dev/stdin /run/fencr-test/api-token <<< 'Bearer fencr-rotated-token'")
-      host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api.test/' | grep -Fx 'authorization: Bearer fencr-rotated-token'", timeout=60)
+      host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api.test/' | grep -Fx 'length: 26'", timeout=60)
 
       # a credential with no file of its own: a socket, and a resolver that
       # ran when the egress unit started
       host.succeed("test -S /run/fencr/secrets/fetched")
-      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 https://api3.test/' | grep -Fx 'x-fetched: vaulted-first'", timeout=60)
+      host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 https://api3.test/' | grep -Fx 'fetched-length: 13'", timeout=60)
+      # and the echo never carries it back to the guest
+      host.fail(f"{ssh} 'curl --silent --max-time 10 https://api3.test/' | grep -F vaulted", timeout=60)
       # the value is in the unit's credentials and in no file anywhere
       host.fail("grep -rl vaulted-first /run/fencr /var/lib/fencr")
       # the next start resolves again, so a rotated value needs no new unit
       host.succeed("install -m 0444 /dev/stdin /run/fencr-test/vault <<< 'vaulted-second'")
       host.succeed("systemctl restart fencr-sbx-egress.service")
-      host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api3.test/' | grep -Fx 'x-fetched: vaulted-second'", timeout=60)
+      host.wait_until_succeeds(f"{ssh} 'curl --fail --silent --max-time 10 https://api3.test/' | grep -Fx 'fetched-length: 14'", timeout=60)
 
       # an internet grant resolves through its own unit, which relays to the
       # host's stub: the real address comes back, unlike a domain grant where

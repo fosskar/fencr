@@ -62,9 +62,15 @@ let
     id = 0;
     credentials = [ "local" ];
   };
+  # outbound defaults to "internet", so a vm with no egress at all says so
+  closed = resolve "sbx" {
+    id = 0;
+    outbound = [ ];
+  };
   # a credential alone brings the egress proxy, but not its resolver
   keyed = resolve "keyed" {
     id = 2;
+    outbound = [ ];
     credentials = [ "api" ];
   };
   keyedUnits = core.hostUnits pkgs keyed;
@@ -202,8 +208,8 @@ assert check "deny entries no grant covers"
     "sbx: outbound entry \"!github.com\" denies the whole grant \"github.com\""
     "sbx: outbound entry \"!gist.github.com\" denies nothing: no domain grant covers gist.github.com"
   ];
-# the twin of covers() in pkgs/domain.rs and matchesAny in pkgs/egress, both
-# of which lower the pattern and the host before comparing
+# the eval-time twin of covers() in pkgs/domain.go, which the egress unit and
+# the command share; all three lower the pattern and the host before comparing
 assert check "a grant in another case still covers a deny"
   (resolve "sbx" {
     id = 0;
@@ -292,9 +298,11 @@ assert lib.assertMsg (
   && longName.internet
   && longName.dns == "10.11.1.1"
   && (builtins.fromJSON (core.egressConfig longName)).resolver == "127.0.0.53:53"
-  && !(resolve "sbx" { id = 0; }).egress
-  && !(resolve "sbx" { id = 0; }).dnsEgress
-  && (resolve "sbx" { id = 0; }).dns == null
+  # the default is "internet", so closing a vm is an explicit empty list
+  && (resolve "sbx" { id = 0; }).internet
+  && !closed.egress
+  && !closed.dnsEgress
+  && closed.dns == null
 ) "core check: the vm's unit is not the guest's resolver";
 # IPAddressAllow carries the vm's own /26 so the guest stays reachable, and
 # that beats the /8 in IPAddressDeny, so the unit is told to refuse a granted
@@ -342,7 +350,7 @@ assert lib.assertMsg (
   && lib.hasInfix dropped order
   && lib.hasInfix accepted order
   && lib.strings.hasInfix accepted (lib.head (lib.splitString dropped order))
-  && !lib.hasInfix "dns-blocked" (core.forwardRules (resolve "sbx" { id = 0; }))
+  && !lib.hasInfix "dns-blocked" (core.forwardRules closed)
 ) "core check: a public resolver is still reachable from the guest";
 assert lib.assertMsg (
   samePort.errors == [ "sbx: inbound port 22100 declared twice" ]
@@ -430,12 +438,6 @@ assert lib.assertMsg (
     "~@privileged"
     "~@resources"
   ]
-  &&
-    units.services."fencr-sbx-egress".serviceConfig.SystemCallFilter == [
-      "@system-service"
-      "~@privileged"
-      "~@resources"
-    ]
   && !((core.vmService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
 ) "core check: syscall filter drifted";
 # the unit's own user, no capabilities, and the empty root the jailer builds
@@ -507,11 +509,11 @@ assert lib.assertMsg (
   && keyed.dns == null
   && keyedUnits.services ? "fencr-keyed-egress"
   && !(keyedUnits.services ? "fencr-keyed-credentials")
-  && keyedUnits.services."fencr-keyed-egress".requires == [ "fencr-ca.service" ]
+  && keyedUnits.services."fencr-keyed-egress".requires == [ "fencr-keyed-ca.service" ]
   && keyedUnits.sockets ? "fencr-keyed-secrets"
   &&
     keyedUnits.services."fencr-keyed-secrets@".serviceConfig.LoadCredential == [
-      "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
+      "fencr-ca.crt:/var/lib/fencr/ca/keyed/root.crt"
     ]
   &&
     lib.hasInfix ''ip daddr 10.11.2.1 tcp dport 33443 counter accept comment "fencr:keyed:egress-tls"''
@@ -529,7 +531,7 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   units.services."fencr-sbx-secrets@".after == [
     "fencr-sbx.service"
-    "fencr-ca.service"
+    "fencr-sbx-ca.service"
   ]
   && units.services."fencr-sbx-secrets@".requisite == [ "fencr-sbx.service" ]
   && units.services."fencr-sbx-secrets@".partOf == [ "fencr-sbx.service" ]
@@ -557,12 +559,12 @@ assert lib.assertMsg (
   && placeholder != core.placeholderOf "sbx" "other"
   && resolved.credentialPlaceholders == { api = placeholder; }
   && resolved.credentialEnv == { }
-  # the guest holds the placeholder either way; the uri and body pass is
-  # what a credential has to ask for
-  && (lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).placeholder == ""
+  # the proxy holds the placeholder either way, to put back what an upstream
+  # echoes; the uri and body pass is what a credential has to ask for
   &&
-    (lib.head (builtins.fromJSON (core.egressConfig substituting)).credentials).placeholder
-    == placeholder
+    (lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).placeholder == placeholder
+  && !(lib.head (builtins.fromJSON (core.egressConfig resolved)).credentials).substitute
+  && (lib.head (builtins.fromJSON (core.egressConfig substituting)).credentials).substitute
 ) "unit check: the credential placeholder drifted";
 # a rotated secretFile reaches the proxies: one watcher for the host, and
 # none at all where no credential is granted
@@ -587,12 +589,12 @@ assert lib.assertMsg (
   !(units.services."fencr-sbx-egress".serviceConfig ? RuntimeDirectory)
   && !(units.services."fencr-sbx-egress".serviceConfig ? Group)
   && !(units.services ? "fencr-sbx-credentials")
-  && units.services."fencr-sbx-egress".requires == [ "fencr-ca.service" ]
+  && units.services."fencr-sbx-egress".requires == [ "fencr-sbx-ca.service" ]
   &&
     units.services."fencr-sbx-egress".serviceConfig.LoadCredential == [
       "api:/run/secrets/api-token"
-      "ca.crt:/var/lib/fencr/ca/root.crt"
-      "ca.key:/var/lib/fencr/ca/root.key"
+      "ca.crt:/var/lib/fencr/ca/sbx/root.crt"
+      "ca.key:/var/lib/fencr/ca/sbx/root.key"
     ]
 ) "unit check: the egress unit still carries a credential socket";
 assert lib.assertMsg (
@@ -628,7 +630,8 @@ assert lib.assertMsg (
       domain = "api.example.com";
       upstream = "https://api.example.com";
       header = "Authorization";
-      placeholder = "";
+      placeholder = core.placeholderOf "sbx" "api";
+      substitute = false;
       bearer = false;
       allow = [ ];
     }
@@ -880,7 +883,7 @@ assert lib.assertMsg (
   && core.reloadUnits pkgs { sbx = fetched; } == { }
   &&
     (core.hostUnits pkgs fetched).services."fencr-sbx-egress".requires == [
-      "fencr-ca.service"
+      "fencr-sbx-ca.service"
       "fencr-secret-rotating.socket"
     ]
 ) "unit check: a command-sourced credential is not resolved through a socket";

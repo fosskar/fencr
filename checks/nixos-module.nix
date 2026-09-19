@@ -47,7 +47,7 @@ in
     }
     {
       assertion =
-        config.systemd.services ? fencr-ca
+        config.systemd.services ? fencr-sbx-ca
         && config.systemd.services ? fencr-sbx-egress
         && guestConfig.networking.hosts."10.11.0.1" == [ "api.anthropic.com" ]
         && guestConfig.environment.etc."ssl/certs/ca-certificates.crt".source == "/run/fencr/ca-bundle.crt"
@@ -113,7 +113,7 @@ in
         &&
           config.systemd.services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [
             "raw:/run/secrets/raw"
-            "fencr-ca.crt:/var/lib/fencr/ca/root.crt"
+            "fencr-ca.crt:/var/lib/fencr/ca/sbx/root.crt"
           ]
         && guestConfig.systemd.services ? fencr-secrets
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";

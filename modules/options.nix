@@ -327,7 +327,9 @@ in
                 "*.github.com" does not include "github.com". "!name" refuses
                 a name a wildcard grant would otherwise admit. domains use the
                 host's SNI proxy, without TLS interception or external DNS.
-                empty means no explicit grants, including DNS. credential
+                defaults to "internet"; setting this replaces that rather than
+                adding to it, so a domain allowlist needs no opt-out. the
+                empty list means no egress at all, including DNS. credential
                 grants enable their own access independently.
               '';
             };

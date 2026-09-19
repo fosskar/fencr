@@ -1,10 +1,10 @@
 { lib, core, ... }:
 let
   inherit (core)
-    caDir
-    caCert
-    caKey
-    caMembers
+    caDirOf
+    caCertOf
+    caKeyOf
+    caMembersOf
     guestTrust
     hardened
     egressHardening
@@ -43,15 +43,22 @@ in
     else
       toString credential.secretFile;
 
-  caUnit = "fencr-ca";
-  caDir = "/var/lib/fencr/ca";
-  caCert = "${caDir}/root.crt";
-  caKey = "${caDir}/root.key";
-  # credential ids the authority takes in the proxy unit; a credential may not use them
-  caMembers = {
-    "ca.crt" = caCert;
-    "ca.key" = caKey;
+  # one authority per vm, not one per host: the key is handed to that vm's
+  # egress unit, so a host-wide one would put a key every guest trusts into
+  # every proxy. a vm's certificates are worthless against another vm
+  caUnitOf = name: "fencr-${name}-ca";
+  caDirOf = name: "/var/lib/fencr/ca/${name}";
+  caCertOf = name: "${caDirOf name}/root.crt";
+  caKeyOf = name: "${caDirOf name}/root.key";
+  caMembersOf = name: {
+    "ca.crt" = caCertOf name;
+    "ca.key" = caKeyOf name;
   };
+  # credential ids the authority takes in the proxy unit; a credential may not use them
+  caMemberNames = [
+    "ca.crt"
+    "ca.key"
+  ];
 
   # node takes the authority alone, everything else the store bundle with it appended
   guestTrust = {
@@ -154,17 +161,17 @@ in
       };
     };
 
-  caService = pkgs: hostName: {
-    description = "fencr certificate authority";
-    unitConfig.ConditionPathExists = "!${caKey}";
+  caServiceOf = pkgs: hostName: name: {
+    description = "certificate authority for fencr sandbox ${name}";
+    unitConfig.ConditionPathExists = "!${caKeyOf name}";
     serviceConfig = hardened // {
       Type = "oneshot";
-      StateDirectory = "fencr/ca";
+      StateDirectory = "fencr/ca/${name}";
       StateDirectoryMode = "0700";
     };
     script = ''
       ${pkgs.openssl}/bin/openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-        -subj "/CN=fencr on ${hostName}" -days 7300 -keyout ${caKey} -out ${caCert}
+        -subj "/CN=fencr ${name} on ${hostName}" -days 7300 -keyout ${caKeyOf name} -out ${caCertOf name}
     '';
   };
 
@@ -315,10 +322,11 @@ in
           (credential.provider or null) != null
           && core.providers.${credential.provider}.header == "Authorization"
           && lib.toLower credential.header == "authorization";
-        # the header is injected either way; this is the uri and body pass,
-        # which only a credential that asks for it gets
-        placeholder =
-          if credential.substitutePlaceholder or false then credential.placeholder or "" else "";
+        # the guest holds the placeholder either way, so the proxy needs it to
+        # put back whatever an upstream echoes. substitute is the uri and body
+        # pass, which only a credential that asks for it gets
+        placeholder = credential.placeholder or "";
+        substitute = credential.substitutePlaceholder or false;
         allow = map (rule: {
           inherit (rule) methods;
           path = if rule.path == null then "" else rule.path;
@@ -336,7 +344,7 @@ in
       LoadCredential =
         map (credential: "${credential.name}:${secretSourceOf credential}") cfg.credentials
         ++ lib.optionals (cfg.credentials != [ ]) (
-          lib.mapAttrsToList (member: path: "${member}:${path}") caMembers
+          lib.mapAttrsToList (member: path: "${member}:${path}") (caMembersOf cfg.name)
         );
       # checked before egressHardening's deny list, so it names only what that
       # would otherwise take: the guest's own subnet, a loopback upstream and

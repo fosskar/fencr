@@ -29,7 +29,10 @@ let
   };
   sealed = core.resolveInstance {
     name = "sealed";
-    options.id = 1;
+    options = {
+      id = 1;
+      outbound = [ ];
+    };
   };
   open = core.resolveInstance {
     name = "open";
@@ -47,6 +50,7 @@ let
     inherit credentials;
     options = {
       id = 3;
+      outbound = [ ];
       credentials = [ "api" ];
     };
   };
@@ -93,7 +97,7 @@ let
           *) exit 0 ;;
         esac
         printf 'allow github.com\ndeny evil.test\ndeny gist.github.com\nintercept api.test\n'
-        # the wildcard rule the command carries in pkgs/domain.rs: a
+        # the wildcard rule the command carries in pkgs/domain.go: a
         # subdomain counts, the case does not, and a name that merely ends
         # in the pattern is not below it
         printf 'allow api.github.com\nallow OTHER.GitHub.com\nallow evilgithub.com\n'

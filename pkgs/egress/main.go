@@ -118,6 +118,9 @@ func run(cfg *config) error {
 
 	intercept := map[string][]*credential{}
 	for i := range cfg.Credentials {
+		if err := prepare(&cfg.Credentials[i]); err != nil {
+			return err
+		}
 		domain := strings.ToLower(cfg.Credentials[i].Domain)
 		intercept[domain] = append(intercept[domain], &cfg.Credentials[i])
 	}
