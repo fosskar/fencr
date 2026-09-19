@@ -145,10 +145,13 @@ in
           message = "fencr.mcpGateway requires explicit servers and at least one VM with mcp.enable.";
         }
         {
+          # a vm name is already narrower than this, from resolveInstance.
+          # "__" separates <server>__<tool>, so only the server half can
+          # carry it into a name a client has to split again
           assertion = lib.all (
             name: builtins.match "[A-Za-z0-9_-]+" name != null && !(lib.hasInfix "__" name)
-          ) (builtins.attrNames cfg.servers ++ builtins.attrNames members);
-          message = "fencr.mcpGateway server and VM names must use letters, digits, hyphens or underscores, without double underscores.";
+          ) (builtins.attrNames cfg.servers);
+          message = "fencr.mcpGateway server names must use letters, digits, hyphens or underscores, without double underscores.";
         }
         {
           assertion = lib.all (
@@ -197,8 +200,8 @@ in
               import tempfile
               from pathlib import Path
 
-              for name in ${builtins.toJSON (builtins.attrNames members)}:
-                  path = Path("/var/lib/fencr-mcp") / name
+              for entry in ${builtins.toJSON (map tokenPath (builtins.attrNames members))}:
+                  path = Path(entry)
                   if not path.exists():
                       descriptor, temporary = tempfile.mkstemp(dir=path.parent)
                       with os.fdopen(descriptor, "w") as output:

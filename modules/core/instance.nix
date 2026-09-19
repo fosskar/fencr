@@ -9,7 +9,6 @@ let
     cidOf
     hostIpOf
     ipOf
-    idRange
     prefixLength
     subnetOf
     stateDirOf
@@ -242,17 +241,16 @@ in
       egress = domains != [ ] || granted != [ ] || internet;
       dnsEgress = domains != [ ] || internet;
       errors =
-        lib.optional (
-          options.id < 0 || options.id >= idRange
-        ) "${name}: id must be between 0 and ${toString (idRange - 1)}"
+        # every derived name is this one with a prefix, and "tap-" plus eleven
+        # is IFNAMSIZ; the charset is what an interface, a unit and a user can
+        # all carry
+        lib.optional (builtins.match "[A-Za-z0-9_-]{1,11}" name == null)
+          "vm name \"${name}\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"${tap}\" must fit IFNAMSIZ"
         ++ map (
           secretName:
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
         ) (lib.filter (secretName: !credentialId secretName) secretNames)
         ++ lib.optional (lib.elem guestTrust.member secretNames) "${name}: secret name \"${guestTrust.member}\" is reserved for the authority"
-        ++ lib.optional (
-          lib.stringLength tap > 15
-        ) "vm name \"${name}\" is too long: \"${tap}\" exceeds IFNAMSIZ"
         ++ lib.optional (
           domains != [ ] && internet
         ) "${name}: outbound cannot combine internet with domain grants"

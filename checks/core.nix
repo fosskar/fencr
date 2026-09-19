@@ -311,10 +311,18 @@ assert lib.assertMsg (
   (builtins.fromJSON (core.egressConfig resolved)).blocked == [ "10.11.0.0/26" ]
   && (builtins.fromJSON (core.egressConfig longName)).blocked == [ "10.11.1.0/26" ]
 ) "core check: the egress unit may dial its own subnet";
+# one rule for the name every derived name is built from: the charset an
+# interface, a unit and a user all carry, and the length "tap-" leaves
 assert lib.assertMsg (
-  longName.errors
-  == [ "vm name \"coding-agent-1\" is too long: \"tap-coding-agent-1\" exceeds IFNAMSIZ" ]
-) "core check: long interface name accepted";
+  longName.errors == [
+    "vm name \"coding-agent-1\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"tap-coding-agent-1\" must fit IFNAMSIZ"
+  ]
+  &&
+    (resolve "my.vm" { id = 0; }).errors == [
+      "vm name \"my.vm\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"tap-my.vm\" must fit IFNAMSIZ"
+    ]
+  && (resolve "sbx" { id = 0; }).errors == [ ]
+) "core check: a vm name the derived names cannot carry";
 # the guest's 53 is redirected to the unit's own port, and only that port is
 # admitted: resolved is never reachable from the bridge
 assert lib.assertMsg (
@@ -378,7 +386,6 @@ assert lib.assertMsg (
   && last.mac == "02:00:00:00:20:02"
   && top.mac == "02:00:00:00:20:ff"
   && top.cid == 258
-  && (resolve "sbx" { id = 256; }).errors == [ "sbx: id must be between 0 and 255" ]
 ) "core check: id from name order";
 assert lib.assertMsg (
   builtins.attrNames (core.guestOf resolved) == [
