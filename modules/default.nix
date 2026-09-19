@@ -103,23 +103,24 @@ in
       ) resolvedInstances
     );
 
-    users.groups = forEachInstance (
-      name: cfg: lib.optionalAttrs (cfg.sshKeys != [ ]) { ${core.jumpUserOf name} = { }; }
-    );
+    users.groups = forEachInstance (name: _: { ${core.jumpUserOf name} = { }; });
 
     users.users = forEachInstance (
-      name: cfg:
-      {
+      name: cfg: {
         ${core.userOf name} = {
           isSystemUser = true;
           group = "kvm";
         };
-      }
-      # a way in for someone the host has no other business trusting: restrict
-      # drops the pty, the shell and every forwarding, permitopen leaves one
-      # destination, and a jump opens a direct-tcpip channel without a session.
-      # the vm's own sshd is still what authenticates them
-      // lib.optionalAttrs (cfg.sshKeys != [ ]) {
+        # a way in for someone the host has no other business trusting: restrict
+        # drops the pty, the shell and every forwarding, permitopen leaves one
+        # destination, and a jump opens a direct-tcpip channel without a session.
+        # the vm's own sshd is still what authenticates them.
+        #
+        # every vm gets the account, keys or not, because which accounts exist
+        # may not depend on sshKeys: adminKeys is commonly root's own
+        # authorizedKeys, and reading it to decide the names would ask
+        # users.users for the answer it is busy computing. an account nobody is
+        # authorized against is one no one can use
         ${core.jumpUserOf name} = {
           isSystemUser = true;
           group = core.jumpUserOf name;

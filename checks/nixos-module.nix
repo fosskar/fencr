@@ -210,10 +210,14 @@ in
     fsType = "ext4";
   };
 
-  # never used; they only build the key-gated units
-  fencr.adminKeys = [
+  # never used; they only build the key-gated units. taken from root the way
+  # docs/access.md suggests, which makes users.users a dependency of
+  # fencr.adminKeys: anything of fencr's that reads the keys to decide which
+  # accounts exist closes that loop and the host stops evaluating
+  users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdminDummyAdminDummyAdminDummyAdminDummyAdmi check"
   ];
+  fencr.adminKeys = config.users.users.root.openssh.authorizedKeys.keys;
 
   fencr.vms.sbx = {
     authorizedKeys = [
