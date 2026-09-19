@@ -60,7 +60,7 @@ in
       map
         (message: {
           assertion = false;
-          message = "fencr.vms: ${message}.";
+          message = "fencr: ${message}.";
         })
         (
           lib.concatMap (instance: instance.errors) (lib.attrValues resolvedInstances)
@@ -69,7 +69,7 @@ in
       ++ [
         {
           assertion = instances == { } || config.systemd.network.enable;
-          message = "fencr.vms: the bridge and tap are configured through systemd-networkd; set networking.useNetworkd = true (or systemd.network.enable = true) on this host.";
+          message = "fencr: the bridge and tap are configured through systemd-networkd; set networking.useNetworkd = true (or systemd.network.enable = true) on this host.";
         }
       ];
 
@@ -79,7 +79,7 @@ in
         plain = lib.filter (swap: !swap.randomEncryption.enable) config.swapDevices;
       in
       lib.optional (instances != { } && plain != [ ])
-        "fencr.vms: swap without randomEncryption (${
+        "fencr: swap without randomEncryption (${
           lib.concatMapStringsSep ", " (swap: swap.device) plain
         }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap."
       # the vm boundary does not cross threads of one core, which is the same
@@ -87,7 +87,7 @@ in
       # prod-host-setup.md names
       ++
         lib.optional (instances != { } && !(lib.elem "nosmt" config.boot.kernelParams))
-          "fencr.vms: smt is on, so a guest shares a core with the host and every other vm, where a cross-thread side channel reads what the vm boundary does not stop; set boot.kernelParams = [ \"nosmt\" ] to take Firecracker's tenant-separation guidance, at the cost of the second thread of every core.";
+          "fencr: smt is on, so a guest shares a core with the host and every other vm, where a cross-thread side channel reads what the vm boundary does not stop; set boot.kernelParams = [ \"nosmt\" ] to take Firecracker's tenant-separation guidance, at the cost of the second thread of every core.";
 
     environment.systemPackages = lib.mkIf (instances != { }) [
       (import ../pkgs/cli {

@@ -165,7 +165,7 @@ in
     {
       assertion =
         let
-          swap = lib.filter (lib.hasPrefix "fencr.vms: swap") config.warnings;
+          swap = lib.filter (lib.hasPrefix "fencr: swap") config.warnings;
         in
         lib.length swap == 1
         && lib.hasInfix "(/dev/sda2)" (lib.head swap)
