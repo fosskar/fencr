@@ -1,7 +1,9 @@
 # how fencr works
 
 A machine declares `fencr.sandboxes.<name>`, hands it NixOS modules through
-`services`, and gets a sandbox with one road out that the host decides.
+`services`, and gets a sandbox with one road out that the host decides. The
+sandbox is the units below taken together; the microVM is the one the payload
+runs in.
 Every host change goes through `nixos-rebuild` — the `fencr` command never
 touches host configuration. It looks, checkpoints, restores, and opens a shell
 as guest root.

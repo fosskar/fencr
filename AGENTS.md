@@ -2,8 +2,11 @@
 
 ## scope
 
-fencr provides sealed Firecracker microVMs through `nixosModules.fencr` (also
-`nixosModules.default`). Payloads are NixOS modules supplied through
+fencr provides sealed sandboxes through `nixosModules.fencr` (also
+`nixosModules.default`). A sandbox is a Firecracker microVM and the host units
+that decide what it reaches: its egress proxy, its nftables tables, its
+credentials and its certificate authority. The microVM is one part of it, not
+the whole. Payloads are NixOS modules supplied through
 `fencr.sandboxes.<name>.services`; fencr ships no agent, repository cloning, or host
 working-tree mounts. Every host change goes through `nixos-rebuild`; the `fencr`
 CLI does not mutate host configuration, but `fencr ssh` can run commands as guest root

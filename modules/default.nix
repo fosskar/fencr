@@ -1,4 +1,5 @@
-# sealed microvms to run agents in; a machine says what to put inside, and
+# sealed sandboxes to run agents in: a microvm and the host units deciding
+# what it reaches. a machine says what to put inside, and
 # the module knows nothing about it:
 #
 #   fencr.sandboxes.myagent.services = [ my-agent-module ];
