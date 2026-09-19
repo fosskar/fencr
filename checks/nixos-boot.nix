@@ -461,7 +461,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       pid = host.succeed("systemctl show -p MainPID --value fencr-sbx-egress.service").strip()
       host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 2")
       host.succeed("curl --fail --silent http://127.0.0.1:8765/ | grep -Fx 'authorization: None'", timeout=60)
-      host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/fencr-ca.crt'", timeout=60)
+      host.succeed(f"{ssh} 'test -e /run/fencr/ca-bundle.crt && test ! -e /run/agent-secrets/ca.crt'", timeout=60)
+      # a payload need not run as root, so the authority has to be readable
+      # without being root; the raw secrets must not be
+      host.succeed(f"{ssh} 'runuser -u nobody -- cat /run/fencr/ca-bundle.crt > /dev/null'", timeout=60)
+      host.succeed(f"{ssh} 'stat -c %a /run/fencr' | grep -Fx 755", timeout=60)
+      host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets' | grep -Fx 700", timeout=60)
+      host.fail(f"{ssh} 'runuser -u nobody -- cat /run/agent-secrets/raw'", timeout=60)
       # the upstream echoes the header it received, so the placeholder coming
       # back proves both halves at once: the proxy put the real value in, and
       # scrubbed it out of the response the guest reads. had injection failed

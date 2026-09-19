@@ -12,4 +12,7 @@ for _ in $(seq 60); do
   sleep 0.5
 done
 test -e @dir@/@first@
+# the archive carries the relay's credentials directory as ".", and systemd
+# makes that 0550, so extracting it lands that mode on the directory here
+chmod @mode@ @dir@
 chmod @fileMode@ @dir@/*
