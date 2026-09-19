@@ -18,11 +18,12 @@ ______________________________________________________________________
 ## Overview
 
 fencr is a NixOS module that builds
-[Firecracker](https://firecracker-microvm.github.io/) microVM sandboxes and
-keeps control of what each one can reach outside itself. A sandbox is a full
-NixOS guest with its own kernel, its own disk and an unprivileged host user,
-and nothing from the host is mounted into it. What runs inside is yours to
-declare — fencr never supplies it.
+[Firecracker](https://firecracker-microvm.github.io/)
+[microVM](https://github.com/microvm-nix/microvm.nix) sandboxes and keeps
+control of what each one can reach outside itself. A sandbox is a full NixOS
+guest with its own kernel, its own disk and an unprivileged host user, and
+nothing from the host is mounted into it. What runs inside is yours to declare
+— fencr never supplies it.
 
 A useful sandbox still needs network access and API credentials. Keeping those
 inside it would put them within reach of whatever runs there, so fencr keeps
@@ -34,8 +35,6 @@ them on the host:
   the real key into the requests you permitted, and only those.
 - **MCP tool calls go through a gateway** that can require approval before a
   tool runs.
-
-Built on [microvm.nix](https://github.com/microvm-nix/microvm.nix).
 
 > [!NOTE]
 > fencr ships no agent, clones no repositories and mounts no working tree. You
