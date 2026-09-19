@@ -15,7 +15,7 @@ in
   # the runner under a system user of its own, so two sandboxes share no host
   # identity and the state image has an owner outliving the unit. group kvm
   # is for /dev/kvm and the tap, AF_INET for the tap ioctls
-  vmService =
+  hypervisorService =
     pkgs: instance: runner:
     let
       runDir = runDirOf instance.name;

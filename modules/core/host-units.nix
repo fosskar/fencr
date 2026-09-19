@@ -20,7 +20,7 @@ in
     pkgs: instance:
     let
       units = unitsOf instance.name;
-      vmUnit = "${units.vm}.service";
+      hypervisorUnit = "${units.hypervisor}.service";
       ca = lib.optional (instance.credentials != [ ]) "${caUnitOf instance.name}.service";
       checkpoints = checkpointUnits pkgs instance;
       # the socket, not the resolver: systemd connects to it while starting
@@ -36,10 +36,10 @@ in
         // lib.optionalAttrs secrets {
           "${units.secrets}@" = {
             description = "raw secrets for ${instance.name}";
-            after = [ vmUnit ] ++ ca;
-            requisite = [ vmUnit ];
+            after = [ hypervisorUnit ] ++ ca;
+            requisite = [ hypervisorUnit ];
             requires = ca;
-            partOf = [ vmUnit ];
+            partOf = [ hypervisorUnit ];
             unitConfig.CollectMode = "inactive-or-failed";
             # served from systemd credentials, so no secret touches the store
             # or a disk; a throwaway uid shares nothing with the hypervisor

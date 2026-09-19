@@ -445,12 +445,12 @@ assert lib.assertMsg (
     "~@privileged"
     "~@resources"
   ]
-  && !((core.vmService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
+  && !((core.hypervisorService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
 ) "core check: syscall filter drifted";
 # the unit's own user, no capabilities, and the empty root the jailer builds
 assert lib.assertMsg (
   let
-    sandbox = (core.vmService pkgs resolved "/nix/store/runner").serviceConfig;
+    sandbox = (core.hypervisorService pkgs resolved "/nix/store/runner").serviceConfig;
   in
   sandbox.User == "fencr-sbx"
   && sandbox.StandardOutput == "null"
@@ -813,7 +813,7 @@ assert facts "checkpoint" (
       checkpoints.keep = 3;
     };
     timed = core.hostUnits pkgs hourly;
-    silent = core.vmService pkgs (resolve "sbx" {
+    silent = core.hypervisorService pkgs (resolve "sbx" {
       id = 0;
       checkpoints.onStop = false;
     }) "/run/x";
@@ -840,7 +840,7 @@ assert facts "checkpoint" (
     "keep follows the instance" = lib.hasInfix "head -n -3 " (core.checkpointText pkgs hourly);
     "a clean stop leaves a checkpoint" =
       lib.any (lib.hasSuffix " stop")
-        (core.vmService pkgs resolved "/run/x").serviceConfig.ExecStopPost;
+        (core.hypervisorService pkgs resolved "/run/x").serviceConfig.ExecStopPost;
     "onStop = false leaves none" = silent.serviceConfig.ExecStopPost == [ ];
   }
 );

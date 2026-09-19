@@ -26,8 +26,8 @@ configuration, SSH access and the checkpoint commands.
 - `modules/core/` holds the pure builders, one file per concern, joined by
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `hostErrors`),
-  `hardening.nix` (unit hardening sets, `specialUseNetworks`), `vm.nix`
-  (`vmService`), `firewall.nix` (the sandbox's nftables tables: `forwardRules`,
+  `hardening.nix` (unit hardening sets, `specialUseNetworks`), `hypervisor.nix`
+  (`hypervisorService`), `firewall.nix` (the sandbox's nftables tables: `forwardRules`,
   `inputRules`, `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
   `egress.nix` (the authority, `parseAllow`, and the sandbox's egress unit:
   `egressConfig`, `egressServiceConfig`, and the two bridge ports
