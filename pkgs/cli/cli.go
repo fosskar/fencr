@@ -45,6 +45,8 @@ type VM struct {
 	CheckpointDir string
 	Image         string
 	APISocket     string
+	// the host account that reaches this vm's sshd and nothing else
+	JumpUser string
 	// without keys the module writes no Host alias, and a bare name would
 	// resolve to whatever else answers to it
 	SSH bool
@@ -109,6 +111,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "  list             declared vms")
 	fmt.Fprintln(os.Stderr, "  ssh <vm> [cmd]   open a shell (or run a command) in a vm")
+	fmt.Fprintln(os.Stderr, "                   set FENCR_HOST to reach one from off the host")
 	fmt.Fprintln(os.Stderr, "  status [vm]      vm health and traffic [--watch]; --full <vm> for systemctl")
 	fmt.Fprintln(os.Stderr, "  checkpoint <vm> [name]")
 	fmt.Fprintln(os.Stderr, "                   copy the vm's disk now, without pausing it")
@@ -791,6 +794,15 @@ func main() {
 				"fencr: %s has no ssh keys; set fencr.adminKeys or fencr.vms.%s.authorizedKeys\n",
 				name, name)
 			os.Exit(1)
+		}
+		// away from the host there is no Host alias and no route to the
+		// subnet, so the jump is the only way the address means anything
+		if host := os.Getenv("FENCR_HOST"); host != "" {
+			execute(sshBin, append([]string{
+				"-J", vm.JumpUser + "@" + host,
+				"-o", "StrictHostKeyChecking=accept-new",
+				"root@" + vm.IP,
+			}, args[2:]...)...)
 		}
 		execute(sshBin, append([]string{vm.Name}, args[2:]...)...)
 	case "status":

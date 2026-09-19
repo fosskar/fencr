@@ -22,31 +22,44 @@ own ssh key against the vm's authorized list, not your host privileges.
 
 ## from another machine (vm runs on a server)
 
-The vm's address is private to the server, so jump through it. Put this
-in your own `~/.ssh/config`; `fencr list` on the server prints the
-address:
+The vm's address is private to the server, so the connection jumps
+through it. Name the server and `fencr ssh` does the rest:
+
+```console
+FENCR_HOST=server fencr ssh <vm-name>
+```
+
+The jump lands on `fencr-jump-<vm-name>`, a host account the module
+creates for every vm that has keys. Its authorized entries read:
+
+```
+restrict,permitopen="10.11.0.2:22" ssh-ed25519 AAAA... you
+```
+
+`restrict` removes the pty, the shell and every kind of forwarding;
+`permitopen` leaves one destination. So the account opens a channel to
+that one vm's sshd and can do nothing else on the server — not a shell,
+not another vm, not the lan. The vm's own sshd still authenticates you,
+against the same keys as always.
+
+That is what lets you hand someone a sandbox without an account on the
+server in any useful sense. A key in `fencr.vms.<name>.authorizedKeys`
+reaches that vm; a key in `fencr.adminKeys` is in every vm's list and so
+reaches all of them.
+
+Without the command installed, the same thing by hand — `fencr list` on
+the server prints the address:
 
 ```
 Host myvm
   HostName 10.11.0.2
   User root
-  ProxyJump server
+  ProxyJump fencr-jump-myvm@server
 ```
 
-Your ssh authenticates directly against the vm; the server only forwards
-the connection and never sees your agent.
-
-Quick, interactive, without a config entry: double-ssh through the
-server's own alias:
-
-```console
-ssh -t server fencr list
-ssh -t server ssh <vm-name>
-```
-
-Authentication happens *on the server*, so your key must be usable
-there (`-A` agent forwarding works; be aware server root can use the
-forwarded agent while connected).
+Either way your ssh authenticates directly against the vm, and the
+server only forwards bytes: it never sees your agent, and no key of
+yours has to be usable on it.
 
 On the host itself the same tool covers the day-to-day reads:
 

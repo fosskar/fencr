@@ -72,6 +72,7 @@ in
   stateDirOf = name: "/var/lib/fencr-vms/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
   userOf = name: "fencr-${name}";
+  jumpUserOf = name: "fencr-jump-${name}";
   unitsOf = name: {
     vm = "fencr-${name}";
     egress = "fencr-${name}-egress";

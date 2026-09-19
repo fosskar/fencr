@@ -103,11 +103,28 @@ in
       ) resolvedInstances
     );
 
+    users.groups = forEachInstance (
+      name: cfg: lib.optionalAttrs (cfg.sshKeys != [ ]) { ${core.jumpUserOf name} = { }; }
+    );
+
     users.users = forEachInstance (
-      name: _: {
+      name: cfg:
+      {
         ${core.userOf name} = {
           isSystemUser = true;
           group = "kvm";
+        };
+      }
+      # a way in for someone the host has no other business trusting: restrict
+      # drops the pty, the shell and every forwarding, permitopen leaves one
+      # destination, and a jump opens a direct-tcpip channel without a session.
+      # the vm's own sshd is still what authenticates them
+      // lib.optionalAttrs (cfg.sshKeys != [ ]) {
+        ${core.jumpUserOf name} = {
+          isSystemUser = true;
+          group = core.jumpUserOf name;
+          shell = "${pkgs.shadow}/bin/nologin";
+          openssh.authorizedKeys.keys = map (key: ''restrict,permitopen="${cfg.ip}:22" ${key}'') cfg.sshKeys;
         };
       }
     );

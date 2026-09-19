@@ -38,6 +38,26 @@ in
       message = "nixos module check: the admin keys did not open the second vm's ssh door";
     }
     {
+      # an owner key reaches its own vm and no other; an admin key reaches
+      # both, because it is in both vms' keys to begin with
+      assertion =
+        let
+          jump = name: config.users.users."fencr-jump-${name}";
+          opens =
+            name: map (key: lib.elemAt (lib.splitString "\"" key) 1) (jump name).openssh.authorizedKeys.keys;
+        in
+        opens "sbx" == [
+          "10.11.0.2:22"
+          "10.11.0.2:22"
+        ]
+        && opens "sealed" == [ "10.11.1.2:22" ]
+        && lib.all (key: lib.hasPrefix "restrict,permitopen=" key) (
+          (jump "sbx").openssh.authorizedKeys.keys ++ (jump "sealed").openssh.authorizedKeys.keys
+        )
+        && lib.hasSuffix "/nologin" (jump "sbx").shell;
+      message = "nixos module check: a jump account reaches something other than its own vm";
+    }
+    {
       assertion = !guestConfig.system.switch.enable;
       message = "nixos module check: guest system switching is enabled";
     }
