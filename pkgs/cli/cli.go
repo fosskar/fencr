@@ -38,6 +38,8 @@ type VM struct {
 	Unit           string
 	CheckpointUnit string
 	StateDir       string
+	CheckpointDir  string
+	Image          string
 	APISocket      string
 	// without keys the module writes no Host alias, and a bare name would
 	// resolve to whatever else answers to it
@@ -663,7 +665,7 @@ func checkpointFile(vm *VM, name string) (string, error) {
 	if !checkpointName(name) {
 		return "", fmt.Errorf("%q is not a checkpoint name", name)
 	}
-	file := filepath.Join(vm.StateDir, "checkpoints", name+".img")
+	file := filepath.Join(vm.CheckpointDir, name+".img")
 	if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() {
 		return file, nil
 	}
@@ -679,7 +681,7 @@ type checkpoint struct {
 // a directory that was never created holds no checkpoints; one this user may
 // not read is not the same answer
 func checkpoints(vm *VM) ([]checkpoint, error) {
-	dir := filepath.Join(vm.StateDir, "checkpoints")
+	dir := vm.CheckpointDir
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -891,9 +893,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
 			os.Exit(1)
 		}
-		image := filepath.Join(vm.StateDir, "state.img")
 		run(systemctlBin, "stop", vm.Unit)
-		if err := replace(file, vm.StateDir, image); err != nil {
+		if err := replace(file, vm.StateDir, vm.Image); err != nil {
 			fmt.Fprintf(os.Stderr, "fencr: restore failed, the vm keeps its disk: %v\n", err)
 			os.Exit(1)
 		}

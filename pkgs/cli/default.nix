@@ -42,7 +42,7 @@ let
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''{Name: "${name}", ID: ${toString cfg.id}, IP: "${cfg.ip}", HostIP: "${cfg.hostIp}", Inbound: []Grant{${lib.concatStrings (inbound cfg)}}, Outbound: []Grant{${lib.concatStrings (outbound cfg)}}, Unit: "${(core.unitsOf name).vm}.service", CheckpointUnit: "${(core.unitsOf name).checkpoint}@", StateDir: "${core.stateDirOf name}", APISocket: "${core.apiSocketOf name}", SSH: ${
+    ''{Name: "${name}", ID: ${toString cfg.id}, IP: "${cfg.ip}", HostIP: "${cfg.hostIp}", Inbound: []Grant{${lib.concatStrings (inbound cfg)}}, Outbound: []Grant{${lib.concatStrings (outbound cfg)}}, Unit: "${(core.unitsOf name).vm}.service", CheckpointUnit: "${(core.unitsOf name).checkpoint}@", StateDir: "${core.stateDirOf name}", CheckpointDir: "${core.checkpointDirOf name}", Image: "${core.stateImageOf name}", APISocket: "${core.apiSocketOf name}", SSH: ${
       if cfg.sshKeys != [ ] then "true" else "false"
     }},'';
 
