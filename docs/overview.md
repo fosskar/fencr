@@ -60,7 +60,8 @@ flowchart TD
   A -->|deny| X["close · journal: deny &lt;name&gt;"]
 ```
 
-Outbound grants, empty by default — including no DNS:
+Outbound defaults to `[ "internet" ]` — public IPv4 and DNS, private ranges
+still closed. Setting it replaces that default; `[ ]` leaves no egress at all:
 
 ```nix
 outbound = [

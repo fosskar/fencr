@@ -1,9 +1,13 @@
 # network access
 
-Both `inbound` and `outbound` default to empty. A VM has no network egress,
-including DNS, until granted access. SSH keys and credentials automatically
-open their required paths; `fencr status` shows those alongside explicit grants.
-Reply traffic needs no separate grant.
+`inbound` defaults to empty: nothing on the host reaches the VM until a port
+is named. `outbound` defaults to `[ "internet" ]`, which is public IPv4 and
+DNS with private and other special-use ranges still blocked. Setting
+`outbound` replaces that default rather than adding to it, so an allowlist
+needs no opt-out, and `outbound = [ ]` leaves the VM no egress at all,
+including DNS. SSH keys and credentials automatically open their required
+paths; `fencr status` shows those alongside explicit grants. Reply traffic
+needs no separate grant.
 
 ```nix
 fencr.vms.myagent = {

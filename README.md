@@ -12,8 +12,10 @@ NixOS configuration inside each VM.
 
 - **VM isolation.** Separate kernels, disks and unprivileged host users.
   No host working-tree mounts.
-- **Deny-by-default networking.** Grant domains, IP/port pairs or host ports.
-  Public internet access can be enabled without opening private networks.
+- **Private networks closed by default.** VMs get public IPv4 and DNS; the LAN
+  and other special-use ranges stay shut. Narrow that to an allowlist of
+  domains, IP/port pairs or host ports, or to nothing at all with
+  `outbound = [ ]`.
 - **Host-held API keys.** Inject credentials only into permitted HTTP methods
   and paths. Presets for Anthropic, OpenAI, OpenRouter and OpenCode Go/Zen;
   secret files, Clan vars and host commands supported.

@@ -90,9 +90,10 @@ before the allowlist, and `fencr status` lists the entry with the
 connections it refused. A deny no grant covers is rejected at evaluation
 as a typo, and one equal to a grant as emptying it. The one rule for what a
 pattern covers, case-insensitive, `*.x` never matching bare `x`, lives in
-`matchesAny` in `pkgs/egress`, with `pkgs/domain.rs` compiled into the
-command;
-`instance.nix` carries it a third time for evaluation-time checks.
+`covers` in `pkgs/domain.go`, one definition built into both the egress unit
+and the command (2026-09-19: it was two, one per language, until the command
+became go); `instance.nix` carries it a second time for evaluation-time
+checks, where no go runs.
 
 `inbound` is a list of integer guest TCP ports. It has no `from` field because
 only host-to-guest access is supported; it does not publish ports externally.

@@ -99,7 +99,9 @@ configuration, SSH access and the checkpoint commands.
 
 ## boundaries
 
-- `outbound` defaults to empty, including no DNS grant. Explicit IPv4/CIDR
+- `outbound` defaults to `[ "internet" ]`; setting it replaces that rather
+  than adding to it, and `[ ]` means no egress at all, including no DNS
+  grant. Explicit IPv4/CIDR
   and port entries grant TCP access; `"internet"` grants public IPv4 and DNS
   but still blocks other special-use ranges. DNS means the VM's own egress
   unit: once that unit answers, port 53 to anywhere else is dropped as
