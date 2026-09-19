@@ -1,19 +1,22 @@
 # fencr
 
-Give an AI agent a real NixOS machine of its own, and keep the parts that
-matter outside it. fencr runs agents in persistent
-[Firecracker](https://firecracker-microvm.github.io/) microVMs where the
-network, the API keys and the tools they may use are decided on the host.
+A NixOS module that runs AI agents in sealed
+[Firecracker](https://firecracker-microvm.github.io/) microVM sandboxes. The
+host decides what each sandbox reaches on the network, which API requests it
+may make, and which MCP tools it may call.
 
-An agent needs a shell, a network and an API key to be useful. Give it those
-on your own machine and it has your SSH keys, your repositories, your LAN and
-a key it can spend. Give it a VM and it has a machine — but the key is still
-inside it, and it can still reach anything. fencr draws the line one level
-out: the key never enters the VM, every connection out is judged by the host,
-and every MCP tool call can require your approval first.
+An agent runs commands nobody reviewed. On your own machine it can read every
+file you can, reach everything on your network, and spend your API keys. A VM
+stops the file access. It does not stop the other two: the VM has a network,
+and the key is inside it.
 
-Built on [microvm.nix](https://github.com/microvm-nix/microvm.nix), with full
-NixOS configuration inside each VM.
+fencr keeps both out of the sandbox. Outbound traffic is denied unless you
+grant the destination, and the host enforces that, not the guest. API keys stay
+on the host: the guest gets a placeholder, and the host puts the real key into
+the requests you allow. MCP tool calls can require your approval first.
+
+Each sandbox is a full NixOS guest with persistent disk, built on
+[microvm.nix](https://github.com/microvm-nix/microvm.nix).
 
 *Pronounced **fencer** /ˈfɛnsər/ — “fence” + “er”.*
 
@@ -72,8 +75,8 @@ and the credential log lists methods, paths and status codes — never headers.
 - It ships **no agent**. You supply one as a NixOS module through
   `fencr.vms.<name>.services`; fencr provides the machine and the boundary.
 - It does **not clone repositories** or mount your working tree into the VM.
-- It is **not a container runtime** or a multi-tenant platform. One host, VMs
-  you declare, `nixos-rebuild` as the control plane.
+- It is **not a container runtime**. Each sandbox is a full NixOS guest under
+  Firecracker, declared in your configuration and built by `nixos-rebuild`.
 
 ## Get started
 
@@ -107,11 +110,10 @@ Replace the key, add your agent's module to `services` and deploy with
 ```console
 ssh myagent
 fencr status myagent
-fencr checkpoint myagent before-refactor
 ```
 
-`fencr restore myagent before-refactor` replaces the current guest disk
-with the checkpoint and restarts the VM.
+Checkpoints, restore and the rest of the command are in
+[access and operation](docs/access.md).
 
 ## Documentation
 

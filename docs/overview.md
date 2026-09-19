@@ -2,9 +2,9 @@
 
 A machine declares `fencr.vms.<name>`, hands it NixOS modules through
 `services`, and gets a VM with one road out that the host decides.
-`nixos-rebuild` is the control plane — the `fencr` command never touches host
-configuration. It looks, checkpoints, restores, and opens a shell as guest
-root.
+Every host change goes through `nixos-rebuild` — the `fencr` command never
+touches host configuration. It looks, checkpoints, restores, and opens a shell
+as guest root.
 
 Everything derives from the instance's `id`: subnet, mac, vsock cid, unit
 names and paths. Two roads connect host and guest — the bridge carries all
