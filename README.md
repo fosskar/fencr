@@ -22,13 +22,9 @@ guest with its own kernel, its own disk and an unprivileged host user, and
 nothing from the host is mounted into it. What runs inside is yours to declare
 — fencr never supplies it.
 
-An agent decides its own commands. Run it on your own machine and it has your
-files, your network and your API keys. A sandbox takes away the files. It does
-not take away the rest: a sandbox still needs a network to be useful, and a key
-still has to sit somewhere the agent can reach it.
-
-So fencr does not put them there. The host keeps the network and the keys, and
-decides what the sandbox gets:
+A useful sandbox still needs network access and API credentials. Keeping those
+inside it would put them within reach of whatever runs there, so fencr keeps
+them on the host:
 
 - **Outbound traffic is denied unless you grant the destination**, and the
   grant is enforced by a host process the guest cannot configure.
