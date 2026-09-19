@@ -16,10 +16,11 @@ ______________________________________________________________________
 
 ## Overview
 
-fencr is a NixOS module that runs an AI agent inside a Firecracker microVM and
-keeps control of what that VM can do outside itself. Each sandbox is a full
-NixOS guest with its own kernel, its own disk and an unprivileged host user.
-Nothing from the host is mounted into it.
+fencr is a NixOS module that builds Firecracker microVM sandboxes and keeps
+control of what each one can reach outside itself. A sandbox is a full NixOS
+guest with its own kernel, its own disk and an unprivileged host user, and
+nothing from the host is mounted into it. What runs inside is yours to declare
+— fencr never supplies it.
 
 An agent writes and runs its own commands. On your own machine that means it
 can read every file you can, reach everything on your network, and spend your
