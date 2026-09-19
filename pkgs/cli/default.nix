@@ -42,15 +42,10 @@ let
     ) cfg.credentials;
   vmRow =
     name: cfg:
-    ''{Name: "${name}", ID: ${toString cfg.id}, IP: "${cfg.ip}", HostIP: "${cfg.hostIp}", Inbound: []Grant{${lib.concatStrings (inbound cfg)}}, Outbound: []Grant{${lib.concatStrings (outbound cfg)}}, Unit: "${(core.unitsOf name).vm}.service", CheckpointUnit: "${(core.unitsOf name).checkpoint}@", StateDir: "${core.stateDirOf name}", CheckpointDir: "${core.checkpointDirOf name}", Image: "${core.stateImageOf name}", APISocket: "${core.apiSocketOf name}", SSH: ${
-      if cfg.sshKeys != [ ] then "true" else "false"
-    }},'';
-
-  # the journal the command reads, and whether a credential writes to it
-  proxiedRows =
-    name: cfg:
-    lib.optional cfg.egress ''{VM: "${name}", Unit: "${(core.unitsOf name).egress}.service", Credentials: ${
+    ''{Name: "${name}", ID: ${toString cfg.id}, IP: "${cfg.ip}", HostIP: "${cfg.hostIp}", Inbound: []Grant{${lib.concatStrings (inbound cfg)}}, Outbound: []Grant{${lib.concatStrings (outbound cfg)}}, Unit: "${(core.unitsOf name).vm}.service", CheckpointUnit: "${(core.unitsOf name).checkpoint}@", EgressUnit: "${lib.optionalString cfg.egress "${(core.unitsOf name).egress}.service"}", Credentials: ${
       if cfg.credentials != [ ] then "true" else "false"
+    }, StateDir: "${core.stateDirOf name}", CheckpointDir: "${core.checkpointDirOf name}", Image: "${core.stateImageOf name}", APISocket: "${core.apiSocketOf name}", SSH: ${
+      if cfg.sshKeys != [ ] then "true" else "false"
     }},'';
 
   tables = pkgs.writeText "tables.go" ''
@@ -58,11 +53,6 @@ let
 
     var vms = []VM{
     ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}
-    }
-
-    // vm, proxy unit, whether it holds credentials
-    var proxied = []Proxy{
-    ${lib.concatStrings (lib.concatLists (lib.mapAttrsToList proxiedRows instances))}
     }
 
     const (

@@ -121,7 +121,7 @@ func handler(byDomain map[string][]*credential) http.Handler {
 		}
 		if err := substitute(r, c, c.value); err != nil {
 			log.Printf("fencr: %s: %v", c.Name, err)
-			refuse(http.StatusBadGateway, "fencr: request too large to carry a credential")
+			refuse(http.StatusBadGateway, "fencr: the request body could not be read")
 			return
 		}
 		forward(c, uri, w, r)
@@ -190,22 +190,24 @@ func substitute(r *http.Request, c *credential, value string) error {
 		r.URL.Path = strings.ReplaceAll(r.URL.Path, placeholder, value)
 		r.URL.RawPath = ""
 	}
-	if r.Body == nil || r.ContentLength <= 0 || r.ContentLength > maxBody {
+	return rewriteBody(&r.Body, &r.ContentLength, placeholder, value)
+}
+
+// net/http stops a measured body at its length, so the guard is the whole
+// bound: a streamed or oversized body is forwarded untouched rather than held
+func rewriteBody(body *io.ReadCloser, length *int64, from, to string) error {
+	if *body == nil || *length <= 0 || *length > maxBody {
 		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
-	if closeErr := r.Body.Close(); err == nil {
+	raw, err := io.ReadAll(*body)
+	if closeErr := (*body).Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
 		return err
 	}
-	if int64(len(body)) > maxBody {
-		return fmt.Errorf("body over %d bytes", maxBody)
-	}
-	body = bytes.ReplaceAll(body, []byte(placeholder), []byte(value))
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	r.ContentLength = int64(len(body))
+	raw = bytes.ReplaceAll(raw, []byte(from), []byte(to))
+	*body, *length = io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
 	return nil
 }
 
@@ -222,20 +224,12 @@ func scrub(resp *http.Response, value, placeholder string) error {
 			resp.Header[name][at] = strings.ReplaceAll(text, value, placeholder)
 		}
 	}
-	if resp.Body == nil || resp.ContentLength <= 0 || resp.ContentLength > maxBody {
-		return nil
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
-	if closeErr := resp.Body.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
+	if err := rewriteBody(&resp.Body, &resp.ContentLength, value, placeholder); err != nil {
 		return err
 	}
-	body = bytes.ReplaceAll(body, []byte(value), []byte(placeholder))
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	resp.ContentLength = int64(len(body))
-	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	if resp.ContentLength > 0 {
+		resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+	}
 	return nil
 }
 

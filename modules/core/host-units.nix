@@ -21,7 +21,7 @@ in
     let
       units = unitsOf instance.name;
       vmUnit = "${units.vm}.service";
-      caService = "${caUnitOf instance.name}.service";
+      ca = lib.optional (instance.credentials != [ ]) "${caUnitOf instance.name}.service";
       checkpoints = checkpointUnits pkgs instance;
       # the socket, not the resolver: systemd connects to it while starting
       # the egress unit, which starts an instance of the service behind it
@@ -36,9 +36,9 @@ in
         // lib.optionalAttrs secrets {
           "${units.secrets}@" = {
             description = "raw secrets for ${instance.name}";
-            after = [ vmUnit ] ++ lib.optional (instance.credentials != [ ]) caService;
+            after = [ vmUnit ] ++ ca;
             requisite = [ vmUnit ];
-            requires = lib.optional (instance.credentials != [ ]) caService;
+            requires = ca;
             partOf = [ vmUnit ];
             unitConfig.CollectMode = "inactive-or-failed";
             # served from systemd credentials, so no secret touches the store
@@ -61,8 +61,8 @@ in
           ${units.egress} = {
             description = "egress and credentials for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ] ++ lib.optional (instance.credentials != [ ]) caService ++ resolvers;
-            requires = lib.optional (instance.credentials != [ ]) caService ++ resolvers;
+            after = [ "network.target" ] ++ ca ++ resolvers;
+            requires = ca ++ resolvers;
             serviceConfig = egressServiceConfig pkgs instance;
           };
         };

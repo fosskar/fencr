@@ -54,11 +54,9 @@ in
     "ca.crt" = caCertOf name;
     "ca.key" = caKeyOf name;
   };
-  # credential ids the authority takes in the proxy unit; a credential may not use them
-  caMemberNames = [
-    "ca.crt"
-    "ca.key"
-  ];
+  # credential ids the authority takes in the proxy unit; a credential may not
+  # use them, and this must be whatever caMembersOf actually names
+  caMemberNames = lib.attrNames (caMembersOf "");
 
   # node takes the authority alone, everything else the store bundle with it appended
   guestTrust = {
@@ -154,10 +152,9 @@ in
       paths.${reloadUnit} = {
         description = "watch the credential files";
         wantedBy = [ "multi-user.target" ];
-        pathConfig = {
-          PathChanged = files;
-          PathModified = files;
-        };
+        # PathModified is the broader of the two: a write triggers it whether
+        # or not the writer closes the file
+        pathConfig.PathModified = files;
       };
     };
 

@@ -577,7 +577,6 @@ assert lib.assertMsg (
     };
   in
   reload.paths.fencr-credentials-reload.pathConfig == {
-    PathChanged = [ "/run/secrets/api-token" ];
     PathModified = [ "/run/secrets/api-token" ];
   }
   && lib.hasSuffix "systemctl try-restart fencr-keyed-egress.service fencr-sbx-egress.service" reload.services.fencr-credentials-reload.serviceConfig.ExecStart
