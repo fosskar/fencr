@@ -81,13 +81,7 @@ in
       lib.optional (instances != { } && plain != [ ])
         "fencr: swap without randomEncryption (${
           lib.concatMapStringsSep ", " (swap: swap.device) plain
-        }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap."
-      # the vm boundary does not cross threads of one core, which is the same
-      # class of leak as the swap above and the one firecracker's
-      # prod-host-setup.md names
-      ++
-        lib.optional (instances != { } && !(lib.elem "nosmt" config.boot.kernelParams))
-          "fencr: smt is on, so a guest shares a core with the host and every other vm, where a cross-thread side channel reads what the vm boundary does not stop; set boot.kernelParams = [ \"nosmt\" ] to take Firecracker's tenant-separation guidance, at the cost of the second thread of every core.";
+        }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap.";
 
     environment.systemPackages = lib.mkIf (instances != { }) [
       (import ../pkgs/cli {

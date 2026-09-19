@@ -228,11 +228,13 @@ Considered and left:
 
 - disabling smt (`nosmt`) as Firecracker recommends for tenant
   separation: a host-owner's call, not a module default, since it costs
-  the second thread of every core (2026-09-18: still not a default, but no
-  longer silent. A cross-thread side channel reads what the vm boundary
-  does not stop, which is the same class of leak as the swap warning above,
-  so a host without `nosmt` in `boot.kernelParams` draws one too. The
-  choice stays the operator's; only the silence was wrong)
+  the second thread of every core. A warning naming it was added and
+  removed again on 2026-09-19: it fired on every rebuild, the only action
+  it offered cost half the machine's threads, and there was no way to
+  acknowledge it. The leak is real and reaches guest to host, so the
+  answer is more likely cpu pinning than `nosmt` — aws keeps smt on and
+  hands each tenant both siblings of a core. Issue #49 holds the sources
+  and the shape a fix would take
 - the pci transport: microvm.nix passes `--enable-pci` to Firecracker
   1.13 and later, so the virtio devices ride the newer, larger pci
   transport rather than mmio, which fencr does not need. A flag cannot
