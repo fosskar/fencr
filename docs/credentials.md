@@ -1,8 +1,30 @@
 # credentials and secrets
 
-Use `credentials` when the host can authenticate an API request on the sandbox's
-behalf. Use `secrets` only when the workload must hold the real value itself.
-Never put real secret contents in a Nix expression or the Nix store.
+**`secrets` is the default. `credentials` is an optimisation.**
+
+A secret always works: the host file arrives in the guest and the workload
+reads it, whatever protocol it speaks. Start there. Then promote the ones
+worth protecting — the keys that cost money, or reach past the sandbox — to
+credentials, where the host holds the value and the guest never sees it.
+
+Nothing is ever wrong, only less hardened. Never put real secret contents in a
+Nix expression or the Nix store.
+
+## which one is this
+
+One question decides it: **can you name the upstream and the header the value
+goes in?**
+
+- yes, it is a bearer token or an api key in a header → make it a credential
+- no → make it a secret
+
+There is no taxonomy to learn. A value the client *computes* with rather than
+sends — a signing key, an end-to-end encryption key — can never be a
+credential, because a proxy has nothing to inject. Neither can a protocol that
+is not HTTP.
+
+So a workload can hold both, and usually does: its model api keys as
+credentials, its matrix recovery key and signing keys as secrets.
 
 ## provider presets
 
@@ -31,6 +53,27 @@ A credential's name selects a matching preset automatically. Use
 | `opencode` | `Authorization: Bearer <key>` | None |
 | `opencode-go` | `Authorization: Bearer <key>` | `OPENCODE_GO_API_KEY` |
 | `opencode-zen` | `Authorization: Bearer <key>` | `OPENCODE_ZEN_API_KEY` |
+| `gemini` | `x-goog-api-key: <key>` | None |
+| `github` | `Authorization: Bearer <key>` | None |
+
+`github` defaults to `allow = [ "GET,HEAD *" ]`, so a granted token reads and
+nothing more until you widen it. `gemini` uses the native api's header; its
+openai-shaped path under `/v1beta/openai/` wants `Authorization` instead, and
+a request carrying both is refused with "Multiple authentication credentials
+received".
+
+There is no preset for every provider and there will not be. A preset earns
+its place by encoding something you would otherwise get wrong — a header that
+is not `Authorization`, a `guestEnv` the client refuses to start without, or a
+default `allow`. Anything that is a bearer token at a url you know is two
+lines without one:
+
+```nix
+fencr.credentials.groq = {
+  upstream = "https://api.groq.com";
+  secretFile = "/run/secrets/groq";
+};
+```
 
 Bearer presets also accept existing values containing `Bearer <key>` without
 adding the prefix twice. Without a provider, or when overriding its header
@@ -191,8 +234,17 @@ fencr.sandboxes.myagent.secrets."agent.env" = "/run/secrets/agent.env";
 ```
 
 The host file is fetched over vsock at boot into
-`/run/agent-secrets/agent.env`, readable by guest root. Unlike a credential,
-this value is available to a compromised guest. It is useful for secrets
-that cannot be handled by a proxy, such as a signing key.
+`/run/agent-secrets/agent.env`. This is where a value starts, and where it
+stays unless a credential can carry it: a signing key, an end-to-end
+encryption key, anything spoken over a protocol that is not HTTP. The cost is
+that a compromised guest has the value, which is the whole reason to promote
+what you can.
+
+`/run/agent-secrets` is `0700` and its files `0400`, both owned by guest root.
+A payload running as its own user reads them through systemd — `EnvironmentFile`
+or `LoadCredential` in its unit — which systemd resolves as root before
+dropping privileges. The authority, by contrast, lives in `/run/fencr` at
+`0755` with `0444` files, because any user the payload runs as has to verify
+against it.
 
 See the [credential decision record](decisions/credentials.md) for design history.

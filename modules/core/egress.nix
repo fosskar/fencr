@@ -189,6 +189,20 @@ in
       upstream = "https://opencode.ai";
       header = "Authorization";
     };
+    # the native api takes x-goog-api-key; the openai-shaped path under
+    # /v1beta/openai/ takes Authorization instead, and a request carrying both
+    # is refused with "Multiple authentication credentials received"
+    gemini = {
+      upstream = "https://generativelanguage.googleapis.com";
+      header = "x-goog-api-key";
+    };
+    # read-only by default: a token that can open a pull request or push is
+    # the one an escaped agent would most like to have
+    github = {
+      upstream = "https://api.github.com";
+      header = "Authorization";
+      allow = [ "GET,HEAD *" ];
+    };
     opencode-zen = {
       upstream = "https://opencode.ai";
       header = "Authorization";
