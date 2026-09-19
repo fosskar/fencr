@@ -8,7 +8,7 @@
 [![NixOS flake](https://img.shields.io/badge/NixOS-flake-5277C3?style=flat-square&logo=nixos&logoColor=white)](flake.nix)
 [![Firecracker](https://img.shields.io/badge/Firecracker-microVM-FF9900?style=flat-square)](https://firecracker-microvm.github.io/)
 
-[Overview](#overview) • [Features](#features) • [How it works](#how-it-works) • [Getting started](#getting-started) • [Security](#security) • [Development](#development) • [Documentation](#documentation)
+[Overview](#overview) • [Features](#features) • [Getting started](#getting-started) • [How it works](#how-it-works) • [Security](#security) • [Development](#development) • [Documentation](#documentation)
 
 </div>
 
@@ -70,67 +70,6 @@ Built on [microvm.nix](https://github.com/microvm-nix/microvm.nix).
 - **Visibility from one command.** `fencr status` reports which grants were
   used, what was blocked and why, and every API request the host proxied.
 
-## How it works
-
-A sandbox is a block in your NixOS configuration:
-
-```nix
-fencr.credentials.anthropic = {
-  secretFile = "/run/secrets/anthropic";
-  allow = [ "POST /v1/messages" ];
-};
-
-fencr.vms.myagent = {
-  authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
-  inbound = [ 9119 ];
-  outbound = [ "github.com" "*.github.com" "!gist.github.com" ];
-  credentials = [ "anthropic" ];
-  services = [ ./my-agent.nix ];
-};
-```
-
-`nixos-rebuild` turns that into a microVM, a bridge, a set of nftables tables
-and one host process that is the sandbox's only road out. From inside the
-guest:
-
-1. Every DNS query goes to that process. A name you granted answers with the
-   host's bridge address; nothing leaves the machine.
-1. The connection is matched by the TLS server name and, if a grant covers it,
-   passed onward without being opened.
-1. A credential's domain is the exception. The host answers the TLS itself,
-   checks the method and path against `allow`, adds the real key and forwards
-   the request upstream.
-1. Anything else is dropped, counted and logged.
-
-Afterwards, `fencr status` shows what the sandbox actually did:
-
-```console
-$ fencr status myagent
-myagent  RUNNING  10.11.0.2  memory 412M
-VMM: Running
-Inbound (from host):
-  ✓ TCP 22, 9119 (22: ssh)                    3 packets
-Outbound (otherwise denied):
-  ✓ github.com TLS 443                        4 connections
-  · *.github.com TLS 443                      unused
-  ✓ !gist.github.com TLS 443 (denied)         1 connection
-  ✓ api.anthropic.com TLS 443 (credential anthropic)  6 connections
-
-Blocked (journal, rate-limited sample):
-  ✗ guest → gist.github.com:443/tls   x1     denied by outbound "!gist.github.com"
-  ✗ guest → pypi.org:443/tls          x3     outbound "pypi.org"
-
-Credential requests (journal):
-  POST api.anthropic.com/v1/messages → 200  x6
-  POST api.anthropic.com/v1/complete → 403  x1
-
-Services: egress RUNNING
-```
-
-The agent asked for `pypi.org` three times and never got there; the hint is the
-grant that would let it. It also called `/v1/complete`, which `allow` does not
-cover, so the host answered 403 without the key ever leaving.
-
 ## Getting started
 
 ### Requirements
@@ -177,6 +116,67 @@ fencr status myagent
 Your agent's module reads its own contract — address, inbound ports,
 credential domains and placeholders — from `specialArgs.agentSandbox`, so it
 needs no fencr-specific configuration of its own.
+
+## How it works
+
+The sandbox above reaches `github.com` and nothing else. Give it an inbound
+port, two more grants and an API credential:
+
+```nix
+fencr.credentials.anthropic = {
+  secretFile = "/run/secrets/anthropic";
+  allow = [ "POST /v1/messages" ];
+};
+
+fencr.vms.myagent = {
+  # ...as declared above
+  inbound = [ 9119 ];
+  outbound = [ "github.com" "*.github.com" "!gist.github.com" ];
+  credentials = [ "anthropic" ];
+};
+```
+
+`nixos-rebuild` turns that into a microVM, a bridge, a set of nftables tables
+and one host process that is the sandbox's only road out. From inside the
+guest:
+
+1. Every DNS query goes to that process. A name you granted answers with the
+   host's bridge address; nothing leaves the machine.
+1. The connection is matched by the TLS server name and, if a grant covers it,
+   passed onward without being opened.
+1. A credential's domain is the exception. The host answers the TLS itself,
+   checks the method and path against `allow`, adds the real key and forwards
+   the request upstream.
+1. Anything else is dropped, counted and logged.
+
+Afterwards, `fencr status` shows what the sandbox actually did:
+
+```console
+$ fencr status myagent
+myagent  RUNNING  10.11.0.2  memory 412M
+VMM: Running
+Inbound (from host):
+  ✓ TCP 22, 9119 (22: ssh)                    3 packets
+Outbound (otherwise denied):
+  ✓ github.com TLS 443                        4 connections
+  · *.github.com TLS 443                      unused
+  ✓ !gist.github.com TLS 443 (denied)         1 connection
+  ✓ api.anthropic.com TLS 443 (credential anthropic)  6 connections
+
+Blocked (journal, rate-limited sample):
+  ✗ guest → gist.github.com:443/tls   x1     denied by outbound "!gist.github.com"
+  ✗ guest → pypi.org:443/tls          x3     outbound "pypi.org"
+
+Credential requests (journal):
+  POST api.anthropic.com/v1/messages → 200  x6
+  POST api.anthropic.com/v1/complete → 403  x1
+
+Services: egress RUNNING
+```
+
+The agent asked for `pypi.org` three times and never got there; the hint is the
+grant that would let it. It also called `/v1/complete`, which `allow` does not
+cover, so the host answered 403 without the key ever leaving.
 
 ## Security
 
