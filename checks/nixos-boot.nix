@@ -59,29 +59,17 @@ let
 
     HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
   '';
-  # a host already serving *:443 and *:53, and the loopback service a granted
-  # name must not reach through the vm's egress unit
-  squatter = pkgs.writeText "fencr-test-squatter.py" ''
-    import os, socket, ssl
-    from http.server import SimpleHTTPRequestHandler, HTTPServer
-
-    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp.bind(("0.0.0.0", 53))
-    os.chdir("${targetRoot}")
-    server = HTTPServer(("0.0.0.0", 443), SimpleHTTPRequestHandler)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain("${tlsCert}/cert.pem", "${tlsCert}/key.pem")
-    server.socket = context.wrap_socket(server.socket, server_side=True)
-    server.serve_forever()
-  '';
   tlsCert = pkgs.runCommand "fencr-test-cert" { nativeBuildInputs = [ pkgs.openssl ]; } ''
     mkdir $out
     openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=allowed.test \
       -keyout $out/key.pem -out $out/cert.pem
   '';
-  tlsServer = pkgs.writeText "fencr-test-tls.py" ''
-    from http.server import SimpleHTTPRequestHandler, HTTPServer
+  # one tls server on *:443, serving the target document. the squatter is the
+  # same one on the host, where it also takes *:53: the egress unit has to
+  # live beside both, and a granted name must not reach either
+  tlsServerText = ''
     import os, ssl
+    from http.server import SimpleHTTPRequestHandler, HTTPServer
 
     os.chdir("${targetRoot}")
     server = HTTPServer(("0.0.0.0", 443), SimpleHTTPRequestHandler)
@@ -90,6 +78,16 @@ let
     server.socket = context.wrap_socket(server.socket, server_side=True)
     server.serve_forever()
   '';
+  tlsServer = pkgs.writeText "fencr-test-tls.py" tlsServerText;
+  squatter = pkgs.writeText "fencr-test-squatter.py" (
+    ''
+      import socket
+
+      udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      udp.bind(("0.0.0.0", 53))
+    ''
+    + tlsServerText
+  );
 in
 import (pkgs.path + "/nixos/tests/make-test-python.nix")
   ({ pkgs, ... }: {

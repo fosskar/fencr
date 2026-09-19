@@ -159,6 +159,18 @@ class GatewayTest(unittest.TestCase):
                     self.assertTrue(result["isError"])
                     self.assertEqual(self.backend.calls, [])
 
+    # one live client: the http stack, the session and its initialize, which
+    # every elicitation test needs before it can call a tool
+    @contextlib.asynccontextmanager
+    async def session(self, url, callback=None, principal="agent"):
+        async with (
+            httpx.AsyncClient(headers=self.headers(principal), trust_env=False) as http,
+            streamable_http_client(url, http_client=http) as (read, write, session_id),
+            ClientSession(read, write, elicitation_callback=callback) as session,
+        ):
+            await session.initialize()
+            yield session, session_id
+
     @contextlib.contextmanager
     def live_gateway(self):
         with socket.socket() as listener:
@@ -199,12 +211,8 @@ class GatewayTest(unittest.TestCase):
                     return types.ElicitResult(action=action)
 
                 async def run(url):
-                    async with (
-                        httpx.AsyncClient(headers=self.headers(), trust_env=False) as http,
-                        streamable_http_client(url, http_client=http) as (read, write, _),
-                        ClientSession(read, write, elicitation_callback=None if action == "unsupported" else callback) as session,
-                    ):
-                        await session.initialize()
+                    callbacks = None if action == "unsupported" else callback
+                    async with self.session(url, callbacks) as (session, _):
                         result = await session.call_tool("calendar__write", arguments)
                         self.assertEqual(result.isError, action != "accept", result)
 
@@ -246,12 +254,7 @@ class GatewayTest(unittest.TestCase):
                     return types.ElicitResult(action="accept")
 
                 async def run(url):
-                    async with (
-                        httpx.AsyncClient(headers=self.headers(principal), trust_env=False) as http,
-                        streamable_http_client(url, http_client=http) as (read, write, _),
-                        ClientSession(read, write, elicitation_callback=callback) as session,
-                    ):
-                        await session.initialize()
+                    async with self.session(url, callback, principal) as (session, _):
                         result = await session.call_tool("calendar__write", {})
                         self.assertTrue(result.isError)
 
@@ -273,12 +276,7 @@ class GatewayTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 404)
                 return types.ElicitResult(action="decline")
 
-            async with (
-                httpx.AsyncClient(headers=self.headers(), trust_env=False) as http,
-                streamable_http_client(url, http_client=http) as (read, write, session_id),
-                ClientSession(read, write, elicitation_callback=callback) as session,
-            ):
-                await session.initialize()
+            async with self.session(url, callback) as (session, session_id):
                 result = await session.call_tool("calendar__write", {})
                 self.assertTrue(result.isError)
 
