@@ -50,7 +50,7 @@ assert config.fencr.vms.reader.credentials == [ "mcp-reader" ];
 assert config.fencr.vms.agent.mcp.allow == [ ];
 assert config.fencr.mcpGateway.servers.calendar.approvalTools == [ "*" ];
 assert credential.domain == "mcp.fencr" && !credential.substitutePlaceholder;
-assert credential.allow == [ "GET,POST,DELETE /mcp/" ];
+assert credential.allow == [ "* /mcp/" ];
 assert !(config.fencr.guestSystems.agent.config.environment.sessionVariables ? MCP_GATEWAY_TOKEN);
 assert lib.elem "fencr-mcp-gateway.service" config.systemd.services.fencr-agent-egress.requires;
 assert lib.elem "fencr-mcp-tokens.service" gateway.requires;

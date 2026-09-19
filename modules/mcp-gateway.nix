@@ -182,7 +182,11 @@ in
           domain = "mcp.fencr";
           secretFile = tokenPath name;
           substitutePlaceholder = false;
-          allow = [ "GET,POST,DELETE /mcp/" ];
+          # upstream is an origin, so the path is what keeps this token off
+          # every other route on that port. the methods are the mcp sdk's to
+          # choose and it rejects the rest itself; pinning them here only
+          # breaks the transport the day it uses one more
+          allow = [ "* /mcp/" ];
         }
       ) members;
 

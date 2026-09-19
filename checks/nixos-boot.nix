@@ -557,6 +557,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       assert "${core.placeholderOf "sbx" "mcp-sbx"}" in echoed, echoed
       refused = mcp(ssh_open, read, session)
       assert re.search(r"^HTTP/\S+ 404\b", refused), refused
+      # the credential's allow pins the path, and nothing else keeps its token
+      # off the rest of the port the gateway listens on
+      for path in ["/", "/metrics"]:
+          off_path = host.succeed(ssh + " " + shlex.quote(
+              f"curl --silent --max-time 10 -o /dev/null -w %{{http_code}} https://mcp.fencr{path}"), timeout=30)
+          assert off_path.strip() == "403", (path, off_path)
       write = {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "test__write", "arguments": {}}}
       refused = mcp(ssh, write, session)
       assert "no host approval command configured" in refused and "called write" not in refused, refused

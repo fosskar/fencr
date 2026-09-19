@@ -181,6 +181,14 @@ only the required credentials to each egress proxy and the gateway. MCP
 credentials have `substitutePlaceholder = false`, so a tool argument cannot
 cause the proxy to insert the real token into data the tool might echo.
 
+Their `allow` is `[ "* /mcp/" ]`. A credential's `upstream` is an origin, so
+without that entry the VM's token would be injected into a request for any
+path the gateway's port serves; pinning the path keeps it to the one route the
+gateway mounts. The methods are deliberately not pinned. The MCP transport
+chooses those, and it rejects the ones it does not use itself — listing them
+here would only refuse a method a later transport revision starts relying on,
+and the symptom would be a 403 in `fencr status` rather than an obvious break.
+
 Inspect the host units:
 
 ```console
