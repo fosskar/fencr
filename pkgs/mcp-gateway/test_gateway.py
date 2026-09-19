@@ -62,9 +62,11 @@ class GatewayTest(unittest.TestCase):
             "approval_mode": "host", "approval_command": [], "approval_timeout": 1,
         }
         self.backend = Backend()
+        self.opened = 0
 
         @contextlib.asynccontextmanager
         async def downstream(_):
+            self.opened += 1
             yield self.backend
 
         patched = patch.object(gateway, "downstream", downstream)
@@ -118,6 +120,40 @@ class GatewayTest(unittest.TestCase):
             self.assertEqual(self.backend.calls, [])
             self.request(client, reader, "tools/call", {"name": "calendar__read"}, "reader")
             self.assertEqual(self.backend.calls, [("read", {})])
+
+    def test_one_session_per_principal_is_reused(self):
+        with self.client() as client:
+            agent = self.initialize(client)
+            reader = self.initialize(client, "reader")
+            self.request(client, agent, "tools/call", {"name": "calendar__read"})
+            self.request(client, agent, "tools/call", {"name": "calendar__read"})
+            # the handshake costs more than the call, so the second one reuses
+            # the session the first opened
+            self.assertEqual(self.opened, 1)
+            self.request(client, reader, "tools/call", {"name": "calendar__read"}, "reader")
+            # and a second principal opens its own: a session must never carry
+            # one vm's state to another
+            self.assertEqual(self.opened, 2)
+            self.assertEqual(self.backend.calls, [("read", {})] * 3)
+
+    def test_a_dead_session_is_retried_on_a_fresh_one(self):
+        with self.client() as client:
+            agent = self.initialize(client)
+            self.request(client, agent, "tools/call", {"name": "calendar__read"})
+            self.assertEqual(self.opened, 1)
+            # a backend may go away between two calls with nothing noticing
+            failures = [True]
+            original = self.backend.call_tool
+
+            async def once(name, arguments):
+                if failures.pop() if failures else False:
+                    raise RuntimeError("the backend went away")
+                return await original(name, arguments)
+
+            self.backend.call_tool = once
+            result = self.request(client, agent, "tools/call", {"name": "calendar__read"})
+            self.assertFalse(result["isError"], result)
+            self.assertEqual(self.opened, 2)
 
     def test_empty_allow_denies_every_tool(self):
         self.config["principals"]["reader"]["allow"] = []

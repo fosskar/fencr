@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,71 @@ async def downstream(server: dict[str, Any]):
     ):
         await session.initialize()
         yield session
+
+
+# the handshake costs more than the call it carries: a fresh session per
+# tool call spends about 100ms on the transport, the initialize and the
+# teardown before the backend sees anything. reuse one inside a window
+IDLE_WINDOW = 30
+
+
+class Sessions:
+    """One downstream session per principal per backend.
+
+    Keyed by principal, so a session never carries one vm's state to
+    another. Opened on first use, so a backend that is down cannot keep the
+    gateway from starting — every mcp-enabled vm's egress unit requires it.
+    Dropped when idle past the window, so a restarted backend heals without
+    any reconnect logic of its own.
+    """
+
+    def __init__(self, window: float = IDLE_WINDOW):
+        self.window = window
+        self.entries: dict[tuple[str, str], tuple[Any, float, contextlib.AsyncExitStack]] = {}
+        self.locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    async def discard(self, key) -> None:
+        entry = self.entries.pop(key, None)
+        if entry is None:
+            return
+        # a session that already died cannot be closed cleanly, and saying so
+        # adds nothing: the entry is gone either way
+        with contextlib.suppress(Exception):
+            await entry[2].aclose()
+
+    async def acquire(self, key, server: dict[str, Any]):
+        lock = self.locks.get(key)
+        if lock is None:
+            lock = self.locks[key] = asyncio.Lock()
+        async with lock:
+            entry = self.entries.get(key)
+            if entry is not None and time.monotonic() - entry[1] < self.window:
+                self.entries[key] = (entry[0], time.monotonic(), entry[2])
+                return entry[0]
+            await self.discard(key)
+            stack = contextlib.AsyncExitStack()
+            session = await stack.enter_async_context(downstream(server))
+            self.entries[key] = (session, time.monotonic(), stack)
+            return session
+
+    async def call(self, key, server: dict[str, Any], action):
+        """Run action against the session, once more on a fresh one if it fails.
+
+        A session can die between two calls without anything noticing, so the
+        first failure is retried rather than reported.
+        """
+        for last in (False, True):
+            session = await self.acquire(key, server)
+            try:
+                return await action(session)
+            except Exception:
+                await self.discard(key)
+                if last:
+                    raise
+
+    async def aclose(self) -> None:
+        for key in list(self.entries):
+            await self.discard(key)
 
 
 async def approve(command: list[str], timeout: float, request: dict[str, Any]) -> None:
@@ -98,7 +164,7 @@ async def approve_client(context, timeout, request):
         raise PermissionError("client approval refused")
 
 
-def create_server(name, principal, config):
+def create_server(name, principal, config, sessions):
     servers = config["servers"]
     approval_mode = config["approval_mode"]
     approval_command = config["approval_command"]
@@ -115,18 +181,21 @@ def create_server(name, principal, config):
     async def list_tools() -> list[types.Tool]:
         tools = []
         for server_name, server in servers.items():
-            async with downstream(server) as session:
+            async def listing(session, server_name=server_name):
+                found = []
                 cursor = None
                 while True:
                     result = await session.list_tools(cursor=cursor)
-                    tools.extend(
+                    found.extend(
                         tool.model_copy(update={"name": f"{server_name}__{tool.name}"})
                         for tool in result.tools
                         if permitted(server_name, tool.name)
                     )
                     cursor = result.nextCursor
                     if cursor is None:
-                        break
+                        return found
+
+            tools.extend(await sessions.call((name, server_name), server, listing))
         return tools
 
     @gateway.call_tool()
@@ -147,8 +216,9 @@ def create_server(name, principal, config):
                 await approve_client(gateway.request_context, approval_timeout, request)
             else:
                 await approve(approval_command, approval_timeout, request)
-        async with downstream(server) as session:
-            return await session.call_tool(tool_name, arguments)
+        return await sessions.call(
+            (name, server_name), server, lambda session: session.call_tool(tool_name, arguments)
+        )
 
     return gateway
 
@@ -157,12 +227,13 @@ def create_app(config):
     if config["approval_mode"] not in ("host", "client"):
         raise ValueError("unknown approval mode")
     tokens = {}
+    sessions = Sessions()
     for name, principal in config["principals"].items():
         token = secret(principal["token_credential"])
         if not token.startswith("Bearer ") or token.encode() in tokens:
             raise RuntimeError("gateway principals need distinct bearer credentials")
         tokens[token.encode()] = StreamableHTTPSessionManager(
-            app=create_server(name, principal, config),
+            app=create_server(name, principal, config, sessions),
             # elicitation requests must reach the client before the tool call completes
             json_response=config["approval_mode"] == "host",
             session_idle_timeout=1800,
@@ -180,6 +251,7 @@ def create_app(config):
     @contextlib.asynccontextmanager
     async def lifespan(_):
         async with contextlib.AsyncExitStack() as stack:
+            stack.push_async_callback(sessions.aclose)
             for manager in tokens.values():
                 await stack.enter_async_context(manager.run())
             yield
