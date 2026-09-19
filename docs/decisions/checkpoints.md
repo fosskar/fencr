@@ -12,7 +12,7 @@ took and what it left.
 A copy of the state image beside it, `checkpoints/<name>.img`, owned by
 the sandbox's user like the image. Three ways one comes to exist:
 
-- after every clean stop, from the hypervisor unit's `ExecStopPost`, named
+- after every clean stop, from the microvm unit's `ExecStopPost`, named
   `stop-<utc stamp>`. A `nixos-rebuild` that restarts the sandbox, or a
   restore, leaves the state it replaced behind. `checkpoints.onStop`, on
   by default
@@ -85,7 +85,7 @@ image and every copy.
 ## in the unit, not the command
 
 The copy runs in `fencr-<sandbox>-checkpoint@<name>.service` as the sandbox's user
-in the hypervisor unit's own empty root, with the api socket as its only reach;
+in the microvm unit's own empty root, with the api socket as its only reach;
 the command starts the unit and relays its error. Restore runs in the
 command as root, since it must stop and start the sandbox, and copies with
 `--preserve=ownership` so the image keeps its owner. `fencr checkpoint`

@@ -74,7 +74,7 @@ in
   userOf = name: "fencr-${name}";
   jumpUserOf = name: "fencr-jump-${name}";
   unitsOf = name: {
-    hypervisor = "fencr-${name}";
+    microvm = "fencr-${name}";
     egress = "fencr-${name}-egress";
     secrets = "fencr-${name}-secrets";
     checkpoint = "fencr-${name}-checkpoint";

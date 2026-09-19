@@ -145,7 +145,7 @@ in
         && config.systemd.services."fencr-sbx".serviceConfig.User == "fencr-sbx"
         && config.users.users."fencr-sbx".group == "kvm"
         && guestConfig.fileSystems."/".device == "/dev/disk/by-label/fencr-state";
-      message = "nixos module check: hypervisor unit is not wired to its user and image";
+      message = "nixos module check: microvm unit is not wired to its user and image";
     }
     {
       assertion =

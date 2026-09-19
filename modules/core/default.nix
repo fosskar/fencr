@@ -7,7 +7,7 @@ lib.fix (
   lib.foldl' (parts: part: parts // import part { inherit lib core; }) { } [
     ./instance.nix
     ./hardening.nix
-    ./hypervisor.nix
+    ./microvm.nix
     ./firewall.nix
     ./egress.nix
     ./checkpoint.nix

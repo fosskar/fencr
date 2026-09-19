@@ -145,8 +145,8 @@ in
 
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
-        ${(core.unitsOf name).hypervisor} =
-          core.hypervisorService pkgs instance
+        ${(core.unitsOf name).microvm} =
+          core.microvmService pkgs instance
             guestSystems.${name}.config.microvm.declaredRunner;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)

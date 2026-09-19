@@ -197,7 +197,7 @@ modules/
     ├── instance.nix   # resolveInstance, names, errors
     ├── firewall.nix   # the sandbox's nftables tables
     ├── egress.nix     # config, credentials, authority
-    ├── hypervisor.nix # the unit that runs firecracker
+    ├── microvm.nix    # the unit firecracker runs the guest in
     ├── guest.nix      # guestBase and guest-secrets.sh
     ├── checkpoint.nix # the copy script and units
     ├── host-units.nix # per-sandbox services, sockets, timers

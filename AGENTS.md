@@ -26,8 +26,8 @@ configuration, SSH access and the checkpoint commands.
 - `modules/core/` holds the pure builders, one file per concern, joined by
   `default.nix` into one fixed point every part sees as `core`: `instance.nix`
   (`defaults`, derived names, `resolveInstance`, `hostErrors`),
-  `hardening.nix` (unit hardening sets, `specialUseNetworks`), `hypervisor.nix`
-  (`hypervisorService`), `firewall.nix` (the sandbox's nftables tables: `forwardRules`,
+  `hardening.nix` (unit hardening sets, `specialUseNetworks`), `microvm.nix`
+  (`microvmService`), `firewall.nix` (the sandbox's nftables tables: `forwardRules`,
   `inputRules`, `outputRules`, `natRules`, `redirectRules`, `firewallOf`),
   `egress.nix` (the authority, `parseAllow`, and the sandbox's egress unit:
   `egressConfig`, `egressServiceConfig`, and the two bridge ports
@@ -36,7 +36,7 @@ configuration, SSH access and the checkpoint commands.
   `checkpoint.nix` (`checkpointScript`, `checkpointUnits`, `apiSocketOf`),
   `host-units.nix` (`hostUnits`: services, sockets, timers) and `guest.nix`
   (`guestBase`, with the boot-time fetch in `guest-secrets.sh`). `emptyRootOf`
-  in `hardening.nix` is the hypervisor unit's and the checkpoint unit's sandbox. `guestPortsOf` in `instance.nix` is
+  in `hardening.nix` is the microvm unit's and the checkpoint unit's sandbox. `guestPortsOf` in `instance.nix` is
   the one list of guest ports the host may reach; the guest firewall and the
   output chain both take it. Keep shared defaults in `core.defaults` and
   derivation logic here rather than duplicating it in the module or CLI.
@@ -88,7 +88,7 @@ configuration, SSH access and the checkpoint commands.
   Firecracker's API socket at `api.sock`. Both Firecracker and this socket
   live on the host. The run directory is mode 0700: host root and that sandbox's
   host user can access the API, ordinary host users and guest root cannot.
-- Guest journald stays inside the sandbox for agents to inspect. The host hypervisor unit
+- Guest journald stays inside the sandbox for agents to inspect. The host microvm unit
   discards serial stdout with `StandardOutput=null`; Firecracker diagnostics
   use `--log-path /proc/self/fd/2` through a pipe into the host journal. The
   pipe is required because Firecracker reopens its log path and cannot reopen
@@ -180,14 +180,14 @@ configuration, SSH access and the checkpoint commands.
   SSH listener and no output-chain pinhole for it. Guest root is the intended
   privilege level. `inbound` opens a guest port to every host process; it does
   not authenticate.
-- The secrets relay uses `requisite`, not `requires`, for the hypervisor unit: a
+- The secrets relay uses `requisite`, not `requires`, for the microvm unit: a
   connection must not start a stopped sandbox. Keep relay identities separate from
   sandbox users.
 - Hosts need KVM, systemd-networkd and systemd-resolved, whose stub at
   `127.0.0.53` the egress units resolve through. No guest reaches it:
   with domain grants or `"internet"`, guest queries to the bridge's port 53
   are redirected to the sandbox's own egress unit. It answers A queries with the
-  bridge address for domain grants and relays queries for `"internet"`. KSM is disabled. The hypervisor unit runs as
+  bridge address for domain grants and relays queries for `"internet"`. KSM is disabled. The microvm unit runs as
   the sandbox's user with `/dev/kvm` and `/dev/net/tun` as its explicit `DeviceAllow` entries; group
   `kvm` is for those two. The unit's root is an empty read-only tmpfs with the store, the
   run directory and the state directory bound in, which is what Firecracker's

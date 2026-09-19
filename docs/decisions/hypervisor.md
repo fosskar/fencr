@@ -62,7 +62,7 @@ What it required:
   with the deprecated `-r`, which added `root=/dev/vda` and made the systemd
   initrd fail on two root mounts, and it booted the unstripped `vmlinux`
   where crosvm takes a bzImage
-- `ProcSubset` and `ProtectProc` off on the hypervisor unit, because the device
+- `ProcSubset` and `ProtectProc` off on the microvm unit, because the device
   jails remount /proc in their namespaces; `AF_INET` allowed for the tap
   ioctls
 - unprivileged user namespaces on the host
@@ -80,7 +80,7 @@ Decided while on crosvm, and still standing:
   cannot browse the sandbox's files without mounting the image while the sandbox is
   stopped. A state tree from before the change is copied into the image by
   hand
-- the hypervisor unit runs as a system user of its own, `fencr-<name>` in group
+- the microvm unit runs as a system user of its own, `fencr-<name>` in group
   `kvm`, so two sandboxes' hypervisor processes share no host identity and the
   state image has an owner that outlives the unit, which `DynamicUser`
   would not give it
@@ -166,7 +166,7 @@ user-namespace assertion, the vhost-vsock device and the `vhost_vsock`
 module, the cid check in the relay.
 
 Carried over without a new test at the time: `ProcSubset` and
-`ProtectProc` stayed off on the hypervisor unit, as crosvm's device jails had
+`ProtectProc` stayed off on the microvm unit, as crosvm's device jails had
 needed. Tried on 2026-09-10 with the boot check: Firecracker runs with
 both, and they are on.
 
@@ -186,7 +186,7 @@ Against `main` the port removed more lines than it added.
 ## 2026-09-10: the production host review
 
 Firecracker's `docs/prod-host-setup.md`, `design.md`, `jailer.md` and
-`block.md` read against the hypervisor unit and the runner's defaults, and the
+`block.md` read against the microvm unit and the runner's defaults, and the
 setup compared with E2B, Fly Sprites, Docker Sandboxes and Claude Code's
 sandbox. Firecracker was 1.16.1 throughout; what needs 1.17 is filed
 (issues 21, 22, 23).
@@ -208,7 +208,7 @@ Changed:
   `Sync`
 - a virtio-rng: `firecracker.extraConfig.entropy`, so the guest's
   randomness does not rest on rdrand and jitter alone
-- the hypervisor unit runs in an empty read-only root: `TemporaryFileSystem=/:ro`
+- the microvm unit runs in an empty read-only root: `TemporaryFileSystem=/:ro`
   with the store, the run directory and the state directory bound in,
   which is what the jailer builds with its chroot. The unit had seen the
   whole host filesystem read-only. `ProtectSystem` and `ProtectHome`
