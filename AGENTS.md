@@ -5,8 +5,8 @@
 fencr provides sealed Firecracker microVMs through `nixosModules.fencr` (also
 `nixosModules.default`). Payloads are NixOS modules supplied through
 `fencr.vms.<name>.services`; fencr ships no agent, repository cloning, or host
-working-tree mounts. `nixos-rebuild` is the control plane; the `fencr` CLI does
-not mutate host configuration, but `fencr ssh` can run commands as guest root
+working-tree mounts. Every host change goes through `nixos-rebuild`; the `fencr`
+CLI does not mutate host configuration, but `fencr ssh` can run commands as guest root
 and `fencr checkpoint`/`fencr restore` change a vm's disk state. Instance and
 unit tables are compiled into its binary.
 
@@ -71,7 +71,12 @@ configuration, SSH access and the checkpoint commands.
   30-second idle window, keyed by principal and backend, never by backend
   alone: a vm reuses only what it opened itself. Sessions open on first use,
   not at startup, so a backend that is down cannot keep the gateway — and with
-  it every mcp-enabled vm's egress unit — from starting. `mcp.allow` matches `<server>.<tool>`; clients see
+  it every mcp-enabled vm's egress unit — from starting. An `Open` task enters
+  and exits each session's context and nothing else does: anyio binds a cancel
+  scope to the entering task, so a session entered in a request task and held
+  past it makes the next request unwind out of order. Any test double for
+  `downstream` needs a real `anyio.create_task_group()` or it cannot catch
+  that. `mcp.allow` matches `<server>.<tool>`; clients see
   `<server>__<tool>`. Payloads configure their own MCP clients.
 - The bridge is the road between host and guest: the guest's sshd listens on
   `fencr.vms.<name>.ip`; payloads provide listeners for `inbound` ports on

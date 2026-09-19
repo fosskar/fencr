@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import httpx
 import uvicorn
 from mcp import ClientSession, types
@@ -67,7 +68,12 @@ class GatewayTest(unittest.TestCase):
         @contextlib.asynccontextmanager
         async def downstream(_):
             self.opened += 1
-            yield self.backend
+            # the transport and the client session are anyio context managers,
+            # so entering one binds a cancel scope to the entering task. a stub
+            # without one cannot catch a session entered in a request task and
+            # then held past it
+            async with anyio.create_task_group():
+                yield self.backend
 
         patched = patch.object(gateway, "downstream", downstream)
         patched.start()

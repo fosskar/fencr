@@ -57,29 +57,60 @@ async def downstream(server: dict[str, Any]):
 IDLE_WINDOW = 30
 
 
+class Open:
+    """A downstream session and the one task that owns its context.
+
+    The transport and the client session are anyio context managers, and
+    anyio binds a cancel scope to whichever task enters one. A request task
+    that entered a session and returned would leave that scope behind on a
+    task that is finished, and the next request unwinds its own scopes out
+    of order. So a task of its own enters, holds and exits them; request
+    tasks are handed the session and never enter or exit anything.
+    """
+
+    def __init__(self, server: dict[str, Any]):
+        self.server = server
+        self.used = time.monotonic()
+        self.ready: asyncio.Future = asyncio.get_running_loop().create_future()
+        self.release = asyncio.Event()
+        self.task = asyncio.create_task(self.hold())
+
+    async def hold(self) -> None:
+        try:
+            async with downstream(self.server) as session:
+                self.ready.set_result(session)
+                await self.release.wait()
+        except Exception as error:
+            if not self.ready.done():
+                self.ready.set_exception(error)
+
+    async def aclose(self) -> None:
+        self.release.set()
+        # the session may have died on its own, which surfaces here as the
+        # task's exception; the entry is gone either way
+        with contextlib.suppress(Exception):
+            await self.task
+
+
 class Sessions:
     """One downstream session per principal per backend.
 
     Keyed by principal, so a session never carries one vm's state to
     another. Opened on first use, so a backend that is down cannot keep the
     gateway from starting — every mcp-enabled vm's egress unit requires it.
-    Dropped when idle past the window, so a restarted backend heals without
-    any reconnect logic of its own.
+    Dropped on the first call past the window, so a restarted backend heals
+    without any reconnect logic of its own.
     """
 
     def __init__(self, window: float = IDLE_WINDOW):
         self.window = window
-        self.entries: dict[tuple[str, str], tuple[Any, float, contextlib.AsyncExitStack]] = {}
+        self.entries: dict[tuple[str, str], Open] = {}
         self.locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def discard(self, key) -> None:
         entry = self.entries.pop(key, None)
-        if entry is None:
-            return
-        # a session that already died cannot be closed cleanly, and saying so
-        # adds nothing: the entry is gone either way
-        with contextlib.suppress(Exception):
-            await entry[2].aclose()
+        if entry is not None:
+            await entry.aclose()
 
     async def acquire(self, key, server: dict[str, Any]):
         lock = self.locks.get(key)
@@ -87,13 +118,17 @@ class Sessions:
             lock = self.locks[key] = asyncio.Lock()
         async with lock:
             entry = self.entries.get(key)
-            if entry is not None and time.monotonic() - entry[1] < self.window:
-                self.entries[key] = (entry[0], time.monotonic(), entry[2])
-                return entry[0]
+            if entry is not None and time.monotonic() - entry.used < self.window:
+                entry.used = time.monotonic()
+                return entry.ready.result()
             await self.discard(key)
-            stack = contextlib.AsyncExitStack()
-            session = await stack.enter_async_context(downstream(server))
-            self.entries[key] = (session, time.monotonic(), stack)
+            entry = Open(server)
+            try:
+                session = await entry.ready
+            except Exception:
+                await entry.aclose()
+                raise
+            self.entries[key] = entry
             return session
 
     async def call(self, key, server: dict[str, Any], action):
