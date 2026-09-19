@@ -4,6 +4,7 @@
 
 *Sealed Firecracker microVM sandboxes for AI agents on NixOS*
 
+[![nixbot](https://nixbot.fosskar.eu/badge/460332d5-0e2a-4b0f-abd5-94932856c103.svg)](https://nixbot.fosskar.eu/repos/github/fosskar/fencr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![NixOS flake](https://img.shields.io/badge/NixOS-flake-5277C3?style=flat-square&logo=nixos&logoColor=white)](flake.nix)
 [![Firecracker](https://img.shields.io/badge/Firecracker-microVM-FF9900?style=flat-square)](https://firecracker-microvm.github.io/)
