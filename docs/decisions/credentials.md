@@ -76,7 +76,13 @@ authority, ends the tls, replaces the header and sends the request on.
   units separated nothing the vm could not reach. Two vms never share a
   process
 - one authority per host, `fencr-ca.service`, made on first use with
-  openssl in `/var/lib/fencr/ca`, a directory root alone reads. The
+  openssl in `/var/lib/fencr/ca`, a directory root alone reads
+  (2026-09-19: one per vm instead, `fencr-<vm>-ca.service` in
+  `/var/lib/fencr/ca/<vm>`. A host-wide key was handed to every
+  credential-holding vm's proxy while every guest trusted it, so a bug in
+  any one proxy yielded a key the whole host accepts. Per-sandbox issuance
+  is what Vercel, Docker, E2B and Daytona ship; none documents a shared
+  one). The
   credential unit gets the root as systemd credentials and signs a
   certificate for each domain with it. A vm with a credential fetches
   the root certificate beside its secrets at boot and rebuilds the system

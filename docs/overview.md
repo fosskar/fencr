@@ -20,9 +20,10 @@ On the host, at `10.11.<id>.1`:
 | `fencr-<vm>-egress.service` | the road out: DNS on `:33053`, TLS on `:33443`, `DynamicUser`, credentials through `LoadCredential` |
 | `fencr-<vm>-secrets@.service` | socket-activated on vsock port 5, tars its own credentials to the guest |
 | `fencr-<vm>-checkpoint@.service` | `cp --reflink` of the state image; timer optional, `ExecStopPost` by default |
+| `fencr-<vm>-ca.service` | the vm's own certificate authority, in `/var/lib/fencr/ca/<vm>`, only when it holds credentials |
 
-Host-wide: `fencr-ca.service`, `fencr-credentials-reload`,
-`fencr-secret-<name>@` and `fencr-mcp-gateway`.
+Host-wide: `fencr-credentials-reload`, `fencr-secret-<name>@` and
+`fencr-mcp-gateway`.
 
 In the guest, at `10.11.<id>.2`, vsock cid `3 + id`:
 
@@ -33,7 +34,7 @@ In the guest, at `10.11.<id>.2`, vsock cid `3 + id`:
 - `/` is `state.img`, persisting across reboot and rebuild. `/nix/store` is
   a fresh read-only erofs image each rebuild, not a host store share
 - `/run/agent-secrets` holds raw secrets at mode 0400, and `/run/fencr`
-  holds the host authority rebuilt into the trust store at boot
+  holds the vm's own authority rebuilt into the trust store at boot
 - journald stays inside the VM; serial output is discarded on the host
 
 The bridge is `br-<vm>` and `tap-<vm>` on `10.11.<id>.0/26`. vsock carries
@@ -54,7 +55,7 @@ flowchart TD
   S --> F["forward chain: public IPv4 only"]
   N --> H["readClientHello → server name"]
   H --> C{"a credential's domain?"}
-  C -->|yes| T["terminate with a cert from fencr-ca<br/>match allow entries<br/>inject the header, log without it"]
+  C -->|yes| T["terminate with a cert from the vm's own ca<br/>match allow entries<br/>inject the header, scrub it from the reply"]
   C -->|no| A{"allowedName: grant ∧ ¬deny"}
   A -->|allow| P["dialPublic: reject loopback<br/>and the vm's own /26<br/>splice bytes unread"]
   A -->|deny| X["close · journal: deny &lt;name&gt;"]
@@ -121,12 +122,14 @@ reach a running VM:
 - a deny entry no grant covers, which is a typo
 - a deny entry equal to a grant, which would empty it
 - an outbound entry that does not parse, reported with the reason
-- two VMs sharing an `id`, or one out of range
+- two VMs sharing an `id`
 - an `inbound` port declared twice
 - a credential that is not declared, is reserved, or carries both
   `secretFile` and `secretCommand`
 - credentials sharing a domain without `allow` entries
-- a VM name whose `tap-<name>` exceeds `IFNAMSIZ`
+- a VM name outside letters, digits, `_` and `-`, or longer than 11
+  characters, since every derived name is this one with a prefix and
+  `tap-<name>` must fit `IFNAMSIZ`
 
 ## a credential the vm uses and never holds
 
@@ -136,12 +139,12 @@ sequenceDiagram
   participant E as egress unit (host)
   participant U as api.anthropic.com
   A->>E: TLS to api.anthropic.com<br/>(/etc/hosts → bridge)
-  E->>A: certificate from fencr-ca
+  E->>A: certificate from the vm's own ca
   A->>E: POST /v1/messages<br/>x-api-key: fencr-9f3c…
   E->>E: allow entry matches?<br/>read secret from<br/>$CREDENTIALS_DIRECTORY
   E->>U: same request,<br/>real key in the header
   U-->>E: response
-  E-->>A: response, unchanged
+  E-->>A: response, with the value scrubbed back
   E->>E: journal: method, host, uri, status<br/>never a header
 ```
 
@@ -157,13 +160,20 @@ fencr.credentials.anthropic = {
 fencr.vms.agent.credentials = [ "anthropic" ];
 ```
 
+Each VM has its own certificate authority, so a certificate minted for one is
+worthless against another.
+
 The guest gets a placeholder, not a key: `guestEnv` carries `fencr-<hash>`,
 which satisfies a client that refuses to start without one. The host sets the
 real header itself, so that placeholder never has to be substituted anywhere.
 `substitutePlaceholder = true` additionally replaces it in the uri or a small
-body, for an api that takes the key there instead of in a header. It is off
-by default: an upstream that echoes a request back would otherwise hand the
-real value to the guest in the response.
+body, for an api that takes the key there instead of in a header — off by
+default, because the header path already covers every provider preset and
+leaves the value in fewer places.
+
+Either way, an upstream that echoes a request back would hand the guest the
+real value in its reply, so the proxy rewrites it to the placeholder on the
+way out: response headers, and bodies up to 1 MiB.
 
 Raw `secrets` are the other door, for keys a program must hold itself. They
 are fetched over vsock at boot into `/run/agent-secrets`, readable by guest

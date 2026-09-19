@@ -164,11 +164,22 @@ guarantee against disclosure by the APIs you allow the guest to call.
 ## transport and trust
 
 The credential's domain resolves to the host inside the VM. The egress proxy
-terminates TLS using a per-host certificate authority trusted by the guest,
-injects the header and forwards the request. The guest receives the public
-CA certificate, not its private key. fencr configures the system trust store,
+terminates TLS using a certificate authority trusted by the guest, injects
+the header and forwards the request. The guest receives the public CA
+certificate, not its private key. fencr configures the system trust store,
 `NIX_SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`; certificate-pinning clients
 cannot use this interception path.
+
+**Each VM has its own authority**, at `/var/lib/fencr/ca/<vm>/`, created by
+`fencr-<vm>-ca.service`. A VM's proxy holds one private key and its guest
+trusts one certificate, both its own, so a certificate minted for one VM is
+worthless against another.
+
+If an upstream echoes a request back — some APIs reflect payloads in errors
+or debug endpoints — the proxy rewrites the credential out of the response
+before the guest reads it, putting the placeholder back where the value was.
+This covers response headers and bodies up to 1 MiB; a streamed or unmeasured
+body is forwarded untouched.
 
 HTTP method/path rules do not understand MCP tools. Use the separate
 [MCP gateway](mcp-gateway.md) for tool-level permissions and approvals.

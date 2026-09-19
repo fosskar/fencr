@@ -159,6 +159,20 @@ weakens protection compared with host approval. Enabling it emits a NixOS
 configuration warning. Tool allowlists, credential isolation and cross-principal
 session restrictions remain enforced.
 
+## backend connections
+
+The gateway holds one connection to each backend per VM, reused for 30
+seconds of idle time. A VM reuses only what it opened itself: a session is
+keyed by VM and backend, never by backend alone, so it cannot carry one VM's
+state to another.
+
+Connections open on first use, not at startup, so a backend that is down
+cannot keep the gateway from starting — every MCP-enabled VM's egress unit
+requires the gateway, and a broken backend would otherwise take that VM off
+the network entirely. An idle session is dropped and remade on the next
+call, so a restarted backend needs no intervention, and a call that fails
+runs once more on a fresh session.
+
 ## credentials and operation
 
 Per-VM gateway credentials are generated on the host under

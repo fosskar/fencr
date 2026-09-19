@@ -16,9 +16,11 @@ NixOS configuration inside each VM.
   and other special-use ranges stay shut. Narrow that to an allowlist of
   domains, IP/port pairs or host ports, or to nothing at all with
   `outbound = [ ]`.
-- **Host-held API keys.** Inject credentials only into permitted HTTP methods
-  and paths. Presets for Anthropic, OpenAI, OpenRouter and OpenCode Go/Zen;
-  secret files, Clan vars and host commands supported.
+- **Host-held API keys.** The guest gets a placeholder; the host injects the
+  real key, only into permitted HTTP methods and paths, and scrubs it back out
+  of the response so an API that echoes a request cannot leak it. Each VM has
+  its own certificate authority. Presets for Anthropic, OpenAI, OpenRouter and
+  OpenCode Go/Zen; secret files, Clan vars and host commands supported.
 - **MCP gateway.** Enforce per-agent tool permissions and approval before
   execution across existing MCP servers. Allow calendar lookups, for example,
   but require approval to create events. Backend tokens stay on the host.

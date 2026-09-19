@@ -67,7 +67,11 @@ configuration, SSH access and the checkpoint commands.
   `https://mcp.fencr/mcp/` through their egress unit, which injects a per-VM
   token from `/var/lib/fencr-mcp/<name>`. `gateway.py` keeps separate session
   registries per principal and forwards to explicit host-loopback backends
-  with host-held tokens. `mcp.allow` matches `<server>.<tool>`; clients see
+  with host-held tokens. Its `Sessions` keeps a backend session open for a
+  30-second idle window, keyed by principal and backend, never by backend
+  alone: a vm reuses only what it opened itself. Sessions open on first use,
+  not at startup, so a backend that is down cannot keep the gateway — and with
+  it every mcp-enabled vm's egress unit — from starting. `mcp.allow` matches `<server>.<tool>`; clients see
   `<server>__<tool>`. Payloads configure their own MCP clients.
 - The bridge is the road between host and guest: the guest's sshd listens on
   `fencr.vms.<name>.ip`; payloads provide listeners for `inbound` ports on
@@ -125,10 +129,14 @@ configuration, SSH access and the checkpoint commands.
 - `credentials` intercepts TLS for the credential's domain only: the guest's
   `/etc/hosts` points the domain at the bridge, and the same unit that judges
   every other name ends this one itself, by SNI. It holds a certificate per
-  granted domain from the per-host
-  authority `fencr-ca.service` keeps in `/var/lib/fencr/ca` and injects that
+  granted domain from the vm's own authority, which `fencr-<name>-ca.service`
+  keeps in `/var/lib/fencr/ca/<name>`, so a certificate minted for one vm is
+  worthless against another. It injects that
   credential's header, read from `$CREDENTIALS_DIRECTORY` per request rather
-  than from its environment. `LoadCredential` copies the source at startup;
+  than from its environment, and scrubs the value back to the placeholder in
+  the response, in headers and in bodies up to 1 MiB, so an upstream that
+  echoes a request cannot hand the guest the real key.
+  `LoadCredential` copies the source at startup;
   `reloadUnits` watches `secretFile` sources and restarts running credential
   egress units through `fencr-credentials-reload.service` on changes. A
   credential declares `secretFile` or `secretCommand`, never both;
@@ -159,6 +167,10 @@ configuration, SSH access and the checkpoint commands.
   `substitutePlaceholder = false` so tool arguments cannot receive tokens
   through placeholder substitution. Backend URLs must use host IPv4
   loopback; guests cannot reach the gateway or backends directly by default.
+- A vm name is letters, digits, `_` and `-`, at most 11 characters, checked
+  once in `instance.nix`: every derived name is this one with a prefix, and
+  `tap-<name>` must fit `IFNAMSIZ`. Assertions and log prefixes say `fencr:`,
+  never `fencr.vms:` — this is fencr, not fencr vms.
 - SSH combines `fencr.adminKeys` and per-VM `authorizedKeys`; no keys means no
   SSH listener and no output-chain pinhole for it. Guest root is the intended
   privilege level. `inbound` opens a guest port to every host process; it does
@@ -215,7 +227,8 @@ nix flake check
 - `checks.egress` is the package itself: `buildGoModule` runs `pkgs/egress`'s
   own `go test` cases in its check phase.
 - `checks.mcp-gateway` runs `pkgs/mcp-gateway/test_gateway.py` through
-  `tests.contract`, covering authorization, session isolation, both approval
+  `tests.contract`, covering authorization, session isolation, backend session
+  reuse and its per-principal keying, both approval
   modes and backend transport. `checks/mcp-module.nix` verifies gateway
   options, credentials, unit wiring and validation.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
@@ -226,7 +239,8 @@ nix flake check
   images sit on a btrfs disk so reflinks exist. It checks SSH, raw secrets,
   persistent state, the hypervisor's empty root, ingress, denied traffic,
   domain egress with a deny entry, credential injection with `allow`
-  entries and the access log, checkpoints and restore, and a clean stop.
+  entries and the access log, the guest seeing the placeholder rather than the
+  value in an echoed response, checkpoints and restore, and a clean stop.
   It also checks MCP tool filtering, session isolation, missing host approval,
   token secrecy and persistence, and blocked direct gateway/backend access.
   It checks guest-local logs, serial suppression, Firecracker diagnostics,
