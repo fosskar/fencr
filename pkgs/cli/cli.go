@@ -47,6 +47,8 @@ type Sandbox struct {
 	APISocket     string
 	// the host account that reaches this sandbox's sshd and nothing else
 	JumpUser string
+	// how many of each automatic kind survive a prune
+	Keep int
 	// without keys the module writes no Host alias, and a bare name would
 	// resolve to whatever else answers to it
 	SSH bool
@@ -734,7 +736,7 @@ func nodatacow(dir, image string) (bool, error) {
 // second image behind
 func replace(source, dir, image string) error {
 	tmp := image + ".tmp"
-	if err := stage(source, dir, image, tmp); err != nil {
+	if err := stage(source, dir, image, tmp, "auto"); err != nil {
 		if removed := os.Remove(tmp); removed != nil && !errors.Is(removed, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "fencr: %v\n", removed)
 		}
@@ -743,7 +745,7 @@ func replace(source, dir, image string) error {
 	return os.Rename(tmp, image)
 }
 
-func stage(source, dir, image, tmp string) error {
+func stage(source, dir, image, tmp, reflink string) error {
 	// a copy that died before the rename left this behind
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -763,8 +765,14 @@ func stage(source, dir, image, tmp string) error {
 			return err
 		}
 	}
+	// cp refuses --sparse=always beside --reflink=always: a clone shares the
+	// source's extents, holes included, so there is nothing left to decide
+	sparse := "always"
+	if reflink == "always" {
+		sparse = "auto"
+	}
 	if _, err := output(cpBin,
-		"--reflink=auto", "--sparse=always", "--preserve=mode,ownership", source, tmp); err != nil {
+		"--reflink="+reflink, "--sparse="+sparse, "--preserve=mode,ownership", source, tmp); err != nil {
 		return err
 	}
 	// a rename reaching the directory before the data would leave the sandbox an
@@ -775,6 +783,111 @@ func stage(source, dir, image, tmp string) error {
 	}
 	defer written.Close()
 	return written.Sync()
+}
+
+// the automatic kinds own their prefixes, so a name an operator chose can
+// never be pruned as though the timer had written it
+var automatic = []string{"stop", "timer", "manual"}
+
+func stamped(kind string) string {
+	return kind + "-" + time.Now().UTC().Format("20060102T150405")
+}
+
+// the label the units pass, resolved to the file name it writes. the second
+// value is false where there is nothing to do and that is not an error
+func checkpointLabel(label string) (string, bool) {
+	switch label {
+	case "stop":
+		// the disk a sandbox died on is not a restore point worth keeping
+		if result := os.Getenv("SERVICE_RESULT"); result != "" && result != "success" {
+			fmt.Fprintf(os.Stderr, "fencr: no stop checkpoint: the sandbox ended with %s\n", result)
+			return "", false
+		}
+		return stamped(label), true
+	case "timer", "manual":
+		return stamped(label), true
+	}
+	for _, kind := range automatic {
+		if strings.HasPrefix(label, kind+"-") {
+			fmt.Fprintf(os.Stderr, "fencr: %q is reserved for automatic checkpoints\n", label)
+			os.Exit(1)
+		}
+	}
+	if !checkpointName(label) {
+		fmt.Fprintf(os.Stderr, "fencr: %q is not a checkpoint name (letters, digits, \"_.-\")\n", label)
+		os.Exit(1)
+	}
+	return label, true
+}
+
+// keep the newest of each automatic kind; the stamp orders them by name
+func prune(sandbox *Sandbox) {
+	found, err := checkpoints(sandbox)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		return
+	}
+	for _, kind := range []string{"stop", "timer"} {
+		var names []string
+		for _, entry := range found {
+			if strings.HasPrefix(entry.name, kind+"-") {
+				names = append(names, entry.name)
+			}
+		}
+		sort.Strings(names)
+		for at := 0; at+sandbox.Keep < len(names); at++ {
+			file := filepath.Join(sandbox.CheckpointDir, names[at]+".img")
+			if err := os.Remove(file); err != nil {
+				fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+			}
+		}
+	}
+}
+
+// what the checkpoint units run. the copy lands under a .tmp name and is
+// renamed, so a reader never sees a half-written checkpoint
+func writeCheckpoint(sandbox *Sandbox, label string) {
+	name, carry := checkpointLabel(label)
+	if !carry {
+		return
+	}
+	// the api answers only while firecracker runs, and a timer that fires at a
+	// stopped sandbox has nothing to copy
+	if label == "timer" {
+		if _, err := vmmState(sandbox); err != nil {
+			fmt.Fprintln(os.Stderr, "fencr: no timer checkpoint: the sandbox is not running")
+			return
+		}
+	}
+	if err := os.MkdirAll(sandbox.CheckpointDir, 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		os.Exit(1)
+	}
+	file := filepath.Join(sandbox.CheckpointDir, name+".img")
+	if _, err := os.Stat(file); err == nil {
+		fmt.Fprintf(os.Stderr, "fencr: checkpoint %q exists\n", name)
+		os.Exit(1)
+	}
+	// a running sandbox is crash-consistent only through a clone, which is
+	// atomic on the file; a stop has already flushed, so it may fall back
+	reflink := "always"
+	if label == "stop" {
+		reflink = "auto"
+	}
+	tmp := file + ".tmp"
+	if err := stage(sandbox.Image, sandbox.CheckpointDir, sandbox.Image, tmp, reflink); err != nil {
+		if removed := os.Remove(tmp); removed != nil && !errors.Is(removed, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "fencr: %v\n", removed)
+		}
+		fmt.Fprintf(os.Stderr, "fencr: no checkpoint of a running sandbox without reflinks: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.Rename(tmp, file); err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("fencr: checkpoint %s\n", name)
+	prune(sandbox)
 }
 
 func main() {
@@ -827,6 +940,9 @@ func main() {
 			execute(systemctlBin, append(units, "--no-pager")...)
 		}
 		show(only, watch)
+	case "write-checkpoint":
+		// what the units run: the work itself, as the sandbox's own user
+		writeCheckpoint(find(arg(args, 1)), arg(args, 2))
 	case "checkpoint":
 		// the unit does the work as the sandbox's user; a bad name is its error
 		sandbox := find(arg(args, 1))

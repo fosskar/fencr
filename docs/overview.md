@@ -201,7 +201,7 @@ modules/
     ├── egress.nix     # config, credentials, authority
     ├── microvm.nix    # the microvm's unit: firecracker under systemd
     ├── guest.nix      # guestBase and guest-secrets.sh
-    ├── checkpoint.nix # the copy script and units
+    ├── checkpoint.nix # the checkpoint units
     ├── host-units.nix # per-sandbox services, sockets, timers
     └── hardening.nix  # the sandbox sets
 

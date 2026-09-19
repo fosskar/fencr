@@ -225,6 +225,21 @@ pkgs.runCommand "fencr-cli-check" { } ''
   ${cli}/bin/fencr list > actual
   grep -E '^sealed +1 +10.11.1.2 +denied / denied$' actual
   grep -F 'TCP 22, 33627 (22: ssh) / github.com TLS 443, *.github.com TLS 443, !gist.github.com TLS 443 (denied), api.test TLS 443 (credential api)' actual
+  # what the checkpoint units run. the copy itself needs the sandbox's own
+  # paths, so nixos-boot covers that; these are the decisions that used to be
+  # a shell case statement
+  export TEST_STATE=active
+  if ${cli}/bin/fencr write-checkpoint sbx stop-20260101T000000 2> actual; then exit 1; fi
+  grep -Fx 'fencr: "stop-20260101T000000" is reserved for automatic checkpoints' actual
+  if ${cli}/bin/fencr write-checkpoint sbx 'a name' 2> actual; then exit 1; fi
+  grep -Fx 'fencr: "a name" is not a checkpoint name (letters, digits, "_.-")' actual
+  # a sandbox that died leaves a disk nobody should keep as a restore point,
+  # and ExecStopPost must not fail the unit over it
+  SERVICE_RESULT=timeout ${cli}/bin/fencr write-checkpoint sbx stop 2> actual
+  grep -Fx 'fencr: no stop checkpoint: the sandbox ended with timeout' actual
+  # a timer that fires at a stopped sandbox has nothing to copy
+  TEST_API=timeout ${cli}/bin/fencr write-checkpoint sbx timer 2> actual
+  grep -Fx 'fencr: no timer checkpoint: the sandbox is not running' actual
   for state in failed inactive missing unavailable; do
     export TEST_STATE="$state"
     case "$state" in

@@ -73,8 +73,9 @@ let
     outbound = [ ];
     credentials = [ "api" ];
   };
-  keyedUnits = core.hostUnits pkgs keyed;
-  units = core.hostUnits pkgs resolved;
+  cli = "/nix/store/cli";
+  keyedUnits = core.hostUnits pkgs cli keyed;
+  units = core.hostUnits pkgs cli resolved;
   longName = resolve "coding-agent-1" {
     id = 1;
     outbound = [ "internet" ];
@@ -445,12 +446,12 @@ assert lib.assertMsg (
     "~@privileged"
     "~@resources"
   ]
-  && !((core.microvmService pkgs resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
+  && !((core.microvmService pkgs cli resolved "/nix/store/runner").serviceConfig ? SystemCallFilter)
 ) "core check: syscall filter drifted";
 # the unit's own user, no capabilities, and the empty root the jailer builds
 assert lib.assertMsg (
   let
-    sandbox = (core.microvmService pkgs resolved "/nix/store/runner").serviceConfig;
+    sandbox = (core.microvmService pkgs cli resolved "/nix/store/runner").serviceConfig;
   in
   sandbox.User == "fencr-sbx"
   && sandbox.StandardOutput == "null"
@@ -806,14 +807,13 @@ assert lib.assertMsg (
 assert facts "checkpoint" (
   let
     template = units.services."fencr-sbx-checkpoint@".serviceConfig;
-    script = core.checkpointText pkgs resolved;
     hourly = resolve "sbx" {
       id = 0;
       checkpoints.interval = "hourly";
       checkpoints.keep = 3;
     };
-    timed = core.hostUnits pkgs hourly;
-    silent = core.microvmService pkgs (resolve "sbx" {
+    timed = core.hostUnits pkgs cli hourly;
+    silent = core.microvmService pkgs cli (resolve "sbx" {
       id = 0;
       checkpoints.onStop = false;
     }) "/run/x";
@@ -825,22 +825,17 @@ assert facts "checkpoint" (
       && lib.elem "/var/lib/fencr-sandboxes/sbx" template.BindPaths;
     "the copy reaches nothing but a unix socket" = template.RestrictAddressFamilies == [ "AF_UNIX" ];
     "the template takes the checkpoint name" = lib.hasSuffix " %i" template.ExecStart;
-    "a running copy is a reflink" = lib.hasInfix "cp --reflink=always " script;
-    "the copy is on disk before it is announced" = lib.hasInfix "sync -f " script;
-    "keep bounds each automatic kind" = lib.hasInfix "head -n -5 " script;
-    "the timer probe is bounded" =
-      lib.hasInfix "curl --silent --fail --max-time 5 --unix-socket \"$socket\" http://localhost/" script;
-    "the probe asks the sandbox's own api socket" = lib.hasInfix "/run/fencr-sbx/api.sock" script;
+    "the copy is the command's work, not a script of its own" =
+      lib.hasPrefix "/nix/store/cli/bin/fencr write-checkpoint sbx " template.ExecStart;
     "no interval means no timer" = units.timers == { };
     "an interval becomes a timer for the template" =
       timed.timers.fencr-sbx-checkpoint.timerConfig == {
         OnCalendar = "hourly";
         Unit = "fencr-sbx-checkpoint@timer.service";
       };
-    "keep follows the instance" = lib.hasInfix "head -n -3 " (core.checkpointText pkgs hourly);
     "a clean stop leaves a checkpoint" =
       lib.any (lib.hasSuffix " stop")
-        (core.microvmService pkgs resolved "/run/x").serviceConfig.ExecStopPost;
+        (core.microvmService pkgs cli resolved "/run/x").serviceConfig.ExecStopPost;
     "onStop = false leaves none" = silent.serviceConfig.ExecStopPost == [ ];
   }
 );
@@ -889,7 +884,7 @@ assert lib.assertMsg (
   # path unit at all
   && core.reloadUnits pkgs { sbx = fetched; } == { }
   &&
-    (core.hostUnits pkgs fetched).services."fencr-sbx-egress".requires == [
+    (core.hostUnits pkgs cli fetched).services."fencr-sbx-egress".requires == [
       "fencr-sbx-ca.service"
       "fencr-secret-rotating.socket"
     ]

@@ -7,7 +7,7 @@ let
     vsockOf
     powerPort
     emptyRootOf
-    checkpointScript
+    checkpointCommand
     ;
 in
 {
@@ -16,7 +16,7 @@ in
   # identity and the state image has an owner outliving the unit. group kvm
   # is for /dev/kvm and the tap, AF_INET for the tap ioctls
   microvmService =
-    pkgs: instance: runner:
+    pkgs: cli: instance: runner:
     let
       runDir = runDirOf instance.name;
       image = stateImageOf instance.name;
@@ -56,7 +56,7 @@ in
           '';
           TimeoutStopSec = 60;
           # "-": a filesystem without reflinks must not fail the unit
-          ExecStopPost = lib.optional instance.checkpoints.onStop "-${checkpointScript pkgs instance} stop";
+          ExecStopPost = lib.optional instance.checkpoints.onStop "-${checkpointCommand cli instance} stop";
           User = userOf instance.name;
           WorkingDirectory = runDir;
           Restart = "on-failure";

@@ -36,7 +36,7 @@ configuration, SSH access and the checkpoint commands.
   `egressConfig`, `egressServiceConfig`, and the two bridge ports
   `egressDnsPort` and `egressTlsPort` that `redirectRules` reaches from the
   guest's 53 and 443),
-  `checkpoint.nix` (`checkpointScript`, `checkpointUnits`, `apiSocketOf`),
+  `checkpoint.nix` (`checkpointCommand`, `checkpointUnits`, `apiSocketOf`),
   `host-units.nix` (`hostUnits`: services, sockets, timers) and `guest.nix`
   (`guestBase`, with the boot-time fetch in `guest-secrets.sh`). `emptyRootOf`
   in `hardening.nix` is the microvm unit's and the checkpoint unit's sandbox. `guestPortsOf` in `instance.nix` is

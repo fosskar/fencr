@@ -25,7 +25,11 @@ let
       credentials = config.fencr.credentials;
     }
   ) instances;
-  unitSets = lib.mapAttrs (_: core.hostUnits pkgs) resolvedInstances;
+  cli = import ../pkgs/cli {
+    inherit lib pkgs;
+    instances = resolvedInstances;
+  };
+  unitSets = lib.mapAttrs (_: core.hostUnits pkgs cli) resolvedInstances;
   secretUnits = core.secretUnits pkgs config.fencr.credentials;
   reloadUnits = core.reloadUnits pkgs resolvedInstances;
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
@@ -84,12 +88,7 @@ in
           lib.concatMapStringsSep ", " (swap: swap.device) plain
         }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap.";
 
-    environment.systemPackages = lib.mkIf (instances != { }) [
-      (import ../pkgs/cli {
-        inherit lib pkgs;
-        instances = resolvedInstances;
-      })
-    ];
+    environment.systemPackages = lib.mkIf (instances != { }) [ cli ];
 
     # any host user holding an authorized key gets in with their own identity
     programs.ssh.extraConfig = lib.concatStrings (
@@ -147,7 +146,7 @@ in
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (name: instance: {
         ${(core.unitsOf name).microvm} =
-          core.microvmService pkgs instance
+          core.microvmService pkgs cli instance
             guestSystems.${name}.config.microvm.declaredRunner;
       }) resolvedInstances
       ++ map (units: units.services) (lib.attrValues unitSets)

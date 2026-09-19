@@ -17,12 +17,12 @@ in
 {
 
   hostUnits =
-    pkgs: instance:
+    pkgs: cli: instance:
     let
       units = unitsOf instance.name;
       microvmUnit = "${units.microvm}.service";
       ca = lib.optional (instance.credentials != [ ]) "${caUnitOf instance.name}.service";
-      checkpoints = checkpointUnits pkgs instance;
+      checkpoints = checkpointUnits cli instance;
       # the socket, not the resolver: systemd connects to it while starting
       # the egress unit, which starts an instance of the service behind it
       resolvers = map (credential: "${secretUnitOf credential.name}.socket") (
