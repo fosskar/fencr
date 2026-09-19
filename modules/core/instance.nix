@@ -20,7 +20,7 @@ let
     credentialAllowErrors
     credentialId
     caMemberNames
-    guestTrust
+
     domainPatternError
     domainCovers
     duplicates
@@ -77,6 +77,7 @@ in
     microvm = "fencr-${name}";
     egress = "fencr-${name}-egress";
     secrets = "fencr-${name}-secrets";
+    trust = "fencr-${name}-trust";
     checkpoint = "fencr-${name}-checkpoint";
   };
   # firecracker's vsock: one socket in, "<vsock>_<port>" out, in a directory
@@ -85,6 +86,7 @@ in
   vsockOf = name: "${runDirOf name}/vsock";
   powerPort = 4;
   secretsPort = 5;
+  trustPort = 6;
 
   # addresses are rejected before domain validation: domainPatternError would
   # accept a dotted quad, and an address without a port must be an error
@@ -251,7 +253,6 @@ in
           secretName:
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"
         ) (lib.filter (secretName: !credentialId secretName) secretNames)
-        ++ lib.optional (lib.elem guestTrust.member secretNames) "${name}: secret name \"${guestTrust.member}\" is reserved for the authority"
         ++ lib.optional (
           domains != [ ] && internet
         ) "${name}: outbound cannot combine internet with domain grants"

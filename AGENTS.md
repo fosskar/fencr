@@ -38,7 +38,8 @@ configuration, SSH access and the checkpoint commands.
   guest's 53 and 443),
   `checkpoint.nix` (`checkpointCommand`, `checkpointUnits`, `apiSocketOf`),
   `host-units.nix` (`hostUnits`: services, sockets, timers) and `guest.nix`
-  (`guestBase`, with the boot-time fetch in `guest-secrets.sh`). `emptyRootOf`
+  (`guestBase`, with the boot-time fetch in `guest-fetch.sh`, which the secrets
+  and trust units share). `emptyRootOf`
   in `hardening.nix` is the microvm unit's and the checkpoint unit's sandbox. `guestPortsOf` in `instance.nix` is
   the one list of guest ports the host may reach; the guest firewall and the
   output chain both take it. Keep shared defaults in `core.defaults` and
@@ -85,7 +86,7 @@ configuration, SSH access and the checkpoint commands.
   `fencr.sandboxes.<name>.ip`; payloads provide listeners for `inbound` ports on
   that address. The firewall's output chain lets the host reach those ports and
   nothing else. vsock
-  carries only the boot-time secrets fetch and the power button: Firecracker's
+  carries only the boot-time fetches and the power button: Firecracker's
   unix socket `/run/fencr-<name>/vsock`, in a directory only the sandbox's user
   enters, with guest-to-host port N arriving on `vsock_N` beside it and
   Firecracker's API socket at `api.sock`. Both Firecracker and this socket

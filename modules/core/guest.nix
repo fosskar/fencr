@@ -6,6 +6,7 @@ let
     apiSocketOf
     powerPort
     secretsPort
+    trustPort
     prefixLength
     guestTrust
     trustVariables
@@ -24,6 +25,49 @@ in
     }:
     let
       trusted = agentSandbox.credentialDomains != [ ];
+      # one unit per thing the guest is handed: a vsock port, a directory, and
+      # whatever has to happen once the files are there
+      bootFetch =
+        {
+          description,
+          dir,
+          port,
+          mode,
+          fileMode,
+          first,
+          after ? [ ],
+        }:
+        {
+          inherit description;
+          wantedBy = [ "sysinit.target" ];
+          before = [ "sysinit.target" ];
+          after = [ "local-fs.target" ];
+          requires = [ "local-fs.target" ];
+          unitConfig.DefaultDependencies = false;
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = [
+              (pkgs.replaceVarsWith {
+                src = ./guest-fetch.sh;
+                isExecutable = true;
+                replacements = {
+                  inherit (pkgs) runtimeShell;
+                  inherit
+                    dir
+                    mode
+                    fileMode
+                    first
+                    ;
+                  socat = "${pkgs.socat}/bin/socat";
+                  tar = "${pkgs.gnutar}/bin/tar";
+                  port = toString port;
+                };
+              })
+            ]
+            ++ after;
+          };
+        };
       bandwidth = mib: {
         bandwidth = {
           size = mib * 1048576;
@@ -147,31 +191,33 @@ in
       system.etc.overlay.enable = true;
       services.userborn.enable = true;
       systemd.services = lib.mkMerge [
-        (lib.mkIf (agentSandbox.secretNames != [ ] || trusted) {
-          fencr-secrets = {
+        (lib.mkIf (agentSandbox.secretNames != [ ]) {
+          fencr-secrets = bootFetch {
             description = "Materialize fencr secrets in volatile guest storage";
-            wantedBy = [ "sysinit.target" ];
-            before = [ "sysinit.target" ];
-            after = [ "local-fs.target" ];
-            requires = [ "local-fs.target" ];
-            unitConfig.DefaultDependencies = false;
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              ExecStart = pkgs.replaceVarsWith {
-                src = ./guest-secrets.sh;
-                isExecutable = true;
-                replacements = {
-                  inherit (pkgs) runtimeShell;
-                  inherit (guestTrust) member cert bundle;
-                  socat = "${pkgs.socat}/bin/socat";
-                  tar = "${pkgs.gnutar}/bin/tar";
-                  port = toString secretsPort;
-                  first = lib.head (agentSandbox.secretNames ++ [ guestTrust.member ]);
-                  storeBundle = lib.optionalString trusted config.security.pki.caBundle;
-                };
-              };
-            };
+            dir = "/run/agent-secrets";
+            port = secretsPort;
+            mode = "0700";
+            fileMode = "0400";
+            first = lib.head agentSandbox.secretNames;
+          };
+        })
+        (lib.mkIf trusted {
+          # the authority is the interception's own, so it arrives on its own
+          # port and never lands among the guest's raw secrets
+          fencr-trust = bootFetch {
+            description = "Materialize the fencr authority in the guest trust store";
+            dir = "/run/fencr";
+            port = trustPort;
+            mode = "0755";
+            fileMode = "0444";
+            first = guestTrust.member;
+            after = [
+              (pkgs.writeShellScript "fencr-trust-bundle" ''
+                set -eu
+                cat ${config.security.pki.caBundle} ${guestTrust.cert} > ${guestTrust.bundle}
+                chmod 0444 ${guestTrust.bundle}
+              '')
+            ];
           };
         })
         {

@@ -5,6 +5,7 @@ let
     unitsOf
     vsockOf
     secretsPort
+    trustPort
     caUnitOf
     caCertOf
     guestTrust
@@ -28,7 +29,8 @@ in
       resolvers = map (credential: "${secretUnitOf credential.name}.socket") (
         lib.filter (credential: (credential.secretCommand or null) != null) instance.credentials
       );
-      secrets = instance.secrets != { } || instance.credentials != [ ];
+      secrets = instance.secrets != { };
+      trusted = instance.credentials != [ ];
     in
     {
       services =
@@ -48,10 +50,32 @@ in
               StandardInput = "socket";
               StandardError = "journal";
               RestrictAddressFamilies = "none";
-              LoadCredential =
-                lib.mapAttrsToList (secretName: source: "${secretName}:${source}") instance.secrets
-                ++ lib.optional (instance.credentials != [ ]) "${guestTrust.member}:${caCertOf instance.name}";
+              LoadCredential = lib.mapAttrsToList (
+                secretName: source: "${secretName}:${source}"
+              ) instance.secrets;
               ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
+                exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
+              '';
+            };
+          };
+        }
+        // lib.optionalAttrs trusted {
+          # the authority is what makes the interception work, so it travels
+          # with the credentials rather than among the guest's raw secrets
+          "${units.trust}@" = {
+            description = "certificate authority for ${instance.name}";
+            after = [ microvmUnit ] ++ ca;
+            requisite = [ microvmUnit ];
+            requires = ca;
+            partOf = [ microvmUnit ];
+            unitConfig.CollectMode = "inactive-or-failed";
+            serviceConfig = hardened // {
+              DynamicUser = true;
+              StandardInput = "socket";
+              StandardError = "journal";
+              RestrictAddressFamilies = "none";
+              LoadCredential = [ "${guestTrust.member}:${caCertOf instance.name}" ];
+              ExecStart = pkgs.writeShellScript "fencr-${instance.name}-trust" ''
                 exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
               '';
             };
@@ -66,19 +90,33 @@ in
             serviceConfig = egressServiceConfig pkgs instance;
           };
         };
-      sockets = lib.optionalAttrs secrets {
-        ${units.secrets} = {
-          description = "raw secrets for ${instance.name}";
-          wantedBy = [ "sockets.target" ];
-          socketConfig = {
-            ListenStream = "${vsockOf instance.name}_${toString secretsPort}";
-            SocketUser = userOf instance.name;
-            SocketMode = "0600";
-            Accept = true;
-            MaxConnections = 4;
+      sockets =
+        lib.optionalAttrs trusted {
+          ${units.trust} = {
+            description = "certificate authority for ${instance.name}";
+            wantedBy = [ "sockets.target" ];
+            socketConfig = {
+              ListenStream = "${vsockOf instance.name}_${toString trustPort}";
+              SocketUser = userOf instance.name;
+              SocketMode = "0600";
+              Accept = true;
+              MaxConnections = 4;
+            };
+          };
+        }
+        // lib.optionalAttrs secrets {
+          ${units.secrets} = {
+            description = "raw secrets for ${instance.name}";
+            wantedBy = [ "sockets.target" ];
+            socketConfig = {
+              ListenStream = "${vsockOf instance.name}_${toString secretsPort}";
+              SocketUser = userOf instance.name;
+              SocketMode = "0600";
+              Accept = true;
+              MaxConnections = 4;
+            };
           };
         };
-      };
       inherit (checkpoints) timers;
     };
 }

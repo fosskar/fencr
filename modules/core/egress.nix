@@ -60,7 +60,7 @@ in
 
   # node takes the authority alone, everything else the store bundle with it appended
   guestTrust = {
-    member = "fencr-ca.crt";
+    member = "ca.crt";
     cert = "/run/fencr/ca.crt";
     bundle = "/run/fencr/ca-bundle.crt";
   };

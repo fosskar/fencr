@@ -499,11 +499,11 @@ assert lib.assertMsg (
       secrets."fencr-ca.crt" = "/run/secrets/raw";
     };
   }).errors == [
-    "sbx: secret name \"fencr-ca.crt\" is reserved for the authority"
     "sbx: credential name \"api:key\" contains characters unsupported by systemd credentials"
     "sbx: credential name \"ca.key\" is reserved for the authority"
   ]
 ) "core check: a name the authority uses was accepted";
+# the authority no longer lands among the secrets, so the name is free again
 assert lib.assertMsg (
   resolved.credentialDomains == [ "api.example.com" ]
   &&
@@ -518,10 +518,14 @@ assert lib.assertMsg (
   && keyedUnits.services ? "fencr-keyed-egress"
   && !(keyedUnits.services ? "fencr-keyed-credentials")
   && keyedUnits.services."fencr-keyed-egress".requires == [ "fencr-keyed-ca.service" ]
-  && keyedUnits.sockets ? "fencr-keyed-secrets"
+  # the authority travels with the credentials; a sandbox declaring no secrets
+  # gets none of the raw-secrets pipeline
+  && keyedUnits.sockets ? "fencr-keyed-trust"
+  && !(keyedUnits.sockets ? "fencr-keyed-secrets")
+  && !(keyedUnits.services ? "fencr-keyed-secrets@")
   &&
-    keyedUnits.services."fencr-keyed-secrets@".serviceConfig.LoadCredential == [
-      "fencr-ca.crt:/var/lib/fencr/ca/keyed/root.crt"
+    keyedUnits.services."fencr-keyed-trust@".serviceConfig.LoadCredential == [
+      "ca.crt:/var/lib/fencr/ca/keyed/root.crt"
     ]
   &&
     lib.hasInfix ''ip daddr 10.11.2.1 tcp dport 33443 counter accept comment "fencr:keyed:egress-tls"''
@@ -531,20 +535,43 @@ assert lib.assertMsg (
   && !lib.hasInfix "udp dport 53 redirect" (core.firewallOf keyed)."fencr-keyed-nat".content
 ) "core check: a credential alone does not bring the interception path";
 assert lib.assertMsg (
-  builtins.attrNames units.sockets == [ "fencr-sbx-secrets" ]
-  && units.sockets."fencr-sbx-secrets".socketConfig.ListenStream == "/run/fencr-sbx/vsock_5"
-  && units.sockets."fencr-sbx-secrets".socketConfig.SocketUser == "fencr-sbx"
-  && units.sockets."fencr-sbx-secrets".socketConfig.SocketMode == "0600"
+  # this sandbox holds a credential and declares no secrets, so it gets the
+  # authority's socket and none of the raw-secrets pipeline
+  builtins.attrNames units.sockets == [ "fencr-sbx-trust" ]
+  && units.sockets."fencr-sbx-trust".socketConfig.ListenStream == "/run/fencr-sbx/vsock_6"
+  && units.sockets."fencr-sbx-trust".socketConfig.SocketUser == "fencr-sbx"
+  && units.sockets."fencr-sbx-trust".socketConfig.SocketMode == "0600"
+  &&
+    builtins.attrNames
+      (core.hostUnits pkgs cli (
+        resolve "sbx" {
+          id = 0;
+          credentials = [ "api" ];
+          secrets.raw = "/run/secrets/raw";
+        }
+      )).sockets == [
+      "fencr-sbx-secrets"
+      "fencr-sbx-trust"
+    ]
 ) "unit check: host sockets drifted";
 assert lib.assertMsg (
-  units.services."fencr-sbx-secrets@".after == [
+  units.services."fencr-sbx-trust@".after == [
     "fencr-sbx.service"
     "fencr-sbx-ca.service"
   ]
-  && units.services."fencr-sbx-secrets@".requisite == [ "fencr-sbx.service" ]
-  && units.services."fencr-sbx-secrets@".partOf == [ "fencr-sbx.service" ]
-  && units.services."fencr-sbx-secrets@".serviceConfig.DynamicUser
-) "unit check: secrets relay drifted";
+  && units.services."fencr-sbx-trust@".requisite == [ "fencr-sbx.service" ]
+  && units.services."fencr-sbx-trust@".partOf == [ "fencr-sbx.service" ]
+  && units.services."fencr-sbx-trust@".serviceConfig.DynamicUser
+  # a relay serves one feature: the secrets one carries no authority
+  &&
+    (core.hostUnits pkgs cli (
+      resolve "sbx" {
+        id = 0;
+        credentials = [ "api" ];
+        secrets.raw = "/run/secrets/raw";
+      }
+    )).services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
+) "unit check: the relays drifted";
 assert lib.assertMsg (
   occurrences ''oifname "br-sbx" ip daddr 10.11.0.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
   == 1

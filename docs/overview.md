@@ -20,7 +20,8 @@ On the host, at `10.11.<id>.1`:
 | --- | --- |
 | `fencr-<sandbox>.service` | firecracker as user `fencr-<sandbox>`, empty read-only tmpfs root, `/dev/kvm` and `/dev/net/tun` as its only devices, `IPAddressDeny=any` |
 | `fencr-<sandbox>-egress.service` | the road out: DNS on `:33053`, TLS on `:33443`, `DynamicUser`, credentials through `LoadCredential` |
-| `fencr-<sandbox>-secrets@.service` | socket-activated on vsock port 5, tars its own credentials to the guest |
+| `fencr-<sandbox>-secrets@.service` | socket-activated on vsock port 5, tars the sandbox's raw secrets to the guest |
+| `fencr-<sandbox>-trust@.service` | socket-activated on vsock port 6, tars the sandbox's own ca certificate to the guest |
 | `fencr-<sandbox>-checkpoint@.service` | `cp --reflink` of the state image; timer optional, `ExecStopPost` by default |
 | `fencr-<sandbox>-ca.service` | the sandbox's own certificate authority, in `/var/lib/fencr/ca/<sandbox>`, only when it holds credentials |
 
@@ -40,7 +41,8 @@ In the guest, at `10.11.<id>.2`, vsock cid `3 + id`:
 - journald stays inside the sandbox; serial output is discarded on the host
 
 The bridge is `br-<sandbox>` and `tap-<sandbox>` on `10.11.<id>.0/26`. vsock carries
-port 4 for the power button and port 5 for boot secrets, and nothing else.
+port 4 for the power button, port 5 for raw secrets and port 6 for the
+authority, and nothing else.
 
 ## what happens to one outbound connection
 
@@ -200,7 +202,7 @@ modules/
     ├── firewall.nix   # the sandbox's nftables tables
     ├── egress.nix     # config, credentials, authority
     ├── microvm.nix    # the microvm's unit: firecracker under systemd
-    ├── guest.nix      # guestBase and guest-secrets.sh
+    ├── guest.nix      # guestBase and guest-fetch.sh
     ├── checkpoint.nix # the checkpoint units
     ├── host-units.nix # per-sandbox services, sockets, timers
     └── hardening.nix  # the sandbox sets

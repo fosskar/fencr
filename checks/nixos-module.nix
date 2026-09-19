@@ -130,12 +130,22 @@ in
     {
       assertion =
         config.systemd.sockets ? fencr-sbx-secrets
+        && config.systemd.sockets ? fencr-sbx-trust
+        # one relay per feature: the secrets one carries no authority, and the
+        # sealed sandbox holds a credential and no secrets, so it gets only trust
         &&
           config.systemd.services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [
             "raw:/run/secrets/raw"
-            "fencr-ca.crt:/var/lib/fencr/ca/sbx/root.crt"
           ]
+        &&
+          config.systemd.services."fencr-sbx-trust@".serviceConfig.LoadCredential == [
+            "ca.crt:/var/lib/fencr/ca/sbx/root.crt"
+          ]
+        && !(config.systemd.sockets ? fencr-sealed-secrets)
+        && config.systemd.sockets ? fencr-sealed-trust
         && guestConfig.systemd.services ? fencr-secrets
+        && guestConfig.systemd.services ? fencr-trust
+        && !(config.fencr.guestSystems.sealed.config.systemd.services ? fencr-secrets)
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
       message = "nixos module check: the vsock sockets are not the sandbox's own";
     }
