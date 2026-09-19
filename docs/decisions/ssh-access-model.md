@@ -2,21 +2,21 @@
 
 Two tiers, both plain ssh public keys:
 
-- `fencr.adminKeys` — every listed public key is authorized as root in every vm.
-- `fencr.vms.<name>.authorizedKeys` — authorized as root in that vm only.
-  The owner tier: a vm belongs to whoever holds these keys.
+- `fencr.adminKeys` — every listed public key is authorized as root in every sandbox.
+- `fencr.sandboxes.<name>.authorizedKeys` — authorized as root in that sandbox only.
+  The owner tier: a sandbox belongs to whoever holds these keys.
 
-The guest authorizes the union. Its sshd, socket-activated on the vm's
+The guest authorizes the union. Its sshd, socket-activated on the sandbox's
 address on its bridge, exists only when the union is non-empty — no keys,
-no door, and no pinhole for it in the vm's firewall. The host writes
-an `ssh <vm-name>` alias with that address as `HostName`, so any host user
+no door, and no pinhole for it in the sandbox's firewall. The host writes
+an `ssh <sandbox-name>` alias with that address as `HostName`, so any host user
 holding an authorized key logs in with their own identity.
 
 ## the door was a vsock socket, until 2026-09-06
 
 From crosvm until the evening of the Firecracker port the sshd listened on
 vsock port 22 and the host offered a socket every host account could open,
-`/run/fencr-ssh-<vm-name>`, with a relay per connection carrying the bytes
+`/run/fencr-ssh-<sandbox-name>`, with a relay per connection carrying the bytes
 in. Exposed ports and guest-to-host forwards had the same shape: a socket
 unit, a per-connection relay and a Rust program on the host, a listener in
 the guest. The rule behind it, "no network listener anywhere", came from
@@ -33,7 +33,7 @@ the sandbox's tap address, Fly's ssh server over WireGuard, Ignite's
 carries over the network. They were removed: ssh and `expose` moved onto
 the bridge, `hostForwards` went (`hostPorts` already reaches the host's
 bridge address), and vsock kept the boot-time secrets fetch and the power
-button, which are the control channel. The vm's firewall took over
+button, which are the control channel. The sandbox's firewall took over
 the one thing the socket file had provided: only the guest's sshd and its
 exposed ports are reachable from the host, and only while keys or `expose`
 say so.
@@ -44,18 +44,18 @@ fencr instances are workloads, not host accounts. A "user" renting a
 sandbox for their coding agent need not exist as a linux user anywhere —
 their public key is their identity, which also keeps the model identical
 for humans, CI, and other machines. This deliberately diverges from
-spaces-os, whose one-vm-per-host-user model fits a desktop and not a
+spaces-os, whose one-sandbox-per-host-user model fits a desktop and not a
 server.
 
-## why root inside the vm
+## why root inside the sandbox
 
-The vm boundary is the privilege boundary; that is the product. An
+The sandbox boundary is the privilege boundary; that is the product. An
 unprivileged guest account would add ceremony inside a machine whose
 entire filesystem, network and lifecycle already belong to its owner.
 
 ## stated plainly
 
-Host root always reaches every vm regardless of any of this: it owns the
+Host root always reaches every sandbox regardless of any of this: it owns the
 hypervisor process, the state image and the serial console. adminKeys does not grant host root anything new; it only
 gives that fact an ssh-shaped, auditable form.
 

@@ -62,7 +62,7 @@ let
     id = 0;
     credentials = [ "local" ];
   };
-  # outbound defaults to "internet", so a vm with no egress at all says so
+  # outbound defaults to "internet", so a sandbox with no egress at all says so
   closed = resolve "sbx" {
     id = 0;
     outbound = [ ];
@@ -241,13 +241,13 @@ assert lib.assertMsg (
         modules = [
           ../modules/options.nix
           {
-            fencr.vms.sbx = {
+            fencr.sandboxes.sbx = {
               id = 0;
               inbound = [ "9119" ];
             };
           }
         ];
-      }).config.fencr.vms.sbx.inbound
+      }).config.fencr.sandboxes.sbx.inbound
       true
   )).success
 ) "core check: inbound accepted a string port";
@@ -285,9 +285,9 @@ assert lib.assertMsg (
   && capped.diskBandwidth == 200
   && capped.networkBandwidth == 50
 ) "core check: the resource caps are not rendered";
-# the vm's own unit is the guest's resolver either way: it answers with the
+# the sandbox's own unit is the guest's resolver either way: it answers with the
 # bridge address where there is a name to judge, and relays to the host's
-# stub where there is not. a vm with no grant at all resolves nothing
+# stub where there is not. a sandbox with no grant at all resolves nothing
 assert lib.assertMsg (
   resolved.egress
   && resolved.dnsEgress
@@ -298,13 +298,13 @@ assert lib.assertMsg (
   && longName.internet
   && longName.dns == "10.11.1.1"
   && (builtins.fromJSON (core.egressConfig longName)).resolver == "127.0.0.53:53"
-  # the default is "internet", so closing a vm is an explicit empty list
+  # the default is "internet", so closing a sandbox is an explicit empty list
   && (resolve "sbx" { id = 0; }).internet
   && !closed.egress
   && !closed.dnsEgress
   && closed.dns == null
-) "core check: the vm's unit is not the guest's resolver";
-# IPAddressAllow carries the vm's own /26 so the guest stays reachable, and
+) "core check: the sandbox's unit is not the guest's resolver";
+# IPAddressAllow carries the sandbox's own /26 so the guest stays reachable, and
 # that beats the /8 in IPAddressDeny, so the unit is told to refuse a granted
 # name that resolves onto its own bridge or guest
 assert lib.assertMsg (
@@ -315,14 +315,14 @@ assert lib.assertMsg (
 # interface, a unit and a user all carry, and the length "tap-" leaves
 assert lib.assertMsg (
   longName.errors == [
-    "vm name \"coding-agent-1\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"tap-coding-agent-1\" must fit IFNAMSIZ"
+    "sandbox name \"coding-agent-1\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"tap-coding-agent-1\" must fit IFNAMSIZ"
   ]
   &&
-    (resolve "my.vm" { id = 0; }).errors == [
-      "vm name \"my.vm\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"tap-my.vm\" must fit IFNAMSIZ"
+    (resolve "my.sandbox" { id = 0; }).errors == [
+      "sandbox name \"my.sandbox\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"tap-my.sandbox\" must fit IFNAMSIZ"
     ]
   && (resolve "sbx" { id = 0; }).errors == [ ]
-) "core check: a vm name the derived names cannot carry";
+) "core check: a sandbox name the derived names cannot carry";
 # the guest's 53 is redirected to the unit's own port, and only that port is
 # admitted: resolved is never reachable from the bridge
 assert lib.assertMsg (
@@ -338,9 +338,9 @@ assert lib.assertMsg (
   && !lib.hasInfix "dport 53 counter accept" (core.firewallOf longName)."fencr-coding-agent-1".content
   && !lib.hasInfix "dport 53 counter accept" filterTable
 ) "core check: the guest can still reach resolved on the bridge";
-# a resolver out on the internet is refused, so the vm's own unit is the one
+# a resolver out on the internet is refused, so the sandbox's own unit is the one
 # road for plain dns; an explicit destination grant is accepted before the
-# drop, and a vm the unit does not resolve for keeps its dns as it was
+# drop, and a sandbox the unit does not resolve for keeps its dns as it was
 assert lib.assertMsg (
   let
     pinned = resolve "sbx" {
@@ -438,7 +438,7 @@ assert lib.assertMsg (
   &&
     occurrences ''ip daddr 10.11.0.1 tcp dport 33443 counter accept comment "fencr:sbx:egress-tls"''
     == 1
-) "unit check: the egress unit is not the vm's road out";
+) "unit check: the egress unit is not the sandbox's road out";
 assert lib.assertMsg (
   units.services."fencr-sbx-egress".serviceConfig.SystemCallFilter == [
     "@system-service"
@@ -450,27 +450,27 @@ assert lib.assertMsg (
 # the unit's own user, no capabilities, and the empty root the jailer builds
 assert lib.assertMsg (
   let
-    vm = (core.vmService pkgs resolved "/nix/store/runner").serviceConfig;
+    sandbox = (core.vmService pkgs resolved "/nix/store/runner").serviceConfig;
   in
-  vm.User == "fencr-sbx"
-  && vm.StandardOutput == "null"
-  && vm.StandardError == "journal"
-  && vm.CapabilityBoundingSet == ""
-  && vm.RestrictSUIDSGID
-  && vm.PrivateIPC
-  && vm.TemporaryFileSystem == "/:ro"
-  && vm.BindReadOnlyPaths == [ "/nix/store" ]
+  sandbox.User == "fencr-sbx"
+  && sandbox.StandardOutput == "null"
+  && sandbox.StandardError == "journal"
+  && sandbox.CapabilityBoundingSet == ""
+  && sandbox.RestrictSUIDSGID
+  && sandbox.PrivateIPC
+  && sandbox.TemporaryFileSystem == "/:ro"
+  && sandbox.BindReadOnlyPaths == [ "/nix/store" ]
   &&
-    vm.BindPaths == [
+    sandbox.BindPaths == [
       "/run/fencr-sbx"
-      "/var/lib/fencr-vms/sbx"
+      "/var/lib/fencr-sandboxes/sbx"
     ]
-  && vm.ProtectProc == "invisible"
-  && vm.ProcSubset == "pid"
-  && !(vm ? ProtectSystem)
-  && !(vm ? ProtectHome)
-  && vm.DevicePolicy == "closed"
-  && vm.IPAddressDeny == "any"
+  && sandbox.ProtectProc == "invisible"
+  && sandbox.ProcSubset == "pid"
+  && !(sandbox ? ProtectSystem)
+  && !(sandbox ? ProtectHome)
+  && sandbox.DevicePolicy == "closed"
+  && sandbox.IPAddressDeny == "any"
 ) "core check: hypervisor unit drifted";
 assert lib.assertMsg (
   occurrences "priority filter - 1;" == 3
@@ -507,7 +507,7 @@ assert lib.assertMsg (
   resolved.credentialDomains == [ "api.example.com" ]
   &&
     loopbackCredential.errors == [
-      "sbx: credential \"local\" needs fencr.credentials.local.domain: its upstream \"http://127.0.0.1:8764\" names no host a vm could call"
+      "sbx: credential \"local\" needs fencr.credentials.local.domain: its upstream \"http://127.0.0.1:8764\" names no host a sandbox could call"
     ]
 ) "core check: credential domain drifted";
 assert lib.assertMsg (
@@ -549,7 +549,7 @@ assert lib.assertMsg (
   == 1
   && occurrences ''oifname "br-sbx" counter drop comment "fencr:sbx:guest-blocked"'' == 1
 ) "core check: the host is not held to the guest's sshd and exposed ports";
-# the placeholder: stable for a vm and credential, different per vm, in the
+# the placeholder: stable for a sandbox and credential, different per sandbox, in the
 # guest's environment only where guestEnv names a variable
 assert lib.assertMsg (
   let
@@ -819,9 +819,10 @@ assert facts "checkpoint" (
     }) "/run/x";
   in
   {
-    "the copy runs as the vm's user" = template.User == "fencr-sbx";
-    "the copy runs in the vm unit's empty root" =
-      template.TemporaryFileSystem == "/:ro" && lib.elem "/var/lib/fencr-vms/sbx" template.BindPaths;
+    "the copy runs as the sandbox's user" = template.User == "fencr-sbx";
+    "the copy runs in the sandbox unit's empty root" =
+      template.TemporaryFileSystem == "/:ro"
+      && lib.elem "/var/lib/fencr-sandboxes/sbx" template.BindPaths;
     "the copy reaches nothing but a unix socket" = template.RestrictAddressFamilies == [ "AF_UNIX" ];
     "the template takes the checkpoint name" = lib.hasSuffix " %i" template.ExecStart;
     "a running copy is a reflink" = lib.hasInfix "cp --reflink=always " script;
@@ -829,7 +830,7 @@ assert facts "checkpoint" (
     "keep bounds each automatic kind" = lib.hasInfix "head -n -5 " script;
     "the timer probe is bounded" =
       lib.hasInfix "curl --silent --fail --max-time 5 --unix-socket \"$socket\" http://localhost/" script;
-    "the probe asks the vm's own api socket" = lib.hasInfix "/run/fencr-sbx/api.sock" script;
+    "the probe asks the sandbox's own api socket" = lib.hasInfix "/run/fencr-sbx/api.sock" script;
     "no interval means no timer" = units.timers == { };
     "an interval becomes a timer for the template" =
       timed.timers.fencr-sbx-checkpoint.timerConfig == {
@@ -884,7 +885,7 @@ assert lib.assertMsg (
   # prints nothing fails the unit instead of serving an empty header
   && lib.hasInfix "/bin/rbw get openrouter" script
   && lib.hasInfix ''[ -n "$value" ]'' script
-  # nothing watches a socket, so a vm with only fetched credentials has no
+  # nothing watches a socket, so a sandbox with only fetched credentials has no
   # path unit at all
   && core.reloadUnits pkgs { sbx = fetched; } == { }
   &&

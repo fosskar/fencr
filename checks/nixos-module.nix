@@ -1,6 +1,6 @@
 self: system:
 
-# builds a host with two vms: exposed ports, ssh, a credential and a raw
+# builds a host with two sandboxes: exposed ports, ssh, a credential and a raw
 # secret on one, a domain allowlist on the other
 { config, lib, ... }:
 let
@@ -27,7 +27,7 @@ in
             22100
             33627
           ]
-        && config.fencr.vms.sbx.ip == "10.11.0.2"
+        && config.fencr.sandboxes.sbx.ip == "10.11.0.2"
         && lib.hasInfix "HostName 10.11.0.2" config.programs.ssh.extraConfig;
       message = "nixos module check: the guest is not reached at its bridge address";
     }
@@ -35,11 +35,11 @@ in
       assertion =
         config.fencr.guestSystems.sealed.config.systemd.sockets.sshd.socketConfig.ListenStream
         == [ "10.11.1.2:22" ];
-      message = "nixos module check: the admin keys did not open the second vm's ssh door";
+      message = "nixos module check: the admin keys did not open the second sandbox's ssh door";
     }
     {
-      # an owner key reaches its own vm and no other; an admin key reaches
-      # both, because it is in both vms' keys to begin with
+      # an owner key reaches its own sandbox and no other; an admin key reaches
+      # both, because it is in both sandboxes' keys to begin with
       assertion =
         let
           jump = name: config.users.users."fencr-jump-${name}";
@@ -55,7 +55,7 @@ in
           (jump "sbx").openssh.authorizedKeys.keys ++ (jump "sealed").openssh.authorizedKeys.keys
         )
         && lib.hasSuffix "/nologin" (jump "sbx").shell;
-      message = "nixos module check: a jump account reaches something other than its own vm";
+      message = "nixos module check: a jump account reaches something other than its own sandbox";
     }
     {
       assertion = !guestConfig.system.switch.enable;
@@ -137,7 +137,7 @@ in
           ]
         && guestConfig.systemd.services ? fencr-secrets
         && guestConfig.microvm.firecracker.extraConfig.vsock.uds_path == "/run/fencr-sbx/vsock";
-      message = "nixos module check: the vsock sockets are not the vm's own";
+      message = "nixos module check: the vsock sockets are not the sandbox's own";
     }
     {
       assertion =
@@ -151,11 +151,13 @@ in
       assertion =
         let
           drives = guestConfig.microvm.firecracker.extraConfig.drives;
-          state = lib.findFirst (drive: drive.path_on_host == "/var/lib/fencr-vms/sbx/state.img") null drives;
+          state = lib.findFirst (
+            drive: drive.path_on_host == "/var/lib/fencr-sandboxes/sbx/state.img"
+          ) null drives;
         in
         map (drive: drive.path_on_host) drives == [
           guestConfig.microvm.storeDisk
-          "/var/lib/fencr-vms/sbx/state.img"
+          "/var/lib/fencr-sandboxes/sbx/state.img"
         ]
         && state.cache_type == "Writeback"
         && !state.is_read_only
@@ -219,7 +221,7 @@ in
   ];
   fencr.adminKeys = config.users.users.root.openssh.authorizedKeys.keys;
 
-  fencr.vms.sbx = {
+  fencr.sandboxes.sbx = {
     authorizedKeys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerDummyOwnerDummyOwnerDummyOwnerDummyOwne check"
     ];
@@ -255,7 +257,7 @@ in
     };
   };
 
-  fencr.vms.sealed = {
+  fencr.sandboxes.sealed = {
     credentials = [
       "opencode-go"
       "opencode-zen"

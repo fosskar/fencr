@@ -1,6 +1,6 @@
 # checkpoints
 
-A vm's whole state is one image, `/var/lib/fencr-vms/<name>/state.img`,
+A sandbox's whole state is one image, `/var/lib/fencr-sandboxes/<name>/state.img`,
 and until 2026-09-10 nothing kept a copy of it: an agent that broke its
 own machine had no way back short of the host's backups. Fly Sprites
 sells exactly this ("statefulness, with an undo button"), E2B pauses and
@@ -10,19 +10,19 @@ took and what it left.
 ## what a checkpoint is
 
 A copy of the state image beside it, `checkpoints/<name>.img`, owned by
-the vm's user like the image. Three ways one comes to exist:
+the sandbox's user like the image. Three ways one comes to exist:
 
-- after every clean stop, from the vm unit's `ExecStopPost`, named
-  `stop-<utc stamp>`. A `nixos-rebuild` that restarts the vm, or a
+- after every clean stop, from the hypervisor unit's `ExecStopPost`, named
+  `stop-<utc stamp>`. A `nixos-rebuild` that restarts the sandbox, or a
   restore, leaves the state it replaced behind. `checkpoints.onStop`, on
   by default
-- on demand, `fencr checkpoint <vm> [name]`, while the vm runs
+- on demand, `fencr checkpoint <sandbox> [name]`, while the sandbox runs
 - on a calendar, `checkpoints.interval`, named `timer-<utc stamp>`, off by
   default
 
 The automatic kinds keep the last `checkpoints.keep` (five) each; named
-ones stay until `fencr checkpoints <vm> --rm <name>`. `fencr restore`
-stops the vm, puts the copy in the image's place and starts it: the vm
+ones stay until `fencr checkpoints <sandbox> --rm <name>`. `fencr restore`
+stops the sandbox, puts the copy in the image's place and starts it: the sandbox
 reboots into the checkpointed disk.
 
 ## disk only
@@ -40,7 +40,7 @@ permanent and reboot in seconds.
 
 `cp --reflink=always`: the copy shares blocks with the image until either
 side writes, so it is instant and takes no space at first. The clone is
-one atomic operation on the file, so a running vm's copy is a point-in-time
+one atomic operation on the file, so a running sandbox's copy is a point-in-time
 image of what reached the host disk, which the state drive's `Writeback`
 cache keeps complete: crash-consistent, as the stop path is. btrfs, xfs
 (`reflink=1`, the default since 2019) and OpenZFS 2.3 with
@@ -63,8 +63,8 @@ vhost-user block backend, the other hook, is a developer preview.
 
 ## not paused
 
-The running copy does not pause the vm. Pausing through the api
-(`PATCH /vm {"state":"Paused"}`) was implemented and reverted the same
+The running copy does not pause the sandbox. Pausing through the api
+(`PATCH /sandbox {"state":"Paused"}`) was implemented and reverted the same
 day: Firecracker 1.16 leaves host-to-guest vsock delivery dead after a
 bare pause/resume, fixed in 1.17 (`#6100`), and the power button on vsock
 port 4 rides on it, so every stop after a checkpoint ran into the 60 s
@@ -72,7 +72,7 @@ timeout and left no stop checkpoint. The pause would only have shrunk
 the window of guest writes not yet flushed; the clone's atomicity gives
 the consistency, so pausing was not brought back: issue 23 was closed as
 not planned on 2026-09-17. An application-consistent copy needs the guest
-to quiesce, which a vm pause does not give.
+to quiesce, which a sandbox pause does not give.
 
 ## the image is never mounted on the host
 
@@ -84,11 +84,11 @@ image and every copy.
 
 ## in the unit, not the command
 
-The copy runs in `fencr-<vm>-checkpoint@<name>.service` as the vm's user
-in the vm unit's own empty root, with the api socket as its only reach;
+The copy runs in `fencr-<sandbox>-checkpoint@<name>.service` as the sandbox's user
+in the hypervisor unit's own empty root, with the api socket as its only reach;
 the command starts the unit and relays its error. Restore runs in the
-command as root, since it must stop and start the vm, and copies with
+command as root, since it must stop and start the sandbox, and copies with
 `--preserve=ownership` so the image keeps its owner. `fencr checkpoint`
-and `fencr restore` are the first `fencr` commands that change a vm's
+and `fencr restore` are the first `fencr` commands that change a sandbox's
 state; they do not change its configuration, which stays with
 `nixos-rebuild`.

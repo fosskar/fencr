@@ -95,9 +95,9 @@ class Open:
 class Sessions:
     """One downstream session per principal per backend.
 
-    Keyed by principal, so a session never carries one vm's state to
+    Keyed by principal, so a session never carries one sandbox's state to
     another. Opened on first use, so a backend that is down cannot keep the
-    gateway from starting — every mcp-enabled vm's egress unit requires it.
+    gateway from starting — every mcp-enabled sandbox's egress unit requires it.
     Dropped on the first call past the window, so a restarted backend heals
     without any reconnect logic of its own.
     """

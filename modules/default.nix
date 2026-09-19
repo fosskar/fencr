@@ -1,7 +1,7 @@
 # sealed microvms to run agents in; a machine says what to put inside, and
 # the module knows nothing about it:
 #
-#   fencr.vms.myagent.services = [ my-agent-module ];
+#   fencr.sandboxes.myagent.services = [ my-agent-module ];
 #
 # bridge, subnet, tap, mac and vsock cid derive from the instance's id, so
 # instances never collide.
@@ -13,7 +13,7 @@
   ...
 }:
 let
-  instances = config.fencr.vms;
+  instances = config.fencr.sandboxes;
   sshKeysOf = cfg: config.fencr.adminKeys ++ cfg.authorizedKeys;
   core = import ./core { inherit lib; };
   resolvedInstances = lib.mapAttrs (
@@ -53,7 +53,7 @@ in
   config = {
     fencr.guestSystems = guestSystems;
 
-    # the vm's tables are nftables; the iptables backend cannot host them
+    # the sandbox's tables are nftables; the iptables backend cannot host them
     networking.nftables.enable = lib.mkIf (instances != { }) true;
 
     assertions =
@@ -73,7 +73,7 @@ in
         }
       ];
 
-    # guest memory is the hypervisor's memory and would outlive the vm on disk
+    # guest memory is the hypervisor's memory and would outlive the sandbox on disk
     warnings =
       let
         plain = lib.filter (swap: !swap.randomEncryption.enable) config.swapDevices;
@@ -114,9 +114,9 @@ in
         # a way in for someone the host has no other business trusting: restrict
         # drops the pty, the shell and every forwarding, permitopen leaves one
         # destination, and a jump opens a direct-tcpip channel without a session.
-        # the vm's own sshd is still what authenticates them.
+        # the sandbox's own sshd is still what authenticates them.
         #
-        # every vm gets the account, keys or not, because which accounts exist
+        # every sandbox gets the account, keys or not, because which accounts exist
         # may not depend on sshKeys: adminKeys is commonly root's own
         # authorizedKeys, and reading it to decide the names would ask
         # users.users for the answer it is busy computing. an account nobody is
@@ -132,7 +132,7 @@ in
 
     # 0710 keeps host users outside group kvm away from every image
     systemd.tmpfiles.rules = [
-      "d /var/lib/fencr-vms 0710 root kvm -"
+      "d /var/lib/fencr-sandboxes 0710 root kvm -"
     ]
     ++ lib.concatMap (
       name:
@@ -159,6 +159,35 @@ in
       ++ [
         (reloadUnits.services or { })
         (secretUnits.services or { })
+        # the state directory was /var/lib/fencr-sandboxes until sandboxes stopped being
+        # called sandboxes. a host that misses this would boot every sandbox onto a fresh
+        # disk and leave the real ones sitting under the old name, so it runs ahead
+        # of tmpfiles, which would otherwise create the new path and make the move
+        # look unnecessary. delete once no host has the old path
+        (lib.optionalAttrs (instances != { }) {
+          fencr-state-path = {
+            description = "move fencr state to its current path";
+            wantedBy = [ "sysinit.target" ];
+            before = [ "systemd-tmpfiles-setup.service" ];
+            # the same window tmpfiles itself runs in: /var has to be there first
+            after = [ "local-fs.target" ];
+            unitConfig = {
+              ConditionPathExists = "/var/lib/fencr-sandboxes";
+              DefaultDependencies = false;
+            };
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              ExecStart = pkgs.writeShellScript "fencr-state-path" ''
+                if [ -e /var/lib/fencr-sandboxes ]; then
+                  echo "fencr: /var/lib/fencr-sandboxes and /var/lib/fencr-sandboxes both exist; move the images by hand" >&2
+                  exit 1
+                fi
+                ${pkgs.coreutils}/bin/mv /var/lib/fencr-sandboxes /var/lib/fencr-sandboxes
+              '';
+            };
+          };
+        })
       ]
     );
 
@@ -175,7 +204,7 @@ in
       lib.mkDefault true
     );
 
-    # same-page merging lets a guest probe memory across vms
+    # same-page merging lets a guest probe memory across sandboxes
     # (firecracker's prod-host-setup.md)
     hardware.ksm.enable = lib.mkIf (instances != { }) false;
 
@@ -215,7 +244,7 @@ in
       }
     );
 
-    # the vm's input chain accepts first, but the main chain's drop policy
+    # the sandbox's input chain accepts first, but the main chain's drop policy
     # still runs after it
     networking.firewall.interfaces = forEachInstance (
       _: cfg: {
@@ -229,7 +258,7 @@ in
       }
     );
 
-    # a drop in any chain is final, even after the vm's firewall accepted
+    # a drop in any chain is final, even after the sandbox's firewall accepted
     networking.firewall.extraForwardRules = lib.concatMapStrings (cfg: ''
       iifname "${cfg.bridge}" accept
     '') (lib.attrValues resolvedInstances);

@@ -1,20 +1,20 @@
 # MCP gateway
 
-The optional host-side gateway gives each VM its own MCP tool permissions
+The optional host-side gateway gives each sandbox its own MCP tool permissions
 without putting backend credentials in the guest. It is separate from the
 HTTP credential proxy: the proxy injects a header; the gateway decides which
 tools may be listed or called and whether a call needs approval.
 
 ```text
-agent VM → HTTPS credential proxy → MCP gateway → host MCP backend
-           adds the VM's token      checks tools   keeps service credentials
+agent sandbox → HTTPS credential proxy → MCP gateway → host MCP backend
+           adds the sandbox's token      checks tools   keeps service credentials
                                    and approval
 ```
 
-## configure backends and VM access
+## configure backends and sandbox access
 
-Both the gateway and per-VM access are disabled by default. An enabled
-gateway needs at least one backend and one participating VM.
+Both the gateway and per-sandbox access are disabled by default. An enabled
+gateway needs at least one backend and one participating sandbox.
 
 ```nix
 fencr.mcpGateway = {
@@ -26,7 +26,7 @@ fencr.mcpGateway = {
   };
 };
 
-fencr.vms.myagent.mcp = {
+fencr.sandboxes.myagent.mcp = {
   enable = true;
   allow = [ "calendar.list_events" ];
 };
@@ -41,15 +41,15 @@ Backends must listen only on host IPv4 loopback and authenticate requests.
 `url` must use `http://127.0.0.1:<port>/<path>`. `tokenFile` contains the backend's
 bare bearer token; it can reference a Clan vars or other secret manager's
 host file. Do not expose the backend on a bridge or grant its token separately
-to a VM, which would let the guest bypass the gateway.
+to a sandbox, which would let the guest bypass the gateway.
 
 Configure the agent's MCP client to use **`https://mcp.fencr/mcp/`**, including
 the trailing slash. The payload still owns that application setting. No real
 bearer token is needed in the guest; if the client requires one, a dummy value
 is sufficient because the proxy replaces the authorization header.
 
-fencr automatically creates and grants a separate `mcp-<vm-name>` credential
-for each participating VM. No manual `fencr.credentials` declaration or
+fencr automatically creates and grants a separate `mcp-<sandbox-name>` credential
+for each participating sandbox. No manual `fencr.credentials` declaration or
 `outbound` host-port grant is needed. The gateway listens on host loopback
 port 8764 by default, configurable through `fencr.mcpGateway.port`.
 
@@ -60,24 +60,24 @@ tools you have reviewed as safe.
 
 ## tool permissions
 
-- `fencr.vms.<name>.mcp.allow` contains `<server>.<tool>` globs, such as
+- `fencr.sandboxes.<name>.mcp.allow` contains `<server>.<tool>` globs, such as
   `calendar.list_events` or `calendar.*`. Empty means no tools.
 - Both listing and invocation enforce that list. A guessed tool name does
   not bypass it.
 - The MCP client sees names like `calendar__list_events`; policy uses
   `calendar.list_events`.
 - `servers.<name>.hiddenTools` contains backend tool-name globs hidden from
-  every VM and forbidden to call, regardless of `allow`.
+  every sandbox and forbidden to call, regardless of `allow`.
 - `servers.<name>.approvalTools` contains backend tool-name globs needing
   approval through `approvalMode`. It defaults to `[ "*" ]`; an empty list removes approval
-  requirements for that backend, not its per-VM allowlist.
+  requirements for that backend, not its per-sandbox allowlist.
 
 For a backend with known tools, you can restrict `approvalTools` to its
 write/effectful tools. That is a host policy decision: a newly added tool
 outside those patterns will not need approval if an `allow` pattern grants
 it. Prefer explicit tool grants over broad wildcards.
 
-Each VM has a separate authenticated session registry. Reusing another VM's
+Each sandbox has a separate authenticated session registry. Reusing another sandbox's
 MCP session ID is rejected, including requests to read or delete that session.
 
 ## approval modes
@@ -161,28 +161,28 @@ session restrictions remain enforced.
 
 ## backend connections
 
-The gateway holds one connection to each backend per VM, reused for 30
-seconds of idle time. A VM reuses only what it opened itself: a session is
-keyed by VM and backend, never by backend alone, so it cannot carry one VM's
+The gateway holds one connection to each backend per sandbox, reused for 30
+seconds of idle time. A sandbox reuses only what it opened itself: a session is
+keyed by sandbox and backend, never by backend alone, so it cannot carry one sandbox's
 state to another.
 
 Connections open on first use, not at startup, so a backend that is down
-cannot keep the gateway from starting — every MCP-enabled VM's egress unit
-requires the gateway, and a broken backend would otherwise take that VM off
+cannot keep the gateway from starting — every MCP-enabled sandbox's egress unit
+requires the gateway, and a broken backend would otherwise take that sandbox off
 the network entirely. An idle session is dropped and remade on the next
 call, so a restarted backend needs no intervention, and a call that fails
 runs once more on a fresh session.
 
 ## credentials and operation
 
-Per-VM gateway credentials are generated on the host under
+Per-sandbox gateway credentials are generated on the host under
 `/var/lib/fencr-mcp/` and retained across service restarts. systemd delivers
 only the required credentials to each egress proxy and the gateway. MCP
 credentials have `substitutePlaceholder = false`, so a tool argument cannot
 cause the proxy to insert the real token into data the tool might echo.
 
 Their `allow` is `[ "* /mcp/" ]`. A credential's `upstream` is an origin, so
-without that entry the VM's token would be injected into a request for any
+without that entry the sandbox's token would be injected into a request for any
 path the gateway's port serves; pinning the path keeps it to the one route the
 gateway mounts. The methods are deliberately not pinned. The MCP transport
 chooses those, and it rejects the ones it does not use itself — listing them
@@ -204,7 +204,7 @@ own decision record if one is required.
 After rotating a backend's `tokenFile`, update the backend as needed and
 restart `fencr-mcp-gateway.service` so systemd reloads the credential. Restarting
 the gateway interrupts active sessions; clients must reconnect. Gateway
-restarts also restart the participating VMs' egress proxies.
+restarts also restart the participating sandboxes' egress proxies.
 
 Host root, the approval command and the backend implementations remain
 trusted. Host-held tokens do not make every permitted tool safe, or stop a

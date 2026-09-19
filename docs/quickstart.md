@@ -1,6 +1,6 @@
 # quickstart
 
-One VM for one workload. The host needs KVM and systemd-networkd.
+One sandbox for one workload. The host needs KVM and systemd-networkd.
 
 ```nix
 # flake input
@@ -10,7 +10,7 @@ inputs.fencr.url = "github:fosskar/fencr";
 imports = [ fencr.nixosModules.fencr ];
 networking.useNetworkd = true;
 
-fencr.vms.myagent = {
+fencr.sandboxes.myagent = {
   services = [ my-agent-module ];
   authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
 };
@@ -22,7 +22,7 @@ fencr does not install or configure an agent for you.
 
 With no further grants:
 
-- the VM has no network egress, including DNS;
+- the sandbox has no network egress, including DNS;
 - the host can reach only its key-authenticated SSH listener;
 - the whole guest filesystem persists across reboots and rebuilds, except
   that its read-only `/nix/store` image is replaced;
@@ -33,7 +33,7 @@ With no further grants:
 Add only the permissions the workload needs:
 
 ```nix
-fencr.vms.myagent = {
+fencr.sandboxes.myagent = {
   outbound = [ "github.com" "*.github.com" "!gist.github.com" ];
   inbound = [ 9119 ];
 };
@@ -45,7 +45,7 @@ also grant an address and TCP port, `"192.168.1.50:8123"`, or a host port,
 and DNS; private networks remain blocked unless explicitly granted.
 
 `inbound` opens guest TCP ports to **every host process**, not only your SSH
-key. The service must listen on the guest's address, `fencr.vms.myagent.ip`,
+key. The service must listen on the guest's address, `fencr.sandboxes.myagent.ip`,
 and provide any required authentication. It is not published to other machines.
 See [network access](networking.md).
 
@@ -53,7 +53,7 @@ For a provider credential:
 
 ```nix
 fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode-go";
-fencr.vms.myagent.credentials = [ "opencode-go" ];
+fencr.sandboxes.myagent.credentials = [ "opencode-go" ];
 ```
 
 The host file contains just the API key. The guest gets an
@@ -63,7 +63,7 @@ The agent still needs to select OpenCode Go. See
 together, host commands and raw guest secrets.
 
 For MCP tools, see the [optional gateway](mcp-gateway.md). It automatically
-wires per-VM credentials, with explicit tool grants and host-side approvals
+wires per-sandbox credentials, with explicit tool grants and host-side approvals
 by default. Client-mediated same-chat approval is an explicit, less secure
 opt-in; there is no bundled human approval UI.
 
@@ -72,7 +72,7 @@ opt-in; there is no bundled human approval UI.
 `services` accepts ordinary NixOS modules:
 
 ```nix
-fencr.vms.myagent.services = [
+fencr.sandboxes.myagent.services = [
   my-agent-module
   { environment.systemPackages = [ pkgs.ripgrep pkgs.nodejs ]; }
 ];
@@ -90,18 +90,18 @@ Default resources and the options that change them:
 | `checkpoints.onStop`, `checkpoints.keep` | Enabled, five automatic checkpoints of each kind |
 | `checkpoints.interval` | Unset; for example `"hourly"` |
 
-These are per-VM options under `fencr.vms.<name>`. Increasing `stateSize`
+These are per-sandbox options under `fencr.sandboxes.<name>`. Increasing `stateSize`
 grows the disk at the next start; decreasing it does not shrink existing
 images. Checkpoints while running require a reflink-capable host filesystem;
 stop checkpoints can fall back to ordinary sparse copies.
 
-Each VM's `id` defaults to its position in name order and derives its network
+Each sandbox's `id` defaults to its position in name order and derives its network
 addresses. Set `id` explicitly to keep them stable when adding or removing
-other VMs. The host enables nftables and disables KSM. Unencrypted host swap
+other sandboxes. The host enables nftables and disables KSM. Unencrypted host swap
 can contain guest memory; fencr warns when a swap device lacks
 `randomEncryption`.
 
-## operate the VM
+## operate the sandbox
 
 ```console
 fencr list
@@ -111,6 +111,6 @@ fencr checkpoints myagent
 fencr restore myagent before-refactor
 ```
 
-`restore` stops the VM and replaces its disk state. Read
+`restore` stops the sandbox and replaces its disk state. Read
 [access and operation](access.md) for SSH from other machines, checkpoint
 retention and safe inspection of state images.

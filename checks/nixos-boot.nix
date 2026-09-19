@@ -110,7 +110,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       virtualisation.memorySize = 2048;
       # reflinks, as checkpoints need
       virtualisation.emptyDiskImages = [ 2048 ];
-      virtualisation.fileSystems."/var/lib/fencr-vms" = {
+      virtualisation.fileSystems."/var/lib/fencr-sandboxes" = {
         device = "/dev/vdb";
         fsType = "btrfs";
         autoFormat = true;
@@ -124,7 +124,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         pkgs.openssh
       ];
 
-      # globally open: the vm's firewall must still keep it from the vm
+      # globally open: the sandbox's firewall must still keep it from the sandbox
       networking.firewall.allowedTCPPorts = [ 80 ];
       networking.firewall.filterForward = true;
       systemd.services.host-80 = {
@@ -170,7 +170,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       systemd.services.mcp-backend.serviceConfig.ExecStart =
         "${pkgs.python3}/bin/python3 ${./mcp-backend.py}";
 
-      fencr.vms.sbx = {
+      fencr.sandboxes.sbx = {
         mcp = {
           enable = true;
           allow = [ "test.*" ];
@@ -202,7 +202,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         networkBandwidth = 100;
         # the credential: the guest calls api.test over https as it would
         # any site, the host ends the tls and injects the bearer token,
-        # the value never enters the vm
+        # the value never enters the sandbox
         credentials = [
           "api"
           "query"
@@ -262,8 +262,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         ];
       };
 
-      # a second vm with open egress: its own unit relays to the host's stub
-      fencr.vms.open = {
+      # a second sandbox with open egress: its own unit relays to the host's stub
+      fencr.sandboxes.open = {
         mcp = {
           enable = true;
           allow = [ "test.read" ];
@@ -362,17 +362,17 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = fencr-sbx:600")
-      # the vm's vsock sockets belong to its user
+      # the sandbox's vsock sockets belong to its user
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:700")
 
       host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
       # the test host exposes svm and vmx; the guest must not see either
       host.fail(f"{ssh} 'grep -qwE \"svm|vmx\" /proc/cpuinfo'", timeout=60)
       host.fail(f"{ssh} 'touch /nix/store/fencr-probe'", timeout=60)
-      # the root filesystem is one image owned by the vm's user, and it
-      # outlives the vm: what the guest writes, root's home included, is
+      # the root filesystem is one image owned by the sandbox's user, and it
+      # outlives the sandbox: what the guest writes, root's home included, is
       # there again after a restart
-      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-sandboxes/sbx/state.img)\" = fencr-sbx:600")
       host.succeed(f"{ssh} 'findmnt -n -o SOURCE /' | grep -Fx /dev/vdb", timeout=60)
       # the state image honours flushes: firecracker's Writeback cache
       # advertises the virtio flush feature, which the guest reports as
@@ -380,7 +380,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'cat /sys/block/vdb/queue/write_cache' | grep -Fx 'write back'", timeout=60)
       host.succeed(f"{ssh} 'test -c /dev/hwrng'", timeout=60)
       # the hypervisor process sits in an empty root: no /etc, no host
-      # /var, only the store and the vm's own directories; other users'
+      # /var, only the store and the sandbox's own directories; other users'
       # processes are hidden from its /proc
       pid = host.succeed("systemctl show -p MainPID --value fencr-sbx.service").strip()
       # the store is bound in, so a resolved binary path still works inside
@@ -388,7 +388,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{inside}/ls / | tr '\\n' ' ' | grep -qxE '(dev|nix|proc|run|sys|tmp|var| )+'")
       host.fail(f"{inside}/test -e /etc")
       host.fail(f"{inside}/test -e /var/lib/fencr")
-      host.succeed(f"{inside}/test -f /var/lib/fencr-vms/sbx/state.img")
+      host.succeed(f"{inside}/test -f /var/lib/fencr-sandboxes/sbx/state.img")
       host.fail(f"{inside}/test -d /proc/1")
       host.fail(f"{inside}/test -e /proc/cpuinfo")
       host.succeed(f"{ssh} 'echo survives > ~/fencr-probe'", timeout=60)
@@ -401,21 +401,21 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # must vanish on restore while the earlier probe stays
       host.succeed("fencr checkpoints sbx | grep '^stop-'")
       host.succeed("fencr checkpoint sbx before-agent | grep '^before-agent '")
-      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/checkpoints/before-agent.img)\" = fencr-sbx:600")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-sandboxes/sbx/checkpoints/before-agent.img)\" = fencr-sbx:600")
       # the copy is on disk when the command returns, not only in page cache
-      host.succeed("test \"$(stat -c %b /var/lib/fencr-vms/sbx/checkpoints/before-agent.img)\" -gt 0")
+      host.succeed("test \"$(stat -c %b /var/lib/fencr-sandboxes/sbx/checkpoints/before-agent.img)\" -gt 0")
       host.succeed(f"{ssh} 'test -f ~/fencr-probe && echo after > ~/fencr-after && sync'", timeout=60)
       host.succeed("fencr restore sbx before-agent")
       host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
       host.fail(f"{ssh} 'test -e ~/fencr-after'", timeout=60)
       host.succeed("test \"$(fencr checkpoints sbx | grep -c '^stop-')\" = 2")
-      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-vms/sbx/state.img)\" = fencr-sbx:600")
+      host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-sandboxes/sbx/state.img)\" = fencr-sbx:600")
       host.succeed("fencr checkpoints sbx --rm before-agent | grep -Fx 'removed before-agent'")
       host.fail("fencr checkpoints sbx | grep -q before-agent")
       # a reserved name is the unit's error, relayed by the command
       host.fail("fencr checkpoint sbx stop-now")
 
-      # the firewall, probed with real packets from inside the vm
+      # the firewall, probed with real packets from inside the sandbox
       host.succeed("nft list table inet fencr-sbx | grep -q 'fencr:sbx:blocked'")
       host.succeed("nft list table inet fencr-sbx | grep -q 'ct count over 2048'")
       host.fail(f"{ssh} 'curl --insecure --silent --max-time 5 https://loopback.allowed.test/'", timeout=60)

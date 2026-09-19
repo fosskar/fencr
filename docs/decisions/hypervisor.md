@@ -10,7 +10,7 @@ learned, not from their conclusions.
 
 - start: qemu through microvm.nix
 - 2026-09-06: crosvm replaced qemu, accepted after a run on a real host
-  (nixbox, one agent vm with three services and a migrated state tree)
+  (nixbox, one agent sandbox with three services and a migrated state tree)
 - 2026-09-06, the same day: Firecracker replaced crosvm, accepted after
   `checks.nixos-boot` passed with its assertions unchanged, under nested kvm
 - 2026-09-10: the host and guest configuration read against Firecracker's
@@ -62,26 +62,26 @@ What it required:
   with the deprecated `-r`, which added `root=/dev/vda` and made the systemd
   initrd fail on two root mounts, and it booted the unstripped `vmlinux`
   where crosvm takes a bzImage
-- `ProcSubset` and `ProtectProc` off on the vm unit, because the device
+- `ProcSubset` and `ProtectProc` off on the hypervisor unit, because the device
   jails remount /proc in their namespaces; `AF_INET` allowed for the tap
   ioctls
 - unprivileged user namespaces on the host
 - a rolling main with no releases; nixpkgs ships a dated snapshot
 - crosvm marks all guest memory mergeable. KSM is off on a fencr host for a
   reason of its own, same-page merging lets a guest probe memory across
-  vms, so this cost nothing extra
+  sandboxes, so this cost nothing extra
 
 Decided while on crosvm, and still standing:
 
-- the state tree is a disk image, `/var/lib/fencr-vms/<name>/state.img`,
-  owned by the vm's user and created by the runner on first start. It
-  replaced the virtio-fs share and its per-vm uid range: no file server
+- the state tree is a disk image, `/var/lib/fencr-sandboxes/<name>/state.img`,
+  owned by the sandbox's user and created by the runner on first start. It
+  replaced the virtio-fs share and its per-sandbox uid range: no file server
   faces the guest, the unit holds no `CAP_SETUID`/`CAP_SETGID`, and the host
-  cannot browse the vm's files without mounting the image while the vm is
+  cannot browse the sandbox's files without mounting the image while the sandbox is
   stopped. A state tree from before the change is copied into the image by
   hand
-- the vm unit runs as a system user of its own, `fencr-<name>` in group
-  `kvm`, so two vms' hypervisor processes share no host identity and the
+- the hypervisor unit runs as a system user of its own, `fencr-<name>` in group
+  `kvm`, so two sandboxes' hypervisor processes share no host identity and the
   state image has an owner that outlives the unit, which `DynamicUser`
   would not give it
 - there is no hypervisor option. Every forward path would exist twice and
@@ -89,9 +89,9 @@ Decided while on crosvm, and still standing:
 
 Why it was left: the block image took away crosvm's reason. The jailed file
 device had made guest root an unprivileged host uid; with no file server
-the vm's user owns the image and that is the whole boundary. Per-device
+the sandbox's user owns the image and that is the whole boundary. Per-device
 jails weigh less than the crosvm record assumed: in a one-process vmm the
-same device bug lands in a process that holds only its own vm's disk, tap
+same device bug lands in a process that holds only its own sandbox's disk, tap
 and vsock, which the guest already controls, and the next step is a kernel
 bug either way. What remained was a rolling snapshot and a patch to carry.
 
@@ -126,17 +126,17 @@ hold itself (`credentials.md`).
 
 What the port changed:
 
-- Firecracker's vsock on the host is a unix socket, `/run/fencr-<vm>/vsock`,
-  created by Firecracker as the vm's user. The runner's own path for it
+- Firecracker's vsock on the host is a unix socket, `/run/fencr-<sandbox>/vsock`,
+  created by Firecracker as the sandbox's user. The runner's own path for it
   lives in the working directory and is wiped on every start, so fencr
   names its own
-- guest-to-host forwards are socket units on `/run/fencr-<vm>/vsock_<port>`,
-  owned by the vm's user with mode 0600: the path is the identity, only that
-  vm's Firecracker can open it. The relay's cid check and its unsafe
+- guest-to-host forwards are socket units on `/run/fencr-<sandbox>/vsock_<port>`,
+  owned by the sandbox's user with mode 0600: the path is the identity, only that
+  sandbox's Firecracker can open it. The relay's cid check and its unsafe
   `getpeername` went away
 - host-to-guest relays and the ssh door speak the `CONNECT <port>`
   handshake through `fencr-vsock-forward connect`. The ssh door is a socket
-  every host account may open, `/run/fencr-ssh-<vm>`, so the access model
+  every host account may open, `/run/fencr-ssh-<sandbox>`, so the access model
   (`ssh-access-model.md`) holds unchanged. Later that day all of these
   relays went away: ssh and exposed ports moved onto the bridge, where the
   field puts them (`ssh-access-model.md`), and vsock kept only the secrets
@@ -166,13 +166,13 @@ user-namespace assertion, the vhost-vsock device and the `vhost_vsock`
 module, the cid check in the relay.
 
 Carried over without a new test at the time: `ProcSubset` and
-`ProtectProc` stayed off on the vm unit, as crosvm's device jails had
+`ProtectProc` stayed off on the hypervisor unit, as crosvm's device jails had
 needed. Tried on 2026-09-10 with the boot check: Firecracker runs with
 both, and they are on.
 
 Cost:
 
-- no memory balloon: microvm.nix's Firecracker runner refuses it, so a vm
+- no memory balloon: microvm.nix's Firecracker runner refuses it, so a sandbox
   keeps its `MemoryMax` cap but does not return unused memory to the host
 - the boot check's host needs `-cpu host`: Firecracker requires
   `KVM_CAP_XCRS`, which the synthetic `kvm64` model does not offer a nested
@@ -186,7 +186,7 @@ Against `main` the port removed more lines than it added.
 ## 2026-09-10: the production host review
 
 Firecracker's `docs/prod-host-setup.md`, `design.md`, `jailer.md` and
-`block.md` read against the vm unit and the runner's defaults, and the
+`block.md` read against the hypervisor unit and the runner's defaults, and the
 setup compared with E2B, Fly Sprites, Docker Sandboxes and Claude Code's
 sandbox. Firecracker was 1.16.1 throughout; what needs 1.17 is filed
 (issues 21, 22, 23).
@@ -208,21 +208,21 @@ Changed:
   `Sync`
 - a virtio-rng: `firecracker.extraConfig.entropy`, so the guest's
   randomness does not rest on rdrand and jitter alone
-- the vm unit runs in an empty read-only root: `TemporaryFileSystem=/:ro`
+- the hypervisor unit runs in an empty read-only root: `TemporaryFileSystem=/:ro`
   with the store, the run directory and the state directory bound in,
   which is what the jailer builds with its chroot. The unit had seen the
   whole host filesystem read-only. `ProtectSystem` and `ProtectHome`
   silently win over the tmpfs and are off on this unit; the boot check
-  enters the process's mount namespace as the vm's user and finds no
+  enters the process's mount namespace as the sandbox's user and finds no
   `/etc`, no `/var/lib/fencr`, no `/proc/1`. `PrivateIPC` on every unit
-- per-vm caps beyond cpu and memory: `diskBandwidth` and
+- per-sandbox caps beyond cpu and memory: `diskBandwidth` and
   `networkBandwidth` as Firecracker's token buckets on the state drive
   and the tap, off by default, filesystem-agnostic where the cgroup io
-  controller is not; `maxConnections` as a `ct count` rule in the vm's
+  controller is not; `maxConnections` as a `ct count` rule in the sandbox's
   forward and input chains, 2048 by default, so a port scan cannot fill
   the host's conntrack table. The two chains count separately
 - a warning for a swap partition without random encryption: guest memory
-  is the hypervisor's memory and would outlive the vm on disk
+  is the hypervisor's memory and would outlive the sandbox on disk
 
 Considered and left:
 

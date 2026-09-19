@@ -1,19 +1,19 @@
 # credentials and secrets
 
-Use `credentials` when the host can authenticate an API request on the VM's
+Use `credentials` when the host can authenticate an API request on the sandbox's
 behalf. Use `secrets` only when the workload must hold the real value itself.
 Never put real secret contents in a Nix expression or the Nix store.
 
 ## provider presets
 
-Declare a host credential and grant it to a VM:
+Declare a host credential and grant it to a sandbox:
 
 ```nix
 fencr.credentials.anthropic = {
   secretFile = "/run/secrets/anthropic";
   guestEnv = "ANTHROPIC_API_KEY";
 };
-fencr.vms.myagent.credentials = [ "anthropic" ];
+fencr.sandboxes.myagent.credentials = [ "anthropic" ];
 ```
 
 The file contains **just the API key**, without quotes, JSON or an environment
@@ -73,7 +73,7 @@ The command runs non-interactively on the host as an isolated systemd
 not automatically have access to your unlocked vault or session. Configure
 that access separately or use a non-interactive secret source.
 
-systemd reads the command's output through a socket when the VM's egress unit
+systemd reads the command's output through a socket when the sandbox's egress unit
 starts; fencr does not write it to a secret file. Restarting
 `fencr-<name>-egress.service` resolves it again. A failed or empty result
 prevents startup; there is no last-known-good fallback.
@@ -81,12 +81,12 @@ prevents startup; there is no last-known-good fallback.
 ## OpenCode Go and Zen
 
 Go and Zen use different API paths and credentials on the same domain.
-Both can be granted to one VM:
+Both can be granted to one sandbox:
 
 ```nix
 fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode-go";
 fencr.credentials.opencode-zen.secretFile = "/run/secrets/opencode-zen";
-fencr.vms.myagent.credentials = [ "opencode-go" "opencode-zen" ];
+fencr.sandboxes.myagent.credentials = [ "opencode-go" "opencode-zen" ];
 ```
 
 The client uses `https://opencode.ai/zen/go/v1` for Go and
@@ -101,7 +101,7 @@ For multiple credentials on one domain, every credential needs non-empty
 matches return 403. Order never selects a key.
 
 The legacy `opencode` preset has no path restrictions. Do not combine it with
-the distinct presets on one VM without giving it non-overlapping `allow` entries.
+the distinct presets on one sandbox without giving it non-overlapping `allow` entries.
 
 ## custom APIs
 
@@ -117,7 +117,7 @@ fencr.credentials.example = {
 
 The header defaults to `Authorization`; without a provider, its file must
 contain the full value, such as `Bearer <key>` or `Basic <value>`.
-For a host-loopback API, set an HTTP upstream and the name the VM will call:
+For a host-loopback API, set an HTTP upstream and the name the sandbox will call:
 
 ```nix
 fencr.credentials.local-api = {
@@ -163,16 +163,16 @@ guarantee against disclosure by the APIs you allow the guest to call.
 
 ## transport and trust
 
-The credential's domain resolves to the host inside the VM. The egress proxy
+The credential's domain resolves to the host inside the sandbox. The egress proxy
 terminates TLS using a certificate authority trusted by the guest, injects
 the header and forwards the request. The guest receives the public CA
 certificate, not its private key. fencr configures the system trust store,
 `NIX_SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`; certificate-pinning clients
 cannot use this interception path.
 
-**Each VM has its own authority**, at `/var/lib/fencr/ca/<vm>/`, created by
-`fencr-<vm>-ca.service`. A VM's proxy holds one private key and its guest
-trusts one certificate, both its own, so a certificate minted for one VM is
+**Each sandbox has its own authority**, at `/var/lib/fencr/ca/<sandbox>/`, created by
+`fencr-<sandbox>-ca.service`. A sandbox's proxy holds one private key and its guest
+trusts one certificate, both its own, so a certificate minted for one sandbox is
 worthless against another.
 
 If an upstream echoes a request back — some APIs reflect payloads in errors
@@ -187,7 +187,7 @@ HTTP method/path rules do not understand MCP tools. Use the separate
 ## raw guest secrets
 
 ```nix
-fencr.vms.myagent.secrets."agent.env" = "/run/secrets/agent.env";
+fencr.sandboxes.myagent.secrets."agent.env" = "/run/secrets/agent.env";
 ```
 
 The host file is fetched over vsock at boot into

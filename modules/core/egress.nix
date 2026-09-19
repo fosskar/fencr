@@ -43,9 +43,9 @@ in
     else
       toString credential.secretFile;
 
-  # one authority per vm, not one per host: the key is handed to that vm's
+  # one authority per sandbox, not one per host: the key is handed to that sandbox's
   # egress unit, so a host-wide one would put a key every guest trusts into
-  # every proxy. a vm's certificates are worthless against another vm
+  # every proxy. a sandbox's certificates are worthless against another sandbox
   caUnitOf = name: "fencr-${name}-ca";
   caDirOf = name: "/var/lib/fencr/ca/${name}";
   caCertOf = name: "${caDirOf name}/root.crt";
@@ -71,15 +71,15 @@ in
 
   # LoadCredential copies a secretFile once, at start, and a path unit can
   # only start a unit, never restart one; so one watcher for the host
-  # restarts every vm's egress when any of their files is written.
+  # restarts every sandbox's egress when any of their files is written.
   # rotation is rare and the restart momentary, which is why this is not a
-  # pair of units per vm
+  # pair of units per sandbox
   reloadUnit = "fencr-credentials-reload";
 
   egressBin = pkgs: pkgs.callPackage ../../pkgs/egress { };
 
   # one socket-activated resolver per dynamic credential. systemd connects
-  # to the socket when a vm's egress unit starts and reads the value from
+  # to the socket when a sandbox's egress unit starts and reads the value from
   # it, so the secret exists in that unit's credentials directory and
   # nowhere else: no file, no watcher, no copy of its own
   secretUnits =
@@ -211,10 +211,11 @@ in
     if host == null then null else builtins.head host;
 
   # the value the guest is given in place of the credential: not a secret,
-  # so it may sit in the store, and derived from the vm and the credential
-  # so it is stable across rebuilds and differs per vm
+  # so it may sit in the store, and derived from the sandbox and the credential
+  # so it is stable across rebuilds and differs per sandbox
   placeholderOf =
-    vm: name: "fencr-${builtins.substring 0 24 (builtins.hashString "sha256" "${vm}:${name}")}";
+    sandbox: name:
+    "fencr-${builtins.substring 0 24 (builtins.hashString "sha256" "${sandbox}:${name}")}";
 
   credentialsOf =
     cfg: credentials:
@@ -251,7 +252,7 @@ in
       || credential.domain == "localhost"
       || builtins.match "[0-9.]+" credential.domain != null
     then
-      "credential \"${credential.name}\" needs fencr.credentials.${credential.name}.domain: its upstream \"${credential.upstream}\" names no host a vm could call"
+      "credential \"${credential.name}\" needs fencr.credentials.${credential.name}.domain: its upstream \"${credential.upstream}\" names no host a sandbox could call"
     else if lib.hasPrefix "*" credential.domain || domainPatternError credential.domain != null then
       "credential \"${credential.name}\": domain \"${credential.domain}\" is not a host name"
     else
@@ -290,7 +291,7 @@ in
       lib.filter (rule: rule.error != null) (map parseAllow (credential.allow or [ ]))
     );
 
-  # what the proxy is configured with: where it listens, the names a vm may
+  # what the proxy is configured with: where it listens, the names a sandbox may
   # reach, and where each credential goes. no value is in here; the
   # credentials arrive as systemd credentials and are read per request
   egressConfig =
@@ -303,7 +304,7 @@ in
       # there is a name to judge and no query leaves this unit
       resolver = if cfg.internet then "127.0.0.53:53" else "";
       # the one range IPAddressDeny cannot refuse: IPAddressAllow has to
-      # carry the vm's own subnet for the guest to be reachable, and that /26
+      # carry the sandbox's own subnet for the guest to be reachable, and that /26
       # outranks the /8 on prefix length. the other special-use ranges are
       # denied at the socket, where a host's own carve-out still counts
       blocked = [ cfg.subnet ];
@@ -331,7 +332,7 @@ in
       }) cfg.credentials;
     };
 
-  # one process for the vm's road out and its credentials: it listens on
+  # one process for the sandbox's road out and its credentials: it listens on
   # the bridge, so it needs no socket of its own and no group to share one
   egressServiceConfig =
     pkgs: cfg:

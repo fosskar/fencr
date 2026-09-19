@@ -1,16 +1,16 @@
 # network access
 
-`inbound` defaults to empty: nothing on the host reaches the VM until a port
+`inbound` defaults to empty: nothing on the host reaches the sandbox until a port
 is named. `outbound` defaults to `[ "internet" ]`, which is public IPv4 and
 DNS with private and other special-use ranges still blocked. Setting
 `outbound` replaces that default rather than adding to it, so an allowlist
-needs no opt-out, and `outbound = [ ]` leaves the VM no egress at all,
+needs no opt-out, and `outbound = [ ]` leaves the sandbox no egress at all,
 including DNS. SSH keys and credentials automatically open their required
 paths; `fencr status` shows those alongside explicit grants. Reply traffic
 needs no separate grant.
 
 ```nix
-fencr.vms.myagent = {
+fencr.sandboxes.myagent = {
   inbound = [ 8080 ];
   outbound = [
     "github.com"
@@ -24,8 +24,8 @@ fencr.vms.myagent = {
 
 ## inbound ports
 
-`inbound` lists guest TCP ports the host may reach at `fencr.vms.<name>.ip`.
-The service must listen on the VM's address, not only on guest loopback.
+`inbound` lists guest TCP ports the host may reach at `fencr.sandboxes.<name>.ip`.
+The service must listen on the sandbox's address, not only on guest loopback.
 These ports are not published to the LAN or internet.
 
 **An inbound grant does not authenticate clients.** Every host process can
@@ -39,7 +39,7 @@ SSH has its own key authentication; see [access](access.md).
 | `"github.com"` | TLS on port 443 to that server name. No port suffix. |
 | `"*.github.com"` | TLS on port 443 to subdomains, not bare `github.com`. |
 | `"!gist.github.com"` | Refuses a name a wildcard grant would otherwise admit. |
-| `"host:8123"` | TCP to port 8123 on the host, over the VM's bridge. |
+| `"host:8123"` | TCP to port 8123 on the host, over the sandbox's bridge. |
 | `"192.168.20.0/24:1234"` | TCP to an IPv4 address or subnet and port, including private destinations. |
 | `"internet"` | Public IPv4 internet access and DNS. Private and other special-use ranges remain blocked unless explicitly granted. |
 
@@ -50,7 +50,7 @@ or name something no grant covers. IPv6 is blocked on the bridge.
 A `host:` grant reaches the host on any address the guest can route to over
 the bridge — its bridge address and its LAN addresses — but never its
 loopback listeners, which the guest has no route to. One exception: on the
-bridge address, port 443 belongs to the VM's egress unit, which the firewall
+bridge address, port 443 belongs to the sandbox's egress unit, which the firewall
 redirects it to, so `"host:443"` only ever reaches the host's other
 addresses. For a host-loopback HTTP API with credentials, use a
 [credential proxy](credentials.md#custom-apis); for MCP tools, use the
@@ -71,7 +71,7 @@ higher levels.
 
 ## DNS
 
-Where DNS is enabled, the VM's own egress unit is its resolver. With domain
+Where DNS is enabled, the sandbox's own egress unit is its resolver. With domain
 grants it answers names with the bridge address, then judges the destination
 from the TLS handshake. With `"internet"` it relays queries to the host's stub
 resolver, with a limit on concurrent queries. The guest does not reach the

@@ -17,8 +17,8 @@ let
               tokenFile = "/run/secrets/calendar";
             };
           };
-          fencr.vms.agent.mcp.enable = true;
-          fencr.vms.reader.mcp = {
+          fencr.sandboxes.agent.mcp.enable = true;
+          fencr.sandboxes.reader.mcp = {
             enable = true;
             allow = [ "calendar.read" ];
           };
@@ -45,9 +45,9 @@ assert
     fencr.mcpGateway.approvalMode = "client";
     fencr.mcpGateway.approvalCommand = [ "/bin/true" ];
   }) != [ ];
-assert config.fencr.vms.agent.credentials == [ "mcp-agent" ];
-assert config.fencr.vms.reader.credentials == [ "mcp-reader" ];
-assert config.fencr.vms.agent.mcp.allow == [ ];
+assert config.fencr.sandboxes.agent.credentials == [ "mcp-agent" ];
+assert config.fencr.sandboxes.reader.credentials == [ "mcp-reader" ];
+assert config.fencr.sandboxes.agent.mcp.allow == [ ];
 assert config.fencr.mcpGateway.servers.calendar.approvalTools == [ "*" ];
 assert credential.domain == "mcp.fencr" && !credential.substitutePlaceholder;
 assert credential.allow == [ "* /mcp/" ];
@@ -64,7 +64,7 @@ assert
   ];
 assert
   errors (evaluate {
-    fencr.vms.agent.credentials = [ "mcp-reader" ];
+    fencr.sandboxes.agent.credentials = [ "mcp-reader" ];
   }) != [ ];
 assert
   errors (evaluate {

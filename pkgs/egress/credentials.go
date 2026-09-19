@@ -278,7 +278,7 @@ func record(r *http.Request, uri string, status int) {
 	log.Print(string(line))
 }
 
-// the host's authority, signing one certificate per domain the vm calls,
+// the host's authority, signing one certificate per domain the sandbox calls,
 // kept for the life of the process
 type authority struct {
 	cert  *x509.Certificate

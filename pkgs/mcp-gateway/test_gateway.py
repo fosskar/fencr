@@ -138,7 +138,7 @@ class GatewayTest(unittest.TestCase):
             self.assertEqual(self.opened, 1)
             self.request(client, reader, "tools/call", {"name": "calendar__read"}, "reader")
             # and a second principal opens its own: a session must never carry
-            # one vm's state to another
+            # one sandbox's state to another
             self.assertEqual(self.opened, 2)
             self.assertEqual(self.backend.calls, [("read", {})] * 3)
 

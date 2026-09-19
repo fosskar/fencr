@@ -4,7 +4,7 @@ For current configuration, see [credentials and secrets](../credentials.md)
 and the [MCP gateway](../mcp-gateway.md). The dated entries below record
 previous designs as well as the reasons for changing them.
 
-How a secret a vm needs reaches the place it is used without the vm ever
+How a secret a sandbox needs reaches the place it is used without the sandbox ever
 holding it. This is the history of that mechanism: two designs on one day,
 what each was chosen for, and what turned the first into the second.
 Nothing here is a rule.
@@ -14,26 +14,26 @@ Nothing here is a rule.
 - `fencr.credentials.<name>` declares a credential once on the host: an
   `upstream` such as `https://api.anthropic.com`, the `header` it travels
   in, and the `secretFile` holding the raw header value.
-  `fencr.vms.<vm>.credentials` grants it to a vm by name. The vm's egress
+  `fencr.sandboxes.<sandbox>.credentials` grants it to a sandbox by name. The sandbox's egress
   unit on the host injects the header; the value never exists
-  inside the vm. An injected agent behind the proxy can still
+  inside the sandbox. An injected agent behind the proxy can still
   call the api and do damage with it during the session; it cannot steal
   the key for use elsewhere or leak it into logs and model context. Keys
   outlive sessions, capabilities do not
-- `fencr.vms.<vm>.secrets` is the second way, for a key a program must
-  hold itself and only for that: host files copied into the vm's volatile
+- `fencr.sandboxes.<sandbox>.secrets` is the second way, for a key a program must
+  hold itself and only for that: host files copied into the sandbox's volatile
   `/run/agent-secrets`, mode 0400, fetched over vsock at boot. Removing it
   was considered on 2026-09-06 and rejected on the facts of one real agent:
   a Nostr signing key, a Matrix recovery key and a token for a service on
   the lan have no header to ride in. An http api key is never a `secrets`
   entry; it is a credential
-- nothing on the host can borrow a credential: the only door is the vm's
-  own bridge address, which the firewall opens to that vm alone. The unit
+- nothing on the host can borrow a credential: the only door is the sandbox's
+  own bridge address, which the firewall opens to that sandbox alone. The unit
   denies private ranges, so an upstream name cannot resolve into the lan.
   An https upstream is tls the host originates
 - `allow` entries scope a credential by method and path since 2026-09-10;
   every request it rides on is on record. Not yet: a credential shared by
-  several vms through one proxy process; a secret that must sit in a URL
+  several sandboxes through one proxy process; a secret that must sit in a URL
   or a body rather than a header (issue 26); a value resolved from a
   command or a vault at use time rather than read from `secretFile` at
   unit start (issue 25)
@@ -63,40 +63,40 @@ fencr, had to be described a second time on the guest side.
 ## 2026-09-06, evening: tls interception for the credential's domain
 
 The design now in the code. The guest calls the credential's domain as it
-would anywhere. Inside the vm the name resolves to the host through
+would anywhere. Inside the sandbox the name resolves to the host through
 `/etc/hosts`; on the bridge the egress proxy reads the server name from the
-client hello and hands the connection to the vm's caddy on its unix
+client hello and hands the connection to the sandbox's caddy on its unix
 socket, which holds a certificate for each granted domain from a per-host
 authority, ends the tls, replaces the header and sends the request on.
 
-- one caddy per vm, `fencr-<vm>-credentials.service`, holding every credential
-  granted to that vm. It began as one unit per vm and credential, so a
+- one caddy per sandbox, `fencr-<sandbox>-credentials.service`, holding every credential
+  granted to that sandbox. It began as one unit per sandbox and credential, so a
   bug in one proxy would expose one secret; dropped the same day, since
-  the vm can use every credential granted to it anyway and the extra
-  units separated nothing the vm could not reach. Two vms never share a
+  the sandbox can use every credential granted to it anyway and the extra
+  units separated nothing the sandbox could not reach. Two sandboxes never share a
   process
 - one authority per host, `fencr-ca.service`, made on first use with
   openssl in `/var/lib/fencr/ca`, a directory root alone reads
-  (2026-09-19: one per vm instead, `fencr-<vm>-ca.service` in
-  `/var/lib/fencr/ca/<vm>`. A host-wide key was handed to every
-  credential-holding vm's proxy while every guest trusted it, so a bug in
+  (2026-09-19: one per sandbox instead, `fencr-<sandbox>-ca.service` in
+  `/var/lib/fencr/ca/<sandbox>`. A host-wide key was handed to every
+  credential-holding sandbox's proxy while every guest trusted it, so a bug in
   any one proxy yielded a key the whole host accepts. Per-sandbox issuance
   is what Vercel, Docker, E2B and Daytona ship; none documents a shared
   one). The
   credential unit gets the root as systemd credentials and signs a
-  certificate for each domain with it. A vm with a credential fetches
+  certificate for each domain with it. A sandbox with a credential fetches
   the root certificate beside its secrets at boot and rebuilds the system
   trust store in `/run/fencr`: the store bundle with the authority
   appended, on every path the bundle sits on. Python's certifi and node
   carry bundles of their own, so `NIX_SSL_CERT_FILE` and
   `NODE_EXTRA_CA_CERTS` are set for sessions and services
 - what a credential's `domain` is: the upstream's host by default. An
-  upstream on host loopback has no name a vm could call, so it needs one
+  upstream on host loopback has no name a sandbox could call, so it needs one
   set, `mcp.fencr` say, and the option refuses an ip or `localhost`
-- the egress proxy runs for every vm with a credential. With
+- the egress proxy runs for every sandbox with a credential. With
   `allowedDomains` it was already the guest's resolver and the road out;
   with a credential alone the guest keeps its own resolver and only the
-  tls listener opens, in the vm's firewall and in the host firewall. The
+  tls listener opens, in the sandbox's firewall and in the host firewall. The
   dns pinhole stays tied to `allowedDomains`. Both listeners sit on high
   ports of the bridge address that the firewall redirects 53 and 443 to, so
   a host serving `*:443` itself, as nixbox does, is no conflict
@@ -151,10 +151,10 @@ above), so the only thing frozen was that copy.
 
 A `.path` unit watches every `secretFile` on the host and starts a oneshot
 that runs `systemctl try-restart` on the credential proxies. Two units for
-the host, not two per vm: a path unit can only start a unit, never restart
+the host, not two per sandbox: a path unit can only start a unit, never restart
 one, so something has to do the restarting, and rotation is rare enough
-that one watcher for all of them beats a pair per vm. The cost is that
-rotating one credential restarts the proxies of every vm that has one,
+that one watcher for all of them beats a pair per sandbox. The cost is that
+rotating one credential restarts the proxies of every sandbox that has one,
 dropping their in-flight requests for the moment it takes.
 
 The boot check writes a new value into the credential file and sees the
@@ -170,8 +170,8 @@ would then be systemd's, not fencr's.
 A payload had to invent a dummy key per provider, which is what sank the
 first credential design (above: hermes needed "a table of providers with
 their api roots and a placeholder key"). fencr now supplies one:
-`placeholderOf` derives `fencr-<24 hex>` from the vm and the credential
-name, so it is stable across rebuilds, differs per vm, and is no secret —
+`placeholderOf` derives `fencr-<24 hex>` from the sandbox and the credential
+name, so it is stable across rebuilds, differs per sandbox, and is no secret —
 it may sit in the store. The guest gets it in
 `agentSandbox.credentialPlaceholders`, and in an environment variable when
 the credential names one with `guestEnv`.
@@ -214,7 +214,7 @@ request body, bounded at 1 MiB, larger or unmeasured bodies forwarded
 untouched. `FlushInterval = -1` keeps server-sent events flowing, which an
 mcp gateway needs.
 
-Then the two proxies became one. The vm's connection used to cross a unix
+Then the two proxies became one. The sandbox's connection used to cross a unix
 socket from the egress proxy to the credential proxy; now one process
 reads the client hello and either splices the connection onward or ends it
 itself. What that removed is the point:
@@ -222,7 +222,7 @@ itself. What that removed is the point:
 - no socket between two host processes, so no `Group = "kvm"` on the unit
   and no runtime directory to protect. The socket existed only because
   two processes had to meet
-- one unit per vm, `fencr-<vm>-egress.service`, one journal, one process.
+- one unit per sandbox, `fencr-<sandbox>-egress.service`, one journal, one process.
   `fencr status` reads one journal for both the connection verdicts and
   the credential requests
 - little isolation was traded for it. Both units already denied every
@@ -248,7 +248,7 @@ fencr.credentials.openrouter.secretCommand = [ "rbw" "get" "openrouter" ];
 
 `LoadCredential=` accepts an `AF_UNIX` stream as its source, so the command
 needs no file at all: a socket-activated resolver serves the value when a
-vm's egress unit starts, and systemd puts it in that unit's credentials
+sandbox's egress unit starts, and systemd puts it in that unit's credentials
 directory. The same shape the guest's raw secrets already use over vsock.
 `secretSourceOf` is the one place that knows whether a credential names a
 file or a socket; `LoadCredential` cannot tell.
@@ -257,18 +257,18 @@ A first attempt wrote the value to a tmpfs file and had a path unit watch
 it. That was a worse version of what the option replaces — it reintroduced
 the file, and rotation meant restarting a unit invented for the purpose.
 The socket has none of that: nothing is stored, so nothing is stale, and
-restarting the vm's own egress unit resolves the value again.
+restarting the sandbox's own egress unit resolves the value again.
 
 What it costs, and it is a real cost: there is no last-known-good value. A
 vault that is down or locked when the egress unit starts means the unit does
-not start, rather than the vm quietly serving yesterday's token. Loud is the
+not start, rather than the sandbox quietly serving yesterday's token. Loud is the
 right default for a credential, but it means an interactive vault is a poor
 source — the command runs as a `DynamicUser` with no home and no session, so
 sources that work are the non-interactive ones. A small static secret
 bootstrapping a dynamic one is the expected shape.
 
 The command runs in the resolver and never in the proxy. The process that
-ends the guest's tls is reachable from the vm; giving it a fork and an exec
+ends the guest's tls is reachable from the sandbox; giving it a fork and an exec
 would put that primitive behind the network-facing parser.
 
 No timer. A value a person rotates changes when they say so. An interval was

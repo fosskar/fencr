@@ -11,7 +11,7 @@ import (
 )
 
 // the addresses a granted name must never reach: the loopback the unit
-// allows for a credential's upstream, and the vm's own subnet, which
+// allows for a credential's upstream, and the sandbox's own subnet, which
 // IPAddressAllow has to carry so the guest stays reachable
 func TestLoopbackAndTheVmsOwnSubnetAreNotDialled(t *testing.T) {
 	_, subnet, err := net.ParseCIDR("10.11.0.0/26")
@@ -30,7 +30,7 @@ func TestLoopbackAndTheVmsOwnSubnetAreNotDialled(t *testing.T) {
 		// the bridge and the guest, which IPAddressDeny cannot refuse
 		{[]string{"10.11.0.1"}, nil},
 		{[]string{"10.11.0.2", "93.184.215.14"}, []string{"93.184.215.14"}},
-		// another vm's subnet is already denied at the socket, and a host
+		// another sandbox's subnet is already denied at the socket, and a host
 		// that allowed an address on purpose keeps it
 		{[]string{"10.11.1.1"}, []string{"10.11.1.1"}},
 		{[]string{"192.168.1.2"}, []string{"192.168.1.2"}},

@@ -29,7 +29,7 @@ let
 in
 {
   # resolveInstance applies these too, so a check that omits an option gets
-  # the vm the module would build
+  # the sandbox the module would build
   defaults = {
     vcpu = 4;
     mem = 4096;
@@ -69,7 +69,7 @@ in
   prefixLength = 26;
   subnetOf = cfg: "10.11.${toString cfg.id}.0/${toString prefixLength}";
 
-  stateDirOf = name: "/var/lib/fencr-vms/${name}";
+  stateDirOf = name: "/var/lib/fencr-sandboxes/${name}";
   stateImageOf = name: "${stateDirOf name}/state.img";
   userOf = name: "fencr-${name}";
   jumpUserOf = name: "fencr-jump-${name}";
@@ -80,7 +80,7 @@ in
     checkpoint = "fencr-${name}-checkpoint";
   };
   # firecracker's vsock: one socket in, "<vsock>_<port>" out, in a directory
-  # only the vm's user enters, which is what makes the path the identity
+  # only the sandbox's user enters, which is what makes the path the identity
   runDirOf = name: "/run/fencr-${name}";
   vsockOf = name: "${runDirOf name}/vsock";
   powerPort = 4;
@@ -235,7 +235,7 @@ in
       sharedDomains = duplicates (map (credential: credential.domain) granted);
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
-      # the guest's resolver is always the vm's egress unit, which answers
+      # the guest's resolver is always the sandbox's egress unit, which answers
       # every name with the bridge address where there is a name to judge
       # and relays to the host's stub where there is not. the guest never
       # speaks to resolved itself
@@ -246,7 +246,7 @@ in
         # is IFNAMSIZ; the charset is what an interface, a unit and a user can
         # all carry
         lib.optional (builtins.match "[A-Za-z0-9_-]{1,11}" name == null)
-          "vm name \"${name}\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"${tap}\" must fit IFNAMSIZ"
+          "sandbox name \"${name}\": letters, digits, \"_\" and \"-\", at most 11 of them, since \"${tap}\" must fit IFNAMSIZ"
         ++ map (
           secretName:
           "${name}: secret name \"${secretName}\" contains characters unsupported by systemd credentials"

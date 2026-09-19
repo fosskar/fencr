@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// one vm's share of the host resolver. a guest that asks faster than the
+// one sandbox's share of the host resolver. a guest that asks faster than the
 // resolver answers loses its own queries, not the host's
 const maxQueries = 256
 

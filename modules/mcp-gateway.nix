@@ -7,7 +7,7 @@
 let
   core = import ./core { inherit lib; };
   cfg = config.fencr.mcpGateway;
-  members = lib.filterAttrs (_: vm: vm.mcp.enable) config.fencr.vms;
+  members = lib.filterAttrs (_: sandbox: sandbox.mcp.enable) config.fencr.sandboxes;
   credentialName = name: "mcp-${name}";
   tokenPath = name: "/var/lib/fencr-mcp/${name}";
   gateway = pkgs.callPackage ../pkgs/mcp-gateway { };
@@ -26,8 +26,8 @@ let
         approval_tools = server.approvalTools;
         hidden_tools = server.hiddenTools;
       }) cfg.servers;
-      principals = lib.mapAttrs (name: vm: {
-        inherit (vm.mcp) allow;
+      principals = lib.mapAttrs (name: sandbox: {
+        inherit (sandbox.mcp) allow;
         token_credential = "principal-${name}";
       }) members;
     }
@@ -85,7 +85,7 @@ in
             };
             tokenFile = lib.mkOption {
               type = lib.types.path;
-              description = "host file containing the backend's bare bearer token, never granted to a VM.";
+              description = "host file containing the backend's bare bearer token, never granted to a sandbox.";
             };
             service = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
@@ -101,7 +101,7 @@ in
             hiddenTools = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];
-              description = "tool-name globs neither listed nor callable by any VM.";
+              description = "tool-name globs neither listed nor callable by any sandbox.";
             };
           };
         }
@@ -110,7 +110,7 @@ in
     };
   };
 
-  options.fencr.vms = lib.mkOption {
+  options.fencr.sandboxes = lib.mkOption {
     type = lib.types.attrsOf (
       lib.types.submodule (
         { config, name, ... }: {
@@ -121,7 +121,7 @@ in
               type = lib.types.listOf lib.types.str;
               default = [ ];
               example = [ "calendar.list_events" ];
-              description = "<server>.<tool> globs this VM may list and call; empty grants nothing. application-side MCP settings remain the payload's responsibility.";
+              description = "<server>.<tool> globs this sandbox may list and call; empty grants nothing. application-side MCP settings remain the payload's responsibility.";
             };
           };
         }
@@ -134,7 +134,7 @@ in
       assertions = [
         {
           assertion = members == { } || cfg.enable;
-          message = "fencr: VM MCP access requires fencr.mcpGateway.enable.";
+          message = "fencr: sandbox MCP access requires fencr.mcpGateway.enable.";
         }
       ];
     }
@@ -142,10 +142,10 @@ in
       assertions = [
         {
           assertion = cfg.servers != { } && members != { };
-          message = "fencr.mcpGateway requires explicit servers and at least one VM with mcp.enable.";
+          message = "fencr.mcpGateway requires explicit servers and at least one sandbox with mcp.enable.";
         }
         {
-          # a vm name is already narrower than this, from resolveInstance.
+          # a sandbox name is already narrower than this, from resolveInstance.
           # "__" separates <server>__<tool>, so only the server half can
           # carry it into a name a client has to split again
           assertion = lib.all (
@@ -168,12 +168,12 @@ in
           message = "fencr.mcpGateway: approvalCommand is only used with approvalMode = host; remove it to select client approval.";
         }
       ]
-      ++ lib.mapAttrsToList (name: vm: {
-        assertion = lib.all (other: other == name || !(lib.elem (credentialName other) vm.credentials)) (
-          builtins.attrNames members
-        );
-        message = "fencr: ${name} may not borrow another VM's MCP credential.";
-      }) config.fencr.vms;
+      ++ lib.mapAttrsToList (name: sandbox: {
+        assertion = lib.all (
+          other: other == name || !(lib.elem (credentialName other) sandbox.credentials)
+        ) (builtins.attrNames members);
+        message = "fencr: ${name} may not borrow another sandbox's MCP credential.";
+      }) config.fencr.sandboxes;
 
       fencr.credentials = lib.mapAttrs' (
         name: _:
@@ -192,7 +192,7 @@ in
 
       systemd.services = {
         fencr-mcp-tokens = {
-          description = "create per-VM MCP gateway credentials";
+          description = "create per-sandbox MCP gateway credentials";
           serviceConfig = core.hardened // {
             Type = "oneshot";
             RemainAfterExit = true;
@@ -215,7 +215,7 @@ in
           };
         };
         fencr-mcp-gateway = {
-          description = "per-VM MCP gateway";
+          description = "per-sandbox MCP gateway";
           wantedBy = [ "multi-user.target" ];
           requires = [ "fencr-mcp-tokens.service" ] ++ backendUnits;
           after = [ "fencr-mcp-tokens.service" ] ++ backendUnits;

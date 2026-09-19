@@ -40,7 +40,7 @@ let
       grant "${credential.domain} TLS 443 (credential ${credential.name})" "\"credential\""
         credential.domain
     ) cfg.credentials;
-  vmRow =
+  sandboxRow =
     name: cfg:
     ''{Name: "${name}", ID: ${toString cfg.id}, IP: "${cfg.ip}", HostIP: "${cfg.hostIp}", Inbound: []Grant{${lib.concatStrings (inbound cfg)}}, Outbound: []Grant{${lib.concatStrings (outbound cfg)}}, Unit: "${(core.unitsOf name).vm}.service", CheckpointUnit: "${(core.unitsOf name).checkpoint}@", EgressUnit: "${lib.optionalString cfg.egress "${(core.unitsOf name).egress}.service"}", Credentials: ${
       if cfg.credentials != [ ] then "true" else "false"
@@ -51,8 +51,8 @@ let
   tables = pkgs.writeText "tables.go" ''
     package main
 
-    var vms = []VM{
-    ${lib.concatStrings (lib.mapAttrsToList vmRow instances)}
+    var sandboxes = []Sandbox{
+    ${lib.concatStrings (lib.mapAttrsToList sandboxRow instances)}
     }
 
     const (

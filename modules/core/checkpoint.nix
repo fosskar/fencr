@@ -18,7 +18,7 @@ in
 
   checkpointDirOf = name: "${stateDirOf name}/checkpoints";
 
-  # the reflink is atomic on the file, so a running vm's copy is
+  # the reflink is atomic on the file, so a running sandbox's copy is
   # crash-consistent without pausing it, which firecracker 1.16 cannot
   # survive: a bare pause/resume kills host-to-guest vsock and with it the
   # power button (fixed in 1.17, #6100). without reflinks the copy would
@@ -42,7 +42,7 @@ in
     case "$label" in
       stop)
         if [ "''${SERVICE_RESULT:-success}" != success ]; then
-          echo "fencr: no stop checkpoint: the vm ended with $SERVICE_RESULT" >&2
+          echo "fencr: no stop checkpoint: the sandbox ended with $SERVICE_RESULT" >&2
           exit 0
         fi
         name="stop-$(date -u +%Y%m%dT%H%M%S)"
@@ -65,7 +65,7 @@ in
 
     # the api answers only while firecracker runs
     if [ "$label" = timer ] && ! curl --silent --fail --max-time 5 --unix-socket "$socket" http://localhost/ > /dev/null; then
-      echo "fencr: no timer checkpoint: the vm is not running" >&2
+      echo "fencr: no timer checkpoint: the sandbox is not running" >&2
       exit 0
     fi
 
@@ -87,7 +87,7 @@ in
     if [ "$label" = stop ]; then
       cp --reflink=auto --sparse=always "$image" "$dir/$name.img.tmp"
     elif ! cp --reflink=always "$image" "$dir/$name.img.tmp"; then
-      echo "fencr: no checkpoint of a running vm without reflinks on $(stat -f -c %T "$image"); stop checkpoints still copy" >&2
+      echo "fencr: no checkpoint of a running sandbox without reflinks on $(stat -f -c %T "$image"); stop checkpoints still copy" >&2
       exit 1
     fi
     mv "$dir/$name.img.tmp" "$dir/$name.img"

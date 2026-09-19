@@ -12,7 +12,7 @@ let
 in
 {
 
-  # the runner under a system user of its own, so two vms share no host
+  # the runner under a system user of its own, so two sandboxes share no host
   # identity and the state image has an owner outliving the unit. group kvm
   # is for /dev/kvm and the tap, AF_INET for the tap ioctls
   vmService =

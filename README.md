@@ -90,7 +90,7 @@ inputs.fencr.url = "github:fosskar/fencr";
   imports = [ fencr.nixosModules.fencr ];
   networking.useNetworkd = true;
 
-  fencr.vms.myagent = {
+  fencr.sandboxes.myagent = {
     authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
     outbound = [ "github.com" ];
     services = [
@@ -125,7 +125,7 @@ fencr.credentials.anthropic = {
   allow = [ "POST /v1/messages" ];
 };
 
-fencr.vms.myagent = {
+fencr.sandboxes.myagent = {
   # ...as declared above
   inbound = [ 9119 ];
   outbound = [ "github.com" "*.github.com" "!gist.github.com" ];

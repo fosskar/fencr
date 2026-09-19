@@ -1,6 +1,6 @@
 # domain-allowlist egress by server name
 
-`allowedDomains` grants egress by name — "this vm may reach github.com and
+`allowedDomains` grants egress by name — "this sandbox may reach github.com and
 nothing else". Firewalls cannot do that (rules match addresses, names
 resolve to changing addresses), so fencr judges each connection by the
 name the client itself puts in the tls handshake:
@@ -8,7 +8,7 @@ name the client itself puts in the tls handshake:
 - setting it implies `egress = "closed"`; an explicit `egress = "open"`
   next to it is rejected, because a filtered road beside open egress is
   decoration
-- the vm's resolver is the host's bridge address. There the egress proxy
+- the sandbox's resolver is the host's bridge address. There the egress proxy
   answers every A query with that same address and everything else with
   an empty answer, so no dns query leaves the host and every tls
   connection the guest opens lands on the host
@@ -23,7 +23,7 @@ name the client itself puts in the tls handshake:
 - the proxy unit denies private, link-local, multicast and other
   special-use destination ranges, so an allowed hostname cannot grant lan
   access by resolving to a private address (2026-09-18: every range but the
-  vm's own subnet, which the unit must reach and the proxy refuses itself)
+  sandbox's own subnet, which the unit must reach and the proxy refuses itself)
 - the input chain admits only the proxy's two redirected ports
   from the bridge to the host; a raw address on 443 hits the closed
   forward chain
@@ -47,7 +47,7 @@ ignores nothing and simply connects is judged the same as curl.
 
 ## earlier shape, replaced
 
-A per-vm tinyproxy on host loopback, reached over a vsock forward, with
+A per-sandbox tinyproxy on host loopback, reached over a vsock forward, with
 `HTTP_PROXY`/`HTTPS_PROXY` exported into the guest. It enforced the
 allowlist on the CONNECT hostname and worked only for tools that honor the
 variables; everything else hit the closed firewall. Replaced because
@@ -103,7 +103,7 @@ because they deliver values into the guest rather than grant network access.
 
 ## 2026-09-11: the proxy and the credential proxy became one unit
 
-`fencr-<vm>-egress.service` is now one go program doing both jobs: it
+`fencr-<sandbox>-egress.service` is now one go program doing both jobs: it
 answers the dns, reads the client hello, and either splices an allowed
 name onward as before or ends the tls itself for a credential's domain.
 The unix socket between the two processes is gone, and with it the `kvm`
@@ -114,22 +114,22 @@ carries. `credentials.md` holds the reasoning.
 ## 2026-09-11: the unit is the guest's resolver either way
 
 An `"internet"` grant used to point the guest at systemd-resolved, which
-fencr made listen on each vm's bridge address with
+fencr made listen on each sandbox's bridge address with
 `DNSStubListenerExtra`. That was the one host service a guest could speak
 to that fencr had not written: a large C daemon, shared with the host and
-every other vm, one cache and one process for all of them, parsing packets
-a guest chose. A vm could not be held to its own share of it — the EMFILE
+every other sandbox, one cache and one process for all of them, parsing packets
+a guest chose. A sandbox could not be held to its own share of it — the EMFILE
 bursts that took dns down on one host were this — and its queries appeared
 in no journal fencr reads.
 
-The unit now owns udp and tcp 53 for every vm that may resolve at all, and
+The unit now owns udp and tcp 53 for every sandbox that may resolve at all, and
 has two modes:
 
 - with domain grants it answers every name with the bridge address, as
   before, because the client hello is what names the destination
 - with an open grant there is no name to judge and the guest needs real
   addresses, so the query is relayed to `127.0.0.53` and the answer passed
-  back unread. `maxQueries` bounds what one vm can have in flight; past
+  back unread. `maxQueries` bounds what one sandbox can have in flight; past
   that its own queries are dropped, with the name in the journal, rather
   than the host's resolver being pushed over
 
@@ -140,30 +140,30 @@ there and the alternative is names that resolve nowhere.
 This is not an allowlist and does not pretend to be: an open grant still
 reaches any public address, and a guest that wants to exfiltrate has
 simpler roads than dns. What it buys is that the guest talks to fencr's
-code instead of the host's resolver, that one vm cannot starve another,
+code instead of the host's resolver, that one sandbox cannot starve another,
 and that a dropped query is attributable.
 
-## 2026-09-11: port 53 belongs to the vm's unit
+## 2026-09-11: port 53 belongs to the sandbox's unit
 
 Once the unit answers dns, a query to a resolver out on the internet is the
 guest going around the cap and the journal. It does not take an adversary:
 the guest's own resolved carries a fallback list of public servers and
 switches to them when link dns stalls, which is exactly when the cap
 matters. So the forward chain drops tcp and udp 53, logged as
-`dns-blocked`, for every vm the unit resolves for.
+`dns-blocked`, for every sandbox the unit resolves for.
 
 - an explicit destination grant is accepted before the drop, so
   `"192.168.10.5:53"` still reaches a resolver of the operator's choosing
 - a refused query appears in `fencr status` with the grant that would
   admit it, so this fails visibly rather than as a timeout with no cause
-- a vm with no dns at all is untouched: there is nothing to go around
+- a sandbox with no dns at all is untouched: there is nothing to go around
 
 This stops accidents and sloppiness, not an adversary. Encrypted dns is tls
 on 443 and looks like every other https connection, so an open grant cannot
 prevent it. The mode where dns cannot be smuggled out is a domain
 allowlist, where 443 itself is judged by name.
 
-## 2026-09-18: the vm's own subnet is refused in the proxy
+## 2026-09-18: the sandbox's own subnet is refused in the proxy
 
 The bullet above credited the unit's deny list with the whole job. It cannot
 do the whole job. `IPAddressDeny` carries the special-use ranges, but
@@ -171,10 +171,10 @@ do the whole job. `IPAddressDeny` carries the special-use ranges, but
 the bridge address, and systemd's access lists do not distinguish the
 direction of a connection, so admitting the guest to the unit's dns and tls
 ports also admits the unit to dial that range. The two lists resolve by
-longest prefix, so the vm's `/26` outranks the `10.0.0.0/8` it sits inside.
+longest prefix, so the sandbox's `/26` outranks the `10.0.0.0/8` it sits inside.
 No deny list can cover it, however it is written.
 
-So `egressConfig` carries `blocked`, the vm's own subnet, and `dialPublic`
+So `egressConfig` carries `blocked`, the sandbox's own subnet, and `dialPublic`
 refuses an allowed name resolving onto the bridge or the guest before it
 connects. Until this, such a name was dialled and the guest's tls spliced to
 whatever the host served on 443 — the nat redirect does not intervene, since

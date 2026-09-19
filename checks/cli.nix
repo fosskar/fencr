@@ -90,7 +90,7 @@ let
         ;;
       -u)
         # one journal: the verdict per connection and, where a credential is
-        # granted, one record per request it carried. a vm with an open
+        # granted, one record per request it carried. a sandbox with an open
         # grant has a unit too, but it only forwards dns and judges nothing
         case "$2" in
           fencr-sbx-egress.service | fencr-keyed-egress.service) ;;
@@ -214,9 +214,9 @@ pkgs.runCommand "fencr-cli-check" { } ''
   grep -Fx 'fencr: "../state" is not a checkpoint name' actual
   # no keys means no Host alias, so the bare name must not reach ssh at all
   if ${cli}/bin/fencr ssh sealed 2> actual; then exit 1; fi
-  grep -Fx 'fencr: sealed has no ssh keys; set fencr.adminKeys or fencr.vms.sealed.authorizedKeys' actual
+  grep -Fx 'fencr: sealed has no ssh keys; set fencr.adminKeys or fencr.sandboxes.sealed.authorizedKeys' actual
   if grep -F 'ssh sealed' "$TEST_LOG"; then exit 1; fi
-  # a vm with keys reaches ssh under the alias the module wrote
+  # a sandbox with keys reaches ssh under the alias the module wrote
   ${cli}/bin/fencr ssh sbx uptime
   grep -Fx 'ssh sbx uptime' "$TEST_LOG"
   ${cli}/bin/fencr status keyed > actual

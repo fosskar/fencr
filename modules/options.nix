@@ -1,4 +1,4 @@
-# the options of fencr: what a host declares, what a vm may be given
+# the options of fencr: what a host declares, what a sandbox may be given
 { lib, ... }@host:
 let
   core = import ./core { inherit lib; };
@@ -7,12 +7,12 @@ in
   options.fencr.guestSystems = lib.mkOption {
     type = lib.types.attrsOf lib.types.raw;
     readOnly = true;
-    description = "the evaluated guest system of every vm, keyed by vm name.";
+    description = "the evaluated guest system of every sandbox, keyed by sandbox name.";
   };
 
   options.fencr.credentials = lib.mkOption {
     default = { };
-    description = "credentials a vm may use without ever seeing the value, granted by name in fencr.vms.<name>.credentials.";
+    description = "credentials a sandbox may use without ever seeing the value, granted by name in fencr.sandboxes.<name>.credentials.";
     type = lib.types.attrsOf (
       lib.types.submodule (
         { config, name, ... }:
@@ -42,9 +42,9 @@ in
               default = null;
               example = "mcp.fencr";
               description = ''
-                the name a vm calls. it resolves to the host, where the
+                the name a sandbox calls. it resolves to the host, where the
                 credential's proxy answers with a certificate from the
-                host's own authority, which the vm trusts. defaults to the
+                host's own authority, which the sandbox trusts. defaults to the
                 upstream's host; an upstream on host loopback needs one.
               '';
             };
@@ -61,7 +61,7 @@ in
                 presets using Authorization add "Bearer " automatically;
                 existing values with that prefix remain accepted. without a
                 provider, or with a custom header, supply the complete header
-                value. the secret never enters a vm. a write to it restarts the credential
+                value. the secret never enters a sandbox. a write to it restarts the credential
                 proxy, so a rotated token is served without a rebuild.
                 required without secretCommand.
               '';
@@ -77,8 +77,8 @@ in
               description = ''
                 command whose output supplies the api key or header value,
                 with the same formatting as secretFile. it runs on the host
-                as an isolated DynamicUser, never in a vm or in the proxy.
-                systemd reads its output through a socket when the vm's
+                as an isolated DynamicUser, never in a sandbox or in the proxy.
+                systemd reads its output through a socket when the sandbox's
                 egress unit starts; restarting that unit resolves it again.
                 the command must work non-interactively without access to
                 the logged-in user's session. required without secretFile.
@@ -90,7 +90,7 @@ in
               default = null;
               example = "ANTHROPIC_API_KEY";
               description = ''
-                environment variable set in every vm granted this credential,
+                environment variable set in every sandbox granted this credential,
                 carrying a placeholder instead of the value. a client that
                 refuses to start without a key is satisfied by it, and the
                 proxy puts the real value wherever the placeholder appears
@@ -144,15 +144,15 @@ in
     type = lib.types.listOf lib.types.str;
     default = [ ];
     description = ''
-      public keys authorized as root in every vm.
-      host root can always reach a vm regardless (it owns the hypervisor,
+      public keys authorized as root in every sandbox.
+      host root can always reach a sandbox regardless (it owns the hypervisor,
       the state tree and the console); this only makes that access ssh.
     '';
   };
 
-  options.fencr.vms = lib.mkOption {
+  options.fencr.sandboxes = lib.mkOption {
     default = { };
-    description = "sealed agent microvms, keyed by vm name.";
+    description = "sealed agent microvms, keyed by sandbox name.";
     type = lib.types.attrsOf (
       lib.types.submodule (
         { config, name, ... }:
@@ -160,13 +160,13 @@ in
           options = {
             id = lib.mkOption {
               type = lib.types.ints.between 0 (core.idRange - 1);
-              default = core.idOf (lib.attrNames host.config.fencr.vms) name;
-              defaultText = "position of the name among fencr.vms";
+              default = core.idOf (lib.attrNames host.config.fencr.sandboxes) name;
+              defaultText = "position of the name among fencr.sandboxes";
               description = ''
                 unique instance index; derives subnet, mac and vsock cid.
-                by default the vm's position in name order, so adding a vm
+                by default the sandbox's position in name order, so adding a sandbox
                 whose name sorts earlier moves the ones after it; set it to
-                keep a vm's address fixed.
+                keep a sandbox's address fixed.
               '';
             };
 
@@ -174,29 +174,29 @@ in
               type = lib.types.str;
               readOnly = true;
               default = core.ipOf { inherit (config) id; };
-              description = "the vm's address on its bridge, where its sshd and exposed ports answer.";
+              description = "the sandbox's address on its bridge, where its sshd and exposed ports answer.";
             };
 
             hostIp = lib.mkOption {
               type = lib.types.str;
               readOnly = true;
               default = core.hostIpOf { inherit (config) id; };
-              description = "the host's address on the vm's bridge, where outbound host:<port> grants apply.";
+              description = "the host's address on the sandbox's bridge, where outbound host:<port> grants apply.";
             };
 
             services = lib.mkOption {
               type = lib.types.listOf lib.types.raw;
               default = [ ];
-              description = "nixos modules to run inside the vm.";
+              description = "nixos modules to run inside the sandbox.";
             };
 
             authorizedKeys = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];
               description = ''
-                public keys authorized as root in this vm — the owner tier.
-                a vm belongs to whoever holds these keys; no host account
-                needed. without adminKeys and authorizedKeys the vm has no
+                public keys authorized as root in this sandbox — the owner tier.
+                a sandbox belongs to whoever holds these keys; no host account
+                needed. without adminKeys and authorizedKeys the sandbox has no
                 ssh door at all.
               '';
             };
@@ -220,14 +220,14 @@ in
               type = lib.types.nullOr lib.types.str;
               default = core.defaults.memoryMax;
               defaultText = "mem plus 512 MiB";
-              description = "hard cap on the whole vm unit, enforced by the host: the guest's memory plus room for the hypervisor, when null.";
+              description = "hard cap on the whole sandbox unit, enforced by the host: the guest's memory plus room for the hypervisor, when null.";
             };
             stateSize = lib.mkOption {
               type = lib.types.int;
               default = core.defaults.stateSize;
               description = ''
-                size in MiB of the vm's root filesystem, a sparse disk image at
-                /var/lib/fencr-vms/<name>/state.img. a larger value grows the
+                size in MiB of the sandbox's root filesystem, a sparse disk image at
+                /var/lib/fencr-sandboxes/<name>/state.img. a larger value grows the
                 image and its filesystem on the next start; it never shrinks.
               '';
             };
@@ -240,7 +240,7 @@ in
               default = core.defaults.diskBandwidth;
               example = 200;
               description = ''
-                cap in MiB/s on the vm's reads and writes to its state image,
+                cap in MiB/s on the sandbox's reads and writes to its state image,
                 enforced by the hypervisor's token bucket. null leaves the
                 disk unlimited.
               '';
@@ -250,7 +250,7 @@ in
               default = core.defaults.networkBandwidth;
               example = 50;
               description = ''
-                cap in MiB/s on the vm's traffic in each direction, enforced
+                cap in MiB/s on the sandbox's traffic in each direction, enforced
                 by the hypervisor's token bucket on the tap. null leaves the
                 network unlimited.
               '';
@@ -259,7 +259,7 @@ in
               type = lib.types.ints.positive;
               default = core.defaults.maxConnections;
               description = ''
-                connections the vm may hold open at once, counted by the
+                connections the sandbox may hold open at once, counted by the
                 host's connection tracking; a new connection beyond it is
                 dropped and logged. protects the host's conntrack table from
                 a port scan or a leaking tool.
@@ -280,7 +280,7 @@ in
                 default = core.defaults.checkpoints.interval;
                 example = "hourly";
                 description = ''
-                  a systemd calendar expression; at each tick a running vm's
+                  a systemd calendar expression; at each tick a running sandbox's
                   disk is copied without pausing it and the result is
                   "timer-<utc stamp>". null for none.
                 '';
@@ -303,7 +303,7 @@ in
                 volatile /run/agent-secrets, mode 0400. guest root can read
                 these raw values. for a key a program must hold itself, a
                 signing key or a recovery key; an http api key is a
-                credential instead, which the vm can use but never read.
+                credential instead, which the sandbox can use but never read.
               '';
             };
 
@@ -318,7 +318,7 @@ in
                 "192.168.1.0/24:8123"
               ];
               description = ''
-                connections the vm may initiate: a domain grants TLS on 443,
+                connections the sandbox may initiate: a domain grants TLS on 443,
                 host:<port> grants TCP to the host on any address the guest
                 can route to over the bridge, and <ipv4[/prefix]>:<port>
                 grants TCP to that address or subnet, including private ranges.
@@ -339,7 +339,7 @@ in
               default = core.defaults.inbound;
               example = [ 9119 ];
               description = ''
-                guest TCP ports any host process may reach at the vm's bridge
+                guest TCP ports any host process may reach at the sandbox's bridge
                 address. the guest service must listen on that address, not
                 loopback. ports are not published to the LAN or internet.
                 SSH access is enabled separately by authorized keys.
@@ -351,11 +351,11 @@ in
               default = core.defaults.credentials;
               example = lib.literalExpression ''[ "anthropic" ]'';
               description = ''
-                names from fencr.credentials this vm may use. the vm calls
+                names from fencr.credentials this sandbox may use. the sandbox calls
                 the credential's domain as it would anywhere; the name
                 resolves to the host, whose proxy ends the tls with a
-                certificate the vm trusts, injects the credential and sends
-                the request on. the value never enters the vm.
+                certificate the sandbox trusts, injects the credential and sends
+                the request on. the value never enters the sandbox.
               '';
             };
 

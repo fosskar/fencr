@@ -13,7 +13,7 @@ let
       exec python ${./gateway.py}
     '';
     meta = {
-      description = "Host MCP gateway with per-VM permissions";
+      description = "Host MCP gateway with per-sandbox permissions";
       license = lib.licenses.mit;
       mainProgram = "fencr-mcp-gateway";
     };

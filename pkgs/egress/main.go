@@ -1,9 +1,9 @@
-// the vm's road out and its credentials, one process per vm. on the bridge
+// the sandbox's road out and its credentials, one process per sandbox. on the bridge
 // address it answers every dns name with itself, so every tls connection
 // the guest opens lands here and is judged by the server name in its client
 // hello: a credential's domain is ended here and the credential put where
 // the request needs it, an allowed name is spliced to the real host unread,
-// the rest is refused. the vm never holds a credential's value.
+// the rest is refused. the sandbox never holds a credential's value.
 package main
 
 import (
@@ -32,7 +32,7 @@ type config struct {
 	// where a query goes when there is no name to judge; empty means every
 	// name is answered with the bridge address instead
 	Resolver string `json:"resolver"`
-	// the vm's own subnet: IPAddressAllow must carry it for the guest to be
+	// the sandbox's own subnet: IPAddressAllow must carry it for the guest to be
 	// reachable, so IPAddressDeny cannot refuse it and this check must
 	Blocked     []string     `json:"blocked"`
 	Domains     []string     `json:"domains"`
@@ -252,7 +252,7 @@ func splice(client net.Conn, name string, blocked []*net.IPNet) {
 }
 
 // the address that passed the check is the one connected to. IPAddressDeny
-// stops the special-use ranges, but IPAddressAllow has to carry the vm's own
+// stops the special-use ranges, but IPAddressAllow has to carry the sandbox's own
 // subnet so the guest stays reachable, and that /26 outranks the /8; a
 // granted name resolving onto the bridge or the guest is refused here
 func dialPublic(name, port string, blocked []*net.IPNet) (net.Conn, error) {
@@ -264,7 +264,7 @@ func dialPublic(name, port string, blocked []*net.IPNet) (net.Conn, error) {
 	}
 	addresses := publicAddresses(resolved, blocked)
 	if len(addresses) == 0 {
-		return nil, fmt.Errorf("dial %s: every address is loopback or on the vm's own subnet", name)
+		return nil, fmt.Errorf("dial %s: every address is loopback or on the sandbox's own subnet", name)
 	}
 	var failure error
 	for _, address := range addresses {

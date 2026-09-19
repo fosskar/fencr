@@ -39,7 +39,7 @@ in
       ''iifname "${cfg.bridge}" ip daddr ${destination.address} tcp dport ${toString destination.port} counter accept comment "${tag cfg "pin-${destination.address}-${toString destination.port}"}"''
     ) cfg.destinations
     + "\n"
-    # the vm's own unit answers dns, so a query to a resolver out there is
+    # the sandbox's own unit answers dns, so a query to a resolver out there is
     # the guest going around the cap and the journal, whether it meant to or
     # not: resolved falls back to public servers on its own. an explicit
     # destination grant above still reaches a resolver of the operator's
