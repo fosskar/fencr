@@ -35,8 +35,9 @@ them on the host:
 - **MCP tool calls go through a gateway** that can require approval before a
   tool runs.
 
-Each sandbox is evaluated and run as a
-[microvm.nix](https://github.com/microvm-nix/microvm.nix) machine.
+fencr evaluates each sandbox with
+[microvm.nix](https://github.com/microvm-nix/microvm.nix) and runs the microVM
+it declares.
 
 > [!NOTE]
 > fencr ships no agent, clones no repositories and mounts no working tree. You
