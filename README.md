@@ -8,7 +8,7 @@
 [![NixOS flake](https://img.shields.io/badge/NixOS-flake-5277C3?style=flat-square&logo=nixos&logoColor=white)](flake.nix)
 [![Firecracker](https://img.shields.io/badge/Firecracker-microVM-FF9900?style=flat-square)](https://firecracker-microvm.github.io/)
 
-[Overview](#overview) • [Features](#features) • [How it works](#how-it-works) • [Getting started](#getting-started) • [Security](#security) • [Documentation](#documentation)
+[Overview](#overview) • [Features](#features) • [How it works](#how-it-works) • [Getting started](#getting-started) • [Security](#security) • [Development](#development) • [Documentation](#documentation)
 
 </div>
 
@@ -22,12 +22,13 @@ guest with its own kernel, its own disk and an unprivileged host user, and
 nothing from the host is mounted into it. What runs inside is yours to declare
 — fencr never supplies it.
 
-An agent writes and runs its own commands. On your own machine that means it
-can read every file you can, reach everything on your network, and spend your
-API keys. A VM ends the file access. It does not end the other two: the VM
-still has a network, and the key is still inside it.
+An agent decides its own commands. Run it on your own machine and it has your
+files, your network and your API keys. A sandbox takes away the files. It does
+not take away the rest: a sandbox still needs a network to be useful, and a key
+still has to sit somewhere the agent can reach it.
 
-fencr moves those two decisions to the host:
+So fencr does not put them there. The host keeps the network and the keys, and
+decides what the sandbox gets:
 
 - **Outbound traffic is denied unless you grant the destination**, and the
   grant is enforced by a host process the guest cannot configure.
@@ -204,6 +205,36 @@ against the guest, in that order.
 fencr is early. The interfaces here work and are covered by the checks in
 `checks/`, up to a guest booting under nested KVM, but options may still
 change.
+
+## Development
+
+```bash
+nix develop        # shell with the formatter and the tooling
+nix fmt            # nixfmt, deadnix, statix, mdformat, gofmt
+nix flake check    # every check below, including the booting guest
+```
+
+Each check also builds on its own, as
+`nix build .#checks.x86_64-linux.<name> --no-link`:
+
+| Check | What it covers |
+| --- | --- |
+| `formatting` | treefmt across Nix, Markdown and Go |
+| `core` | the pure builders, evaluated without a host |
+| `cli` | the compiled `fencr` binary against mocked system commands |
+| `egress` | `go test` inside the egress package build |
+| `mcp-gateway` | the gateway's contract tests |
+| `mcp-module` | gateway options, credentials and unit wiring |
+| `nixos-module` | builds a host toplevel, not just evaluation |
+| `nixos-boot` | a Firecracker guest under nested KVM |
+
+> [!NOTE]
+> `nixos-boot` needs nested KVM and runs a guest end to end — ssh, secrets,
+> egress, credential injection, MCP, checkpoints and a clean stop. It is the
+> slow one, and `nix flake check` includes it.
+
+Flake outputs cover `x86_64-linux` and `aarch64-linux`. There is no default
+package; the CLI is installed by the NixOS module when sandboxes are declared.
 
 ## Documentation
 
