@@ -5,9 +5,9 @@
 *Sealed Firecracker microVM sandboxes for AI agents on NixOS*
 
 [![nixbot](https://nixbot.fosskar.eu/badge/460332d5-0e2a-4b0f-abd5-94932856c103.svg)](https://nixbot.fosskar.eu/repos/github/fosskar/fencr)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
-[![NixOS flake](https://img.shields.io/badge/NixOS-flake-5277C3?style=flat-square&logo=nixos&logoColor=white)](flake.nix)
-[![Firecracker](https://img.shields.io/badge/Firecracker-microVM-FF9900?style=flat-square)](https://firecracker-microvm.github.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat)](LICENSE)
+[![NixOS flake](https://img.shields.io/badge/NixOS-flake-5277C3?style=flat&logo=nixos&logoColor=white)](flake.nix)
+[![Firecracker](https://img.shields.io/badge/Firecracker-microVM-FF9900?style=flat)](https://firecracker-microvm.github.io/)
 
 [Overview](#overview) • [Features](#features) • [Getting started](#getting-started) • [How it works](#how-it-works) • [Security](#security) • [Development](#development) • [Documentation](#documentation)
 
@@ -19,10 +19,10 @@ ______________________________________________________________________
 
 fencr is a NixOS module that builds
 [Firecracker](https://firecracker-microvm.github.io/) microVM sandboxes and
-keeps control of what each one can reach outside itself. A sandbox is a full NixOS
-guest with its own kernel, its own disk and an unprivileged host user, and
-nothing from the host is mounted into it. What runs inside is yours to declare
-— fencr never supplies it.
+keeps control of what each one can reach outside itself. A sandbox is a full
+NixOS guest with its own kernel, its own disk and an unprivileged host user,
+and nothing from the host is mounted into it. What runs inside is yours to
+declare — fencr never supplies it.
 
 A useful sandbox still needs network access and API credentials. Keeping those
 inside it would put them within reach of whatever runs there, so fencr keeps
