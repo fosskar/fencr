@@ -83,6 +83,14 @@ in
       iifname "${cfg.bridge}" ct state established,related accept
     ''
     + connectionCap cfg
+    # the egress unit listens on the bridge address, which the host itself
+    # reaches over lo: the rules below scope the door to the bridge, so a
+    # host process must be refused by name or it borrows the credentials
+    + lib.optionalString cfg.egress (
+      drop cfg
+        ''iifname != "${cfg.bridge}" ip daddr ${cfg.hostIp} meta l4proto { tcp, udp } th dport { ${toString egressDnsPort}, ${toString egressTlsPort} }''
+        "local-blocked"
+    )
     # any address of the host's the guest can route to over the bridge, which
     # is every local one but loopback: the nat table redirects 443 on the
     # bridge address to the proxy, so scoping this rule there would leave

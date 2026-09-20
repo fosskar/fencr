@@ -475,6 +475,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 10 -H \"Authorization: Bearer placeholder\" https://api.test/' | grep -Fx 'authorization: ${placeholder}'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'intercept api.test'")
       host.fail(f"{ssh} 'grep -r fencr-api-token /proc/self/environ /run'", timeout=60)
+      # the same door from the host itself, over lo rather than the bridge: a
+      # host process naming the credential's domain must not borrow it
+      host.fail("su -s /bin/sh nobody -c 'curl --silent --insecure --max-time 5 --resolve api.test:33443:10.11.0.1 https://api.test:33443/'")
+      host.succeed("journalctl -k -o cat | grep -F 'fencr:sbx:local-blocked:' | grep -qF 'DPT=33443'")
+      host.succeed("fencr status sbx | grep -F 'host  → egress:33443/tcp'")
       # the access log holds the request without the headers it carried
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'handled request' | grep -F '\"method\":\"GET\"' | grep -F '\"host\":\"api.test\"' | grep -F '\"uri\":\"/\"' | grep -qF '\"status\":200'")
       host.fail("journalctl -u fencr-sbx-egress.service -o cat | grep -qiF 'placeholder'")

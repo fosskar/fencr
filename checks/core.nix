@@ -440,6 +440,22 @@ assert lib.assertMsg (
     occurrences ''ip daddr 10.11.0.1 tcp dport 33443 counter accept comment "fencr:sbx:egress-tls"''
     == 1
 ) "unit check: the egress unit is not the sandbox's road out";
+# the host reaches the bridge address over lo, where no bridge-scoped rule
+# runs: a host process must be refused by name or it borrows the credentials
+assert lib.assertMsg (
+  let
+    local = ''iifname != "br-sbx" ip daddr 10.11.0.1 meta l4proto { tcp, udp } th dport { 33053, 33443 } counter drop comment "fencr:sbx:local-blocked"'';
+  in
+  lib.hasInfix local (core.inputRules resolved)
+  && !lib.hasInfix "local-blocked" (
+    core.inputRules (
+      resolve "sealed" {
+        id = 1;
+        outbound = [ ];
+      }
+    )
+  )
+) "core check: a host process reaches the sandbox's egress unit";
 assert lib.assertMsg (
   units.services."fencr-sbx-egress".serviceConfig.SystemCallFilter == [
     "@system-service"

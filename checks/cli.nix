@@ -87,6 +87,7 @@ let
         printf 'fencr:sbx:guest-blocked: IN= OUT=br-sbx SRC=10.11.0.1 DST=224.0.0.22 PROTO=2\n'
         printf 'fencr:sbx:host-blocked: IN=br-sbx OUT= SRC=10.11.0.2 DST=10.11.0.1 PROTO=TCP SPT=33627 DPT=58836\n'
         printf 'fencr:sbx:connections-blocked: IN=br-sbx OUT=eth0 SRC=10.11.0.2 DST=140.82.121.4 PROTO=TCP DPT=443\n'
+        printf 'fencr:sbx:local-blocked: IN=lo OUT= SRC=10.11.0.1 DST=10.11.0.1 PROTO=TCP SPT=41000 DPT=33443\n'
         ;;
       -u)
         # one journal: the verdict per connection and, where a credential is
@@ -161,6 +162,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
     ✗ guest → evil.test:443/tls         x1     outbound "evil.test"
     ✗ guest → gist.github.com:443/tls   x1     denied by outbound "!gist.github.com"
     ✗ guest → host:58836/tcp            x1     reply to a connection the host no longer tracks
+    ✗ host  → egress:33443/tcp          x1     a host process, not the guest; only the sandbox may use its egress
     ✗ host  → guest:9120/tcp            x1     inbound 9120
 
   Credential requests (journal):

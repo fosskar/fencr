@@ -418,6 +418,9 @@ func blocked(sandbox *Sandbox, kernel string, proxy *result) []counted {
 		case found == "dns-blocked":
 			flow = "guest → " + peer(dst)
 			hint = fmt.Sprintf("dns is the sandbox's own; grant \"%s:53\" to use this one", dst)
+		case found == "local-blocked":
+			flow = "host  → " + peer("egress")
+			hint = "a host process, not the guest; only the sandbox may use its egress"
 		case found == "host-blocked":
 			flow = "guest → " + peer("host")
 			switch {
