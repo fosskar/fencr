@@ -160,6 +160,61 @@ func TestTheAccessLogCarriesThePlaceholder(t *testing.T) {
 	}
 }
 
+// the path is judged as sent and forwarded as sent, so a dot segment is
+// the one way a request could match an allow entry and land outside it
+func TestDotSegmentsNeverReachTheUpstream(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	if err := os.WriteFile(filepath.Join(directory, "go"), []byte("go-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("%s reached upstream", r.RequestURI)
+	}))
+	defer upstream.Close()
+	proxy := handler(map[string][]*credential{"opencode.ai": prepared(t,
+		&credential{Name: "go", Upstream: upstream.URL, Header: "Authorization", Allow: []rule{{Path: "/zen/go/v1/*"}}})})
+	for _, path := range []string{
+		"/zen/go/v1/../../v1/chat",
+		"/zen/go/v1/%2e%2e/%2e%2e/v1/chat",
+		"/zen/go/v1/./models",
+	} {
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "https://opencode.ai"+path, nil))
+		if response.Code != http.StatusForbidden {
+			t.Errorf("%s: got status %d, want 403", path, response.Code)
+		}
+	}
+}
+
+// an upstream that echoes the value hands it back compressed if the guest
+// asks for that, and the scrub reads bytes; so the guest's ask is dropped
+func TestTheScrubSeesAnEchoInTheClear(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	if err := os.WriteFile(filepath.Join(directory, "key"), []byte("api-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if encoding := r.Header.Get("Accept-Encoding"); encoding != "" {
+			t.Errorf("the upstream was asked for %q", encoding)
+		}
+		echo := "bad token " + r.Header.Get("Authorization")
+		w.Header().Set("Content-Length", fmt.Sprint(len(echo)))
+		io.WriteString(w, echo)
+	}))
+	defer upstream.Close()
+	proxy := handler(map[string][]*credential{"api.test": prepared(t,
+		&credential{Name: "key", Upstream: upstream.URL, Header: "Authorization", Placeholder: "fencr-placeholder"})})
+	request := httptest.NewRequest(http.MethodGet, "https://api.test/v1/models", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "bad token fencr-placeholder" {
+		t.Fatalf("got %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestSingleCredentialStillAllowsEveryPath(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("CREDENTIALS_DIRECTORY", directory)

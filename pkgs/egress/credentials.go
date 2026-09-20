@@ -104,6 +104,12 @@ func handler(byDomain map[string][]*credential) http.Handler {
 			refuse(http.StatusNotFound, "fencr: no credential for this domain")
 			return
 		}
+		// an allow entry judges the path as sent, and the proxy forwards it as
+		// sent; an upstream that resolves dot segments would land elsewhere
+		if hasDotSegment(r.URL.Path) {
+			refuse(http.StatusForbidden, "fencr: request not allowed for any credential")
+			return
+		}
 		var c *credential
 		for _, candidate := range candidates {
 			if !allowed(candidate, r) {
@@ -159,6 +165,15 @@ func (entry rule) covers(r *http.Request) bool {
 		return true
 	}
 	return entry.pattern.MatchString(r.URL.Path)
+}
+
+func hasDotSegment(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // "*" stands for any characters, "/" included: an allow entry scopes a
@@ -237,11 +252,16 @@ func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) 
 	value, upstream := c.value, c.upstream
 	status := http.StatusBadGateway
 	proxy := &httputil.ReverseProxy{
+		Transport: transport,
 		// server-sent events and other long-lived streams must not be held
 		FlushInterval: -1,
 		Rewrite: func(p *httputil.ProxyRequest) {
 			p.SetURL(upstream)
 			p.Out.Host = upstream.Host
+			// scrub reads the body as bytes, so the upstream must answer in
+			// the clear: a guest asking for gzip would get the value back
+			// inside what the scrub cannot read
+			p.Out.Header.Del("Accept-Encoding")
 			headerValue := value
 			if c.Bearer && !strings.HasPrefix(strings.ToLower(value), "bearer ") {
 				headerValue = "Bearer " + value
@@ -261,6 +281,14 @@ func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) 
 	proxy.ServeHTTP(w, r)
 	record(r, uri, status)
 }
+
+// without this the transport asks for gzip itself and hands back a
+// decompressed body with no length, which the scrub forwards untouched
+var transport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return t
+}()
 
 // one line per request in the journal: what it was and how it ended, never
 // a header, since the credential and whatever the guest sent live there
