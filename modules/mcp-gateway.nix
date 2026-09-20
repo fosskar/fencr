@@ -190,6 +190,11 @@ in
         }
       ) members;
 
+      # StateDirectoryMode sets the mode when the directory is created; an
+      # existing one keeps whatever it has, and this reasserts it on every
+      # activation
+      systemd.tmpfiles.rules = [ "d /var/lib/fencr-mcp 0700 root root -" ];
+
       systemd.services = {
         fencr-mcp-tokens = {
           description = "create per-sandbox MCP gateway credentials";

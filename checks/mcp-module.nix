@@ -54,6 +54,7 @@ assert credential.allow == [ "* /mcp/" ];
 assert !(config.fencr.guestSystems.agent.config.environment.sessionVariables ? MCP_GATEWAY_TOKEN);
 assert lib.elem "fencr-mcp-gateway.service" config.systemd.services.fencr-agent-egress.requires;
 assert lib.elem "fencr-mcp-tokens.service" gateway.requires;
+assert lib.elem "d /var/lib/fencr-mcp 0700 root root -" config.systemd.tmpfiles.rules;
 assert gateway.serviceConfig.IPAddressDeny == "any";
 assert gateway.serviceConfig.IPAddressAllow == [ "127.0.0.1/32" ];
 assert
