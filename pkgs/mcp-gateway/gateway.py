@@ -131,19 +131,22 @@ class Sessions:
             self.entries[key] = entry
             return session
 
-    async def call(self, key, server: dict[str, Any], action):
+    async def call(self, key, server: dict[str, Any], action, retry=True):
         """Run action against the session, once more on a fresh one if it fails.
 
         A session can die between two calls without anything noticing, so the
-        first failure is retried rather than reported.
+        first failure is retried rather than reported. Not for a call that
+        was approved: the backend may have acted before the failure, and one
+        approval is one invocation.
         """
-        for last in (False, True):
+        attempts = 2 if retry else 1
+        for attempt in range(attempts):
             session = await self.acquire(key, server)
             try:
                 return await action(session)
             except Exception:
                 await self.discard(key)
-                if last:
+                if attempt == attempts - 1:
                     raise
 
     async def aclose(self) -> None:
@@ -242,7 +245,8 @@ def create_server(name, principal, config, sessions):
         ):
             raise ValueError("unknown MCP gateway tool")
         server = servers[server_name]
-        if matches(tool_name, server["approval_tools"]):
+        approved = matches(tool_name, server["approval_tools"])
+        if approved:
             request = {
                 "principal": name, "server": server_name,
                 "tool": tool_name, "arguments": arguments,
@@ -252,7 +256,9 @@ def create_server(name, principal, config, sessions):
             else:
                 await approve(approval_command, approval_timeout, request)
         return await sessions.call(
-            (name, server_name), server, lambda session: session.call_tool(tool_name, arguments)
+            (name, server_name), server,
+            lambda session: session.call_tool(tool_name, arguments),
+            retry=not approved,
         )
 
     return gateway

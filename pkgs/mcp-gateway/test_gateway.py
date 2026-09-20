@@ -161,6 +161,23 @@ class GatewayTest(unittest.TestCase):
             self.assertFalse(result["isError"], result)
             self.assertEqual(self.opened, 2)
 
+    # the backend may have acted before the failure; one approval is one
+    # invocation, so an approved call is never sent twice
+    def test_an_approved_call_is_not_retried(self):
+        self.config["approval_command"] = [sys.executable, "-c", "raise SystemExit(0)"]
+        with self.client() as client:
+            agent = self.initialize(client)
+            original = self.backend.call_tool
+
+            async def acted_then_died(name, arguments):
+                await original(name, arguments)
+                raise RuntimeError("the response never arrived")
+
+            self.backend.call_tool = acted_then_died
+            result = self.request(client, agent, "tools/call", {"name": "calendar__write"})
+            self.assertTrue(result["isError"], result)
+            self.assertEqual(self.backend.calls, [("write", {})])
+
     def test_empty_allow_denies_every_tool(self):
         self.config["principals"]["reader"]["allow"] = []
         with self.client() as client:
