@@ -118,6 +118,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       networking.useNetworkd = true;
       networking.nameservers = [ "9.9.9.9" ];
+      # the host's own sshd, for the jump accounts
+      services.openssh.enable = true;
       environment.systemPackages = [
         pkgs.curl
         pkgs.netcat
@@ -339,6 +341,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("install -d -m 0700 /root/.ssh")
       host.succeed("install -m 0600 '${snakeOilEd25519PrivateKey}' /root/.ssh/id_ed25519")
       host.wait_until_succeeds(f"{ssh} 'printf fencr-ssh' | grep -Fx fencr-ssh", timeout=300)
+      # the same key through the jump account: one direct-tcpip channel to
+      # the sandbox's sshd, no session, and no other destination
+      # -J would not carry -i and BatchMode to the jump host, so the proxy is spelled out
+      keyed = "ssh -i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      jump = f"{keyed} -o 'ProxyCommand={keyed} -W %h:%p fencr-jump-sbx@127.0.0.1'"
+      host.wait_for_unit("sshd.service")
+      host.succeed(f"{jump} root@10.11.0.2 'printf fencr-jump' | grep -Fx fencr-jump", timeout=120)
+      host.fail(f"{keyed} fencr-jump-sbx@127.0.0.1 true", timeout=60)
+      host.fail(f"{jump} root@10.11.1.2 true", timeout=60)
       host.succeed(f"{ssh} 'echo fencr-serial-private > /dev/ttyS0; echo fencr-guest-journal | systemd-cat; journalctl --sync'", timeout=60)
       host.succeed(f"{ssh} 'journalctl -b -o cat | grep -Fx fencr-guest-journal'", timeout=60)
       host.succeed("journalctl --sync")

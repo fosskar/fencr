@@ -51,7 +51,7 @@ in
           "10.11.0.2:22"
         ]
         && opens "sealed" == [ "10.11.1.2:22" ]
-        && lib.all (key: lib.hasPrefix "restrict,permitopen=" key) (
+        && lib.all (key: lib.hasPrefix "restrict,port-forwarding,permitopen=" key) (
           (jump "sbx").openssh.authorizedKeys.keys ++ (jump "sealed").openssh.authorizedKeys.keys
         )
         && lib.hasSuffix "/nologin" (jump "sbx").shell;

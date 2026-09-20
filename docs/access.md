@@ -33,11 +33,12 @@ The jump lands on `fencr-jump-<sandbox-name>`, a host account the module
 creates for every sandbox that has keys. Its authorized entries read:
 
 ```
-restrict,permitopen="10.11.0.2:22" ssh-ed25519 AAAA... you
+restrict,port-forwarding,permitopen="10.11.0.2:22" ssh-ed25519 AAAA... you
 ```
 
 `restrict` removes the pty, the shell and every kind of forwarding;
-`permitopen` leaves one destination. So the account opens a channel to
+`port-forwarding` gives back the one kind a jump is, and `permitopen`
+leaves it one destination. So the account opens a channel to
 that one sandbox's sshd and can do nothing else on the server — not a shell,
 not another sandbox, not the lan. The sandbox's own sshd still authenticates you,
 against the same keys as always.

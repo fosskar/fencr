@@ -112,8 +112,9 @@ in
           group = "kvm";
         };
         # a way in for someone the host has no other business trusting: restrict
-        # drops the pty, the shell and every forwarding, permitopen leaves one
-        # destination, and a jump opens a direct-tcpip channel without a session.
+        # drops the pty, the shell and every forwarding, port-forwarding gives
+        # back the one kind a jump is, and permitopen leaves it one
+        # destination; a jump opens a direct-tcpip channel without a session.
         # the sandbox's own sshd is still what authenticates them.
         #
         # every sandbox gets the account, keys or not, because which accounts exist
@@ -125,7 +126,9 @@ in
           isSystemUser = true;
           group = core.jumpUserOf name;
           shell = "${pkgs.shadow}/bin/nologin";
-          openssh.authorizedKeys.keys = map (key: ''restrict,permitopen="${cfg.ip}:22" ${key}'') cfg.sshKeys;
+          openssh.authorizedKeys.keys = map (
+            key: ''restrict,port-forwarding,permitopen="${cfg.ip}:22" ${key}''
+          ) cfg.sshKeys;
         };
       }
     );
