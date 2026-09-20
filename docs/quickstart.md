@@ -13,6 +13,7 @@ networking.useNetworkd = true;
 fencr.sandboxes.myagent = {
   services = [ my-agent-module ];
   authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
+  outbound = [ ];
 };
 ```
 
@@ -20,9 +21,10 @@ Replace `my-agent-module` with your agent's NixOS module and the public key
 with your own. Deploy with `nixos-rebuild`, then connect with `ssh myagent`.
 fencr does not install or configure an agent for you.
 
-With no further grants:
+With `outbound = [ ]` and no further grants:
 
-- the sandbox has no network egress, including DNS;
+- the sandbox has no network egress, including DNS; leaving `outbound`
+  unset grants `"internet"` instead;
 - the host can reach only its key-authenticated SSH listener;
 - the whole guest filesystem persists across reboots and rebuilds, except
   that its read-only `/nix/store` image is replaced;
