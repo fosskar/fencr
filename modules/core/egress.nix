@@ -181,9 +181,20 @@ in
       upstream = "https://api.openai.com";
       header = "Authorization";
     };
+    # inference only: the key also answers for the account's balance, its
+    # own limits and, for a provisioning key, key management under /api/v1/key*
     openrouter = {
       upstream = "https://openrouter.ai";
       header = "Authorization";
+      allow = [
+        "POST /api/v1/chat/completions"
+        "POST /api/v1/completions"
+        "POST /api/v1/responses"
+        "POST /api/v1/messages"
+        "POST /api/v1/embeddings"
+        "GET /api/v1/models*"
+        "GET /api/v1/generation"
+      ];
     };
     opencode = {
       upstream = "https://opencode.ai";

@@ -57,7 +57,10 @@ A credential's name selects a matching preset automatically. Use
 | `github` | `Authorization: Bearer <key>` | None |
 
 `github` defaults to `allow = [ "GET,HEAD *" ]`, so a granted token reads and
-nothing more until you widen it. `gemini` uses the native api's header; its
+nothing more until you widen it. `openrouter` defaults to the inference
+endpoints (`chat/completions`, `completions`, `responses`, `messages`,
+`embeddings`, `models*`, `generation`), so the key cannot read the account's
+balance or manage keys until you widen it. `gemini` uses the native api's header; its
 openai-shaped path under `/v1beta/openai/` wants `Authorization` instead, and
 a request carrying both is refused with "Multiple authentication credentials
 received".

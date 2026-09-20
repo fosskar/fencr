@@ -748,6 +748,19 @@ assert lib.assertMsg (
       "shared: credential \"opencode-go\" shares domain opencode.ai and needs non-empty allow entries"
     ]
 ) "core check: shared-domain provider credentials drifted";
+# every preset allow entry parses, and the two read-only ones stay so
+assert lib.assertMsg (
+  lib.all (
+    provider: lib.all (rule: rule.error == null) (map core.parseAllow (provider.allow or [ ]))
+  ) (lib.attrValues core.providers)
+  && core.providers.github.allow == [ "GET,HEAD *" ]
+  && lib.all (
+    entry: lib.hasPrefix "GET " entry || lib.hasPrefix "POST /api/v1/" entry
+  ) core.providers.openrouter.allow
+  && !lib.any (
+    entry: lib.hasInfix "/api/v1/key" entry || lib.hasInfix "/api/v1/credits" entry
+  ) core.providers.openrouter.allow
+) "core check: a provider preset's allow entries drifted";
 assert lib.assertMsg (
   let
     bearerFor =
