@@ -10,7 +10,7 @@ import (
 // the shape modules/core/egress.nix renders: a domain grant answers every
 // name itself, so resolver is empty and that is not a fault
 const rendered = `{"bridge":"10.11.0.1","dnsPort":33053,"tlsPort":33443,"resolver":"",` +
-	`"blocked":["10.11.0.0/26"],` +
+	`"blocked":["10.11.0.0/26"],"private":["10.0.0.0/8","fc00::/7"],` +
 	`"domains":["allowed.test"],"denied":[],"credentials":[{"name":"api","domain":"api.test",` +
 	`"upstream":"http://127.0.0.1:8765","header":"Authorization","bearer":true,"placeholder":"",` +
 	`"substitute":false,` +
@@ -45,6 +45,8 @@ func TestADriftedConfigIsRefused(t *testing.T) {
 		{"credential without a header", strings.Replace(rendered, `"Authorization"`, `""`, 1), "has no header"},
 		{"no blocked ranges", strings.Replace(rendered, `"10.11.0.0/26"`, ``, 1), "no blocked ranges"},
 		{"blocked is not a network", strings.Replace(rendered, `10.11.0.0/26`, `10.11.0.1`, 1), "is not a network"},
+		{"private is not a network", strings.Replace(rendered, `"fc00::/7"`, `"fc00::"`, 1), "is not a network"},
+		{"a resolver with nothing to screen", strings.Replace(strings.Replace(rendered, `"resolver":""`, `"resolver":"127.0.0.53:53"`, 1), `"10.0.0.0/8","fc00::/7"`, ``, 1), "no private ranges"},
 		{"two configurations", rendered + rendered, "more than one configuration"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

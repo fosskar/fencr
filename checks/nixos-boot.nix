@@ -291,6 +291,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         "denied.test"
       ];
       networking.hosts."192.168.1.1" = [ "private.test" ];
+      # a public address the relay passes; nothing is dialled
+      networking.hosts."1.2.3.4" = [ "public.test" ];
       # a granted name on host loopback: the unit allows loopback for a
       # credential's upstream, and an allowed name must not inherit it
       networking.hosts."127.0.0.1" = [ "loopback.allowed.test" ];
@@ -554,9 +556,15 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       ssh_open = ssh.replace("10.11.0.2", "10.11.1.2")
       host.wait_for_unit("fencr-open.service", timeout=600)
       host.wait_for_unit("fencr-open-egress.service")
-      host.wait_until_succeeds(f"{ssh_open} 'getent hosts allowed.test' | grep -q '^192.168.1.2 '", timeout=300)
+      host.wait_until_succeeds(f"{ssh_open} 'getent hosts public.test' | grep -q '^1.2.3.4 '", timeout=300)
       # tcp is relayed too, for the answer a truncated one sends there
-      host.succeed(f"{ssh_open} 'dig +tcp +short allowed.test @10.11.1.1' | grep -Fx '192.168.1.2'", timeout=60)
+      host.succeed(f"{ssh_open} 'dig +tcp +short public.test @10.11.1.1' | grep -Fx '1.2.3.4'", timeout=60)
+      # the host's own view is not the guest's: a private answer, or a reverse
+      # lookup of a private address, is refused over either road
+      for road in ["", "+tcp"]:
+          host.succeed(f"{ssh_open} 'dig {road} allowed.test @10.11.1.1' | grep -F 'status: REFUSED'", timeout=60)
+          host.succeed(f"{ssh_open} 'dig {road} -x 192.168.1.2 @10.11.1.1' | grep -F 'status: REFUSED'", timeout=60)
+      host.succeed("journalctl -u fencr-open-egress.service -o cat | grep -F 'allowed.test refused: its answer is a special-use address'")
       # resolved never listens on a bridge, so the guest cannot reach it even
       # by naming the port the redirect came from
       host.fail("ss -lntupH | grep -E 'systemd-resolve.*10\\.11\\.[01]\\.1:53'")

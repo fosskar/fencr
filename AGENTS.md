@@ -132,8 +132,9 @@ configuration, SSH access and the checkpoint commands.
   A queries with the bridge address and authorizes TLS by SNI without
   decrypting it or using proxy environment variables; for `"internet"` it
   relays to the host stub, with separate `maxQueries` caps for UDP queries
-  and TCP connections, and
-  judges nothing. `*.example.com` does not include `example.com`, and
+  and TCP connections, and judges no name, but answers REFUSED where the
+  stub's answer holds a special-use address or a query is a reverse lookup
+  of one, so the guest does not see the host's private naming. `*.example.com` does not include `example.com`, and
   `"!name"` refuses a name a wildcard grant would otherwise admit; a deny no
   grant covers, or one equal to a grant, is an evaluation error.
 - `credentials` intercepts TLS for the credential's domain only: the guest's

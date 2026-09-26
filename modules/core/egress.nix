@@ -8,6 +8,7 @@ let
     guestTrust
     hardened
     egressHardening
+    specialUseNetworks
     upstreamHost
     domainPatternError
     unitsOf
@@ -333,6 +334,7 @@ in
       # outranks the /8 on prefix length. the other special-use ranges are
       # denied at the socket, where a host's own carve-out still counts
       blocked = [ cfg.subnet ];
+      private = specialUseNetworks.v4 ++ specialUseNetworks.v6;
       inherit (cfg) domains denied;
       credentials = map (credential: {
         inherit (credential)

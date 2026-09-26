@@ -129,7 +129,8 @@ has two modes:
   before, because the client hello is what names the destination
 - with an open grant there is no name to judge and the guest needs real
   addresses, so the query is relayed to `127.0.0.53` and the answer passed
-  back unread. `maxQueries` bounds what one sandbox can have in flight; past
+  back, refused where it holds a special-use address: the stub answers from
+  the host's `/etc/hosts`, split DNS and mDNS as well. `maxQueries` bounds what one sandbox can have in flight; past
   that its own queries are dropped, with the name in the journal, rather
   than the host's resolver being pushed over
 

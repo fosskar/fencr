@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -34,12 +35,16 @@ type config struct {
 	Resolver string `json:"resolver"`
 	// the sandbox's own subnet: IPAddressAllow must carry it for the guest to be
 	// reachable, so IPAddressDeny cannot refuse it and this check must
-	Blocked     []string     `json:"blocked"`
+	Blocked []string `json:"blocked"`
+	// the special-use ranges: a relayed answer pointing into one, or a reverse
+	// lookup of one, would hand the guest the host's private naming
+	Private     []string     `json:"private"`
 	Domains     []string     `json:"domains"`
 	Denied      []string     `json:"denied"`
 	Credentials []credential `json:"credentials"`
 
 	blocked []*net.IPNet
+	private []netip.Prefix
 }
 
 func main() {
@@ -99,6 +104,17 @@ func load(path string) (*config, error) {
 			return nil, fmt.Errorf("%s: blocked %q is not a network", path, entry)
 		}
 		cfg.blocked = append(cfg.blocked, network)
+	}
+	// a relay with nothing to screen would pass the host's view through
+	if cfg.Resolver != "" && len(cfg.Private) == 0 {
+		return nil, fmt.Errorf("%s: a resolver but no private ranges", path)
+	}
+	for _, entry := range cfg.Private {
+		network, err := netip.ParsePrefix(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%s: private %q is not a network", path, entry)
+		}
+		cfg.private = append(cfg.private, network.Masked())
 	}
 	for _, c := range cfg.Credentials {
 		for _, field := range []struct {
@@ -160,8 +176,8 @@ func run(cfg *config) error {
 			if err != nil {
 				return err
 			}
-			go forwardDNS(conn, cfg.Resolver)
-			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver)
+			go forwardDNS(conn, cfg.Resolver, cfg.private)
+			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver, cfg.private)
 		}
 	}
 
