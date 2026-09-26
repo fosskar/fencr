@@ -416,6 +416,8 @@ func blocked(sandbox *Sandbox, kernel string, proxy *result) []counted {
 			if hasPort {
 				hint = "inbound " + port
 			}
+		case found == "spoof-blocked":
+			flow, hint = "guest → "+peer(dst), "sent from an address that is not the sandbox's"
 		case found == "dns-blocked":
 			flow = "guest → " + peer(dst)
 			hint = fmt.Sprintf("dns is the sandbox's own; grant \"%s:53\" to use this one", dst)

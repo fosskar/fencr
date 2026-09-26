@@ -339,6 +339,17 @@ assert lib.assertMsg (
   && !lib.hasInfix "dport 53 counter accept" (core.firewallOf longName)."fencr-coding-agent-1".content
   && !lib.hasInfix "dport 53 counter accept" filterTable
 ) "core check: the guest can still reach resolved on the bridge";
+# every later rule keys on the interface, so the guest may only send as itself
+assert lib.assertMsg (lib.all
+  (
+    chain:
+    lib.hasInfix ''iifname "br-sbx" ip saddr != 10.11.0.2 counter drop comment "fencr:sbx:spoof-blocked"'' chain
+  )
+  [
+    (core.forwardRules resolved)
+    (core.inputRules resolved)
+  ]
+) "core check: the guest may send as another address";
 # a connection the guest opened is judged by the grants on every packet, so
 # revoking a host port ends it rather than only refusing new ones
 assert lib.assertMsg (

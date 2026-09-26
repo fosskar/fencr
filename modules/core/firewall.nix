@@ -17,6 +17,10 @@ let
     ${match} limit rate 5/second log prefix "${tag cfg kind}: "
     ${match} counter drop comment "${tag cfg kind}"
   '';
+  # every rule after this one keys on the interface, and the host's
+  # reverse-path check may be loose: a guest sending as another sandbox's
+  # address would get that sandbox's masquerade and replies
+  spoofed = cfg: drop cfg ''iifname "${cfg.bridge}" ip saddr != ${cfg.ip}'' "spoof-blocked";
   # each chain counts its own, so the effective ceiling is up to twice this
   connectionCap =
     cfg:
@@ -33,6 +37,7 @@ in
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
     ''
+    + spoofed cfg
     + connectionCap cfg
     + lib.concatMapStringsSep "\n" (
       destination:
@@ -86,6 +91,7 @@ in
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
       iifname "${cfg.bridge}" ct state established,related ct direction reply accept
     ''
+    + spoofed cfg
     + connectionCap cfg
     # the egress unit listens on the bridge address, which the host itself
     # reaches over lo: the rules below scope the door to the bridge, so a
