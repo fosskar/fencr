@@ -486,6 +486,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.wait_for_unit("upstream-8765.service")
       host.wait_for_unit("fencr-sbx-egress.service")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr/ca/sbx/root.key)\" = root:600")
+      host.succeed("${pkgs.openssl}/bin/openssl x509 -in /var/lib/fencr/ca/sbx/root.crt -noout -ext keyUsage | grep -F 'Certificate Sign, CRL Sign'")
       # one process holds both listeners, so no socket carries a credential
       # between two of them
       host.fail("systemctl cat fencr-sbx-credentials.service")

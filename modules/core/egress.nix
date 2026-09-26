@@ -168,8 +168,12 @@ in
       StateDirectoryMode = "0700";
     };
     script = ''
+      # python 3.13 and later verify strictly, and refuse an authority
+      # without keyUsage
       ${pkgs.openssl}/bin/openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-        -subj "/CN=fencr ${name} on ${hostName}" -days 7300 -keyout ${caKeyOf name} -out ${caCertOf name}
+        -subj "/CN=fencr ${name} on ${hostName}" -days 7300 \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" \
+        -keyout ${caKeyOf name} -out ${caCertOf name}
     '';
   };
 
