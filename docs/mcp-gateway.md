@@ -43,6 +43,13 @@ bare bearer token; it can reference a Clan vars or other secret manager's
 host file. Do not expose the backend on a bridge or grant its token separately
 to a sandbox, which would let the guest bypass the gateway.
 
+The gateway knows a backend only by its loopback port and sends the token to
+whatever listens there. While the backend is down, restarting or not yet
+started, any host user can bind that port, receive the token and answer in
+the backend's place, with tool listings and results every participating
+sandbox sees. Give the backend a port below 1024, or a systemd socket unit that
+holds the port while the backend is down.
+
 Configure the agent's MCP client to use **`https://mcp.fencr/mcp/`**, including
 the trailing slash. The payload still owns that application setting. No real
 bearer token is needed in the guest; if the client requires one, a dummy value

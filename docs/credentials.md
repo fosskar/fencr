@@ -176,6 +176,11 @@ fencr.credentials.local-api = {
 The guest calls `https://api.fencr`. Do not include the client's API base path
 in `upstream` unless you intend it to be prepended to forwarded requests.
 
+The egress unit sends the credential to whatever listens on that port. While
+the API is down, restarting or not yet started, any host user can bind the
+port and receive it. Use a port below 1024, or a systemd socket unit that
+holds the port while the API is down.
+
 ## limiting API use
 
 A credential authorizes whatever the upstream key can do. Narrow that with
