@@ -1,7 +1,6 @@
 { lib, core, ... }:
 let
   inherit (core)
-    userOf
     unitsOf
     vsockOf
     secretsPort
@@ -90,6 +89,9 @@ in
             serviceConfig = egressServiceConfig pkgs instance;
           };
         };
+      # no SocketUser: pid 1 would chown the socket by path after binding it,
+      # in a directory the sandbox's user owns and can swap a symlink into.
+      # that directory's 0700 is what keeps other users off the socket
       sockets =
         lib.optionalAttrs trusted {
           ${units.trust} = {
@@ -97,8 +99,7 @@ in
             wantedBy = [ "sockets.target" ];
             socketConfig = {
               ListenStream = "${vsockOf instance.name}_${toString trustPort}";
-              SocketUser = userOf instance.name;
-              SocketMode = "0600";
+              SocketMode = "0666";
               Accept = true;
               MaxConnections = 4;
             };
@@ -110,8 +111,7 @@ in
             wantedBy = [ "sockets.target" ];
             socketConfig = {
               ListenStream = "${vsockOf instance.name}_${toString secretsPort}";
-              SocketUser = userOf instance.name;
-              SocketMode = "0600";
+              SocketMode = "0666";
               Accept = true;
               MaxConnections = 4;
             };

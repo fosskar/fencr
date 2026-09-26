@@ -372,7 +372,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # a raw secret arrived over vsock, readable by guest root only
       host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
-      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = fencr-sbx:600")
+      host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = root:666")
       # the sandbox's vsock sockets belong to its user
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:700")
 

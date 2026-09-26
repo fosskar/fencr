@@ -555,8 +555,8 @@ assert lib.assertMsg (
   # authority's socket and none of the raw-secrets pipeline
   builtins.attrNames units.sockets == [ "fencr-sbx-trust" ]
   && units.sockets."fencr-sbx-trust".socketConfig.ListenStream == "/run/fencr-sbx/vsock_6"
-  && units.sockets."fencr-sbx-trust".socketConfig.SocketUser == "fencr-sbx"
-  && units.sockets."fencr-sbx-trust".socketConfig.SocketMode == "0600"
+  && !(units.sockets."fencr-sbx-trust".socketConfig ? SocketUser)
+  && units.sockets."fencr-sbx-trust".socketConfig.SocketMode == "0666"
   &&
     builtins.attrNames
       (core.hostUnits pkgs cli (
