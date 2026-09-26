@@ -692,8 +692,9 @@ func checkpoints(sandbox *Sandbox) ([]checkpoint, error) {
 	}
 	var found []checkpoint
 	for _, entry := range entries {
+		// the sandbox's user names files here, and root prints these names
 		name, ok := strings.CutSuffix(entry.Name(), ".img")
-		if !ok || !entry.Type().IsRegular() {
+		if !ok || !entry.Type().IsRegular() || !checkpointName(name) {
 			continue
 		}
 		info, err := entry.Info()

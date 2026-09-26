@@ -435,6 +435,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail("fencr restore sbx planted")
       host.fail("fencr checkpoints sbx --rm planted")
       host.succeed("test -L /var/lib/fencr-sandboxes/sbx/checkpoints/planted.img && rm /var/lib/fencr-sandboxes/sbx/checkpoints/planted.img")
+      # nor are the names it chooses printed to root's terminal
+      host.succeed("su -s /bin/sh fencr-sbx -c 'touch \"/var/lib/fencr-sandboxes/sbx/checkpoints/$(printf \"\\033]0;x\\a\").img\"'")
+      host.fail("fencr checkpoints sbx | grep -qF \"$(printf '\\033')\"")
+      host.succeed("rm /var/lib/fencr-sandboxes/sbx/checkpoints/*$(printf '\\033')*")
       # a reserved name is the unit's error, relayed by the command
       host.fail("fencr checkpoint sbx stop-now")
 
