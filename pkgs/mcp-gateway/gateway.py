@@ -264,10 +264,26 @@ def create_server(name, principal, config, sessions):
     return gateway
 
 
+# sessions one principal may hold at once; the gateway is shared by every
+# mcp-enabled sandbox, and each session is a transport and a server task
+MAX_SESSIONS = 16
+
+
+def live_sessions(manager) -> int:
+    # the sdk keeps a transport a client closed with DELETE until the process
+    # ends, so a cap on what it registers would lock out a well-behaved client
+    for session_id, transport in list(manager._server_instances.items()):
+        if transport.is_terminated:
+            del manager._server_instances[session_id]
+            manager._session_owners.pop(session_id, None)
+    return len(manager._server_instances)
+
+
 def create_app(config):
     if config["approval_mode"] not in ("host", "client"):
         raise ValueError("unknown approval mode")
     tokens = {}
+    opening = {}
     sessions = Sessions()
     for name, principal in config["principals"].items():
         token = secret(principal["token_credential"])
@@ -287,7 +303,25 @@ def create_app(config):
             await PlainTextResponse("Unauthorized", status_code=401)(scope, receive, send)
             return
         # each principal owns a separate transport registry, including GET and DELETE
-        await manager.handle_request(scope, receive, send)
+        if any(key == b"mcp-session-id" for key, _ in scope["headers"]):
+            # the sdk finds the principal's own session or answers 404
+            await manager.handle_request(scope, receive, send)
+            return
+        # the sdk opens a session for any request without an id, whatever its
+        # method; only a POST can be an initialize
+        if scope["method"] != "POST":
+            await PlainTextResponse("Bad Request: missing session id", status_code=400)(scope, receive, send)
+            return
+        # the slot is taken before the first await, so concurrent opens cannot
+        # all pass the check
+        if live_sessions(manager) + opening.get(manager, 0) >= MAX_SESSIONS:
+            await PlainTextResponse("Too Many Requests: session limit", status_code=429)(scope, receive, send)
+            return
+        opening[manager] = opening.get(manager, 0) + 1
+        try:
+            await manager.handle_request(scope, receive, send)
+        finally:
+            opening[manager] -= 1
 
     @contextlib.asynccontextmanager
     async def lifespan(_):

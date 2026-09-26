@@ -229,6 +229,8 @@ in
             DynamicUser = true;
             ExecStart = lib.getExe gateway;
             Restart = "on-failure";
+            # every mcp-enabled sandbox drives this one process
+            MemoryMax = "512M";
             IPAddressDeny = "any";
             IPAddressAllow = [ "127.0.0.1/32" ];
             RestrictAddressFamilies = [

@@ -199,6 +199,22 @@ class GatewayTest(unittest.TestCase):
             response = client.post("/mcp/", headers=[("Authorization", "Bearer agent-secret"), ("Authorization", "Bearer reader-secret")], json={})
             self.assertEqual(response.status_code, 401)
 
+    def test_sessions_per_principal_are_capped(self):
+        with self.client() as client:
+            sessions = [self.initialize(client) for _ in range(gateway.MAX_SESSIONS)]
+            response = client.post("/mcp/", headers=self.headers(), json={})
+            self.assertEqual(response.status_code, 429, response.text)
+            # the cap is the principal's own; another one still opens
+            self.initialize(client, "reader")
+            # the sdk would open a session for these too
+            for method in ["GET", "DELETE", "PUT"]:
+                response = client.request(method, "/mcp/", headers=self.headers("reader"))
+                self.assertEqual(response.status_code, 400, response.text)
+            # a session closed with DELETE gives its slot back
+            response = client.delete("/mcp/", headers=self.headers(session=sessions[0]))
+            self.assertEqual(response.status_code, 200, response.text)
+            self.initialize(client)
+
     def test_duplicate_principal_tokens_refused(self):
         Path(self.directory.name, "reader").write_text("Bearer agent-secret")
         with self.assertRaises(RuntimeError):
