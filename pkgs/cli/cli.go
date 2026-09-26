@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -638,15 +639,34 @@ func checkpointName(name string) bool {
 	return true
 }
 
-func checkpointFile(sandbox *Sandbox, name string) (string, error) {
+// the directory belongs to the sandbox's user, who may swap a symlink into it
+// while root lists, removes or restores; a root follows none out of it, and
+// the state directory above it is in one only root may write
+func checkpointRoot(sandbox *Sandbox) (*os.Root, error) {
+	state, err := os.OpenRoot(filepath.Dir(sandbox.CheckpointDir))
+	if err != nil {
+		return nil, err
+	}
+	defer state.Close()
+	return state.OpenRoot(filepath.Base(sandbox.CheckpointDir))
+}
+
+// a checkpoint is a regular file of its own name, never a link to one
+func checkpointFile(sandbox *Sandbox, name string) (*os.Root, string, error) {
 	if !checkpointName(name) {
-		return "", fmt.Errorf("%q is not a checkpoint name", name)
+		return nil, "", fmt.Errorf("%q is not a checkpoint name", name)
 	}
-	file := filepath.Join(sandbox.CheckpointDir, name+".img")
-	if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() {
-		return file, nil
+	missing := fmt.Errorf("%s has no checkpoint %q", sandbox.Name, name)
+	root, err := checkpointRoot(sandbox)
+	if err != nil {
+		return nil, "", missing
 	}
-	return "", fmt.Errorf("%s has no checkpoint %q", sandbox.Name, name)
+	file := name + ".img"
+	if info, err := root.Lstat(file); err != nil || !info.Mode().IsRegular() {
+		root.Close()
+		return nil, "", missing
+	}
+	return root, file, nil
 }
 
 type checkpoint struct {
@@ -658,18 +678,22 @@ type checkpoint struct {
 // a directory that was never created holds no checkpoints; one this user may
 // not read is not the same answer
 func checkpoints(sandbox *Sandbox) ([]checkpoint, error) {
-	dir := sandbox.CheckpointDir
-	entries, err := os.ReadDir(dir)
+	root, err := checkpointRoot(sandbox)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return nil, err
+	}
 	var found []checkpoint
 	for _, entry := range entries {
 		name, ok := strings.CutSuffix(entry.Name(), ".img")
-		if !ok {
+		if !ok || !entry.Type().IsRegular() {
 			continue
 		}
 		info, err := entry.Info()
@@ -737,7 +761,7 @@ func nodatacow(dir, image string) (bool, error) {
 // that runs out of space leaves the sandbox the disk it had. the half-written copy
 // goes with it: the run that fails for space is the one that must not leave a
 // second image behind
-func replace(source, dir, image string) error {
+func replace(source *os.File, dir, image string) error {
 	tmp := image + ".tmp"
 	if err := stage(source, dir, image, tmp, "auto"); err != nil {
 		if removed := os.Remove(tmp); removed != nil && !errors.Is(removed, os.ErrNotExist) {
@@ -748,7 +772,9 @@ func replace(source, dir, image string) error {
 	return os.Rename(tmp, image)
 }
 
-func stage(source, dir, image, tmp, reflink string) error {
+// cp reads the source through the descriptor it inherits, not a path the
+// sandbox's user could repoint between the check and the copy
+func stage(source *os.File, dir, image, tmp, reflink string) error {
 	// a copy that died before the rename left this behind
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -774,9 +800,11 @@ func stage(source, dir, image, tmp, reflink string) error {
 	if reflink == "always" {
 		sparse = "auto"
 	}
-	if _, err := output(cpBin,
-		"--reflink="+reflink, "--sparse="+sparse, "--preserve=mode,ownership", source, tmp); err != nil {
-		return err
+	copying := exec.Command(cpBin,
+		"--reflink="+reflink, "--sparse="+sparse, "--preserve=mode,ownership", "/dev/fd/3", tmp)
+	copying.ExtraFiles = []*os.File{source}
+	if out, err := copying.CombinedOutput(); err != nil {
+		return fmt.Errorf("cp: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	// a rename reaching the directory before the data would leave the sandbox an
 	// image with the new name and the old contents
@@ -878,7 +906,13 @@ func writeCheckpoint(sandbox *Sandbox, label string) {
 		reflink = "auto"
 	}
 	tmp := file + ".tmp"
-	if err := stage(sandbox.Image, sandbox.CheckpointDir, sandbox.Image, tmp, reflink); err != nil {
+	image, err := os.Open(sandbox.Image)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		os.Exit(1)
+	}
+	defer image.Close()
+	if err := stage(image, sandbox.CheckpointDir, sandbox.Image, tmp, reflink); err != nil {
 		if removed := os.Remove(tmp); removed != nil && !errors.Is(removed, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "fencr: %v\n", removed)
 		}
@@ -973,9 +1007,10 @@ func main() {
 			usage()
 		}
 		name := arg(args, 3)
-		file, err := checkpointFile(sandbox, name)
+		root, file, err := checkpointFile(sandbox, name)
 		if err == nil {
-			err = os.Remove(file)
+			err = root.Remove(file)
+			root.Close()
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
@@ -986,13 +1021,23 @@ func main() {
 		// with onStop the stop leaves a checkpoint of what is replaced
 		sandbox := find(arg(args, 1))
 		name := arg(args, 2)
-		file, err := checkpointFile(sandbox, name)
+		root, file, err := checkpointFile(sandbox, name)
+		var source *os.File
+		if err == nil {
+			source, err = root.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			root.Close()
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
 			os.Exit(1)
 		}
+		defer source.Close()
+		if info, err := source.Stat(); err != nil || !info.Mode().IsRegular() {
+			fmt.Fprintf(os.Stderr, "fencr: %s has no checkpoint %q\n", sandbox.Name, name)
+			os.Exit(1)
+		}
 		run(systemctlBin, "stop", sandbox.Unit)
-		if err := replace(file, sandbox.StateDir, sandbox.Image); err != nil {
+		if err := replace(source, sandbox.StateDir, sandbox.Image); err != nil {
 			fmt.Fprintf(os.Stderr, "fencr: restore failed, the sandbox keeps its disk: %v\n", err)
 			os.Exit(1)
 		}

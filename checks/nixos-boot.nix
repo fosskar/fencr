@@ -428,6 +428,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-sandboxes/sbx/state.img)\" = fencr-sbx:600")
       host.succeed("fencr checkpoints sbx --rm before-agent | grep -Fx 'removed before-agent'")
       host.fail("fencr checkpoints sbx | grep -q before-agent")
+      # the sandbox's user owns the directory, so a link it plants there is no
+      # checkpoint: root neither copies nor removes through one
+      host.succeed("su -s /bin/sh fencr-sbx -c 'ln -s /etc/shadow /var/lib/fencr-sandboxes/sbx/checkpoints/planted.img'")
+      host.fail("fencr checkpoints sbx | grep -q planted")
+      host.fail("fencr restore sbx planted")
+      host.fail("fencr checkpoints sbx --rm planted")
+      host.succeed("test -L /var/lib/fencr-sandboxes/sbx/checkpoints/planted.img && rm /var/lib/fencr-sandboxes/sbx/checkpoints/planted.img")
       # a reserved name is the unit's error, relayed by the command
       host.fail("fencr checkpoint sbx stop-now")
 
