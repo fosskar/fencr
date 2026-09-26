@@ -54,7 +54,9 @@ in
         && lib.all (key: lib.hasPrefix "restrict,port-forwarding,permitopen=" key) (
           (jump "sbx").openssh.authorizedKeys.keys ++ (jump "sealed").openssh.authorizedKeys.keys
         )
-        && lib.hasSuffix "/nologin" (jump "sbx").shell;
+        && lib.hasSuffix "/nologin" (jump "sbx").shell
+        # permitopen does not bound listeners, so sshd itself refuses them
+        && lib.hasInfix "Match User fencr-jump-*\n  AllowTcpForwarding local\n  AllowStreamLocalForwarding no\n  PermitListen none\n" config.services.openssh.extraConfig;
       message = "nixos module check: a jump account reaches something other than its own sandbox";
     }
     {

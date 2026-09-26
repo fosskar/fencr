@@ -103,6 +103,20 @@ in
       ) resolvedInstances
     );
 
+    # permitopen bounds only the channels a client opens; a listener on the
+    # host's loopback (-R) would receive what fencr's units send there
+    services.openssh.extraConfig = lib.mkIf (instances != { }) (
+      lib.mkAfter ''
+        Match User ${core.jumpUserOf "*"}
+          AllowTcpForwarding local
+          AllowStreamLocalForwarding no
+          PermitListen none
+          AllowAgentForwarding no
+          X11Forwarding no
+          PermitTunnel no
+      ''
+    );
+
     users.groups = forEachInstance (name: _: { ${core.jumpUserOf name} = { }; });
 
     users.users = forEachInstance (
@@ -113,8 +127,9 @@ in
         };
         # a way in for someone the host has no other business trusting: restrict
         # drops the pty, the shell and every forwarding, port-forwarding gives
-        # back the one kind a jump is, and permitopen leaves it one
-        # destination; a jump opens a direct-tcpip channel without a session.
+        # back local and remote forwarding, and permitopen leaves the local
+        # kind one destination; the match block above takes the remote kind
+        # away. a jump opens a direct-tcpip channel without a session.
         # the sandbox's own sshd is still what authenticates them.
         #
         # every sandbox gets the account, keys or not, because which accounts exist

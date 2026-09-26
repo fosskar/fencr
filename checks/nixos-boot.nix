@@ -348,6 +348,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       jump = f"{keyed} -o 'ProxyCommand={keyed} -W %h:%p fencr-jump-sbx@127.0.0.1'"
       host.wait_for_unit("sshd.service")
       host.succeed(f"{jump} root@10.11.0.2 'printf fencr-jump' | grep -Fx fencr-jump", timeout=120)
+      # nor a listener on the host: an accepted -R never exits, so the refusal
+      # is what is asserted, not a failing exit
+      for listen in ["127.0.0.1:18764", "/tmp/fencr-jump.sock"]:
+          _, refused = host.execute(f"timeout 30 {keyed} -o ExitOnForwardFailure=yes -N -R {listen}:127.0.0.1:22 fencr-jump-sbx@127.0.0.1 2>&1", timeout=60)
+          assert "remote port forwarding failed" in refused, refused
       host.fail(f"{keyed} fencr-jump-sbx@127.0.0.1 true", timeout=60)
       host.fail(f"{jump} root@10.11.1.2 true", timeout=60)
       host.succeed(f"{ssh} 'echo fencr-serial-private > /dev/ttyS0; echo fencr-guest-journal | systemd-cat; journalctl --sync'", timeout=60)
