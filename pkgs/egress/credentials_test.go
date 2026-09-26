@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,5 +254,42 @@ func TestRequestsBeyondTheInFlightCapAreRefused(t *testing.T) {
 	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://api.test/", nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("got status %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// an interim response is relayed before the final one reaches the scrub
+func TestAnInterimResponseIsScrubbed(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	if err := os.WriteFile(filepath.Join(directory, "key"), []byte("api-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", "</x>; echo="+r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusEarlyHints)
+		w.Header().Del("Link")
+		io.WriteString(w, "done")
+	}))
+	defer upstream.Close()
+	proxy := httptest.NewServer(handler(map[string][]*credential{"api.test": prepared(t,
+		&credential{Name: "key", Upstream: upstream.URL, Header: "Authorization", Placeholder: "fencr-placeholder"})}))
+	defer proxy.Close()
+	var interim []string
+	trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+		interim = append(interim, header.Get("Link"))
+		return nil
+	}}
+	request, err := http.NewRequest(http.MethodGet, proxy.URL+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "api.test"
+	response, err := http.DefaultClient.Do(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(interim) != 1 || interim[0] != "</x>; echo=fencr-placeholder" {
+		t.Fatalf("interim link headers %q", interim)
 	}
 }

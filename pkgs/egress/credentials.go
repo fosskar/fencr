@@ -14,7 +14,9 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
+	"net/textproto"
 	"net/url"
 	"os"
 	"regexp"
@@ -247,11 +249,7 @@ func scrub(resp *http.Response, value, placeholder string) error {
 	if placeholder == "" || value == "" {
 		return nil
 	}
-	for name, values := range resp.Header {
-		for at, text := range values {
-			resp.Header[name][at] = strings.ReplaceAll(text, value, placeholder)
-		}
-	}
+	scrubHeader(resp.Header, value, placeholder)
 	if err := rewriteBody(&resp.Body, &resp.ContentLength, value, placeholder); err != nil {
 		return err
 	}
@@ -261,11 +259,35 @@ func scrub(resp *http.Response, value, placeholder string) error {
 	return nil
 }
 
+func scrubHeader(header http.Header, value, placeholder string) {
+	if placeholder == "" || value == "" {
+		return
+	}
+	for name, values := range header {
+		for at, text := range values {
+			header[name][at] = strings.ReplaceAll(text, value, placeholder)
+		}
+	}
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) {
 	value, upstream := c.value, c.upstream
 	status := http.StatusBadGateway
 	proxy := &httputil.ReverseProxy{
-		Transport: transport,
+		// the proxy relays an interim response from a trace hook of its own,
+		// before ModifyResponse sees anything. a hook added here runs ahead
+		// of it on the same header map
+		Transport: roundTripper(func(out *http.Request) (*http.Response, error) {
+			trace := &httptrace.ClientTrace{Got1xxResponse: func(_ int, header textproto.MIMEHeader) error {
+				scrubHeader(http.Header(header), value, c.Placeholder)
+				return nil
+			}}
+			return transport.RoundTrip(out.WithContext(httptrace.WithClientTrace(out.Context(), trace)))
+		}),
 		// server-sent events and other long-lived streams must not be held
 		FlushInterval: -1,
 		Rewrite: func(p *httputil.ProxyRequest) {
