@@ -225,8 +225,8 @@ in
         ${cfg.bridge} = {
           allowedTCPPorts =
             cfg.hostPorts
-            ++ lib.optional cfg.egress core.egressTlsPort
-            ++ lib.optional cfg.dnsEgress core.egressDnsPort;
+            ++ lib.optional cfg.tlsEgress core.egressTlsPort
+            ++ lib.optional cfg.internet core.egressDnsPort;
           allowedUDPPorts = lib.optional cfg.dnsEgress core.egressDnsPort;
         };
       }

@@ -98,11 +98,8 @@ in
         == "10.11.1.1"
         && config.systemd.services ? "fencr-sealed-egress"
         && config.networking.firewall.interfaces."br-sealed".allowedUDPPorts == [ 33053 ]
-        &&
-          config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [
-            33053
-            33443
-          ]
+        # a domain sandbox's unit answers dns over udp only
+        && config.networking.firewall.interfaces."br-sealed".allowedTCPPorts == [ 33443 ]
         &&
           config.networking.firewall.interfaces."br-sbx".allowedTCPPorts == [
             443

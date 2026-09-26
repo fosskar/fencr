@@ -68,9 +68,11 @@ in
     cfg:
     lib.optionalString cfg.dnsEgress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport 53 redirect to :${toString egressDnsPort}
+    ''
+    + lib.optionalString cfg.internet ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 53 redirect to :${toString egressDnsPort}
     ''
-    + lib.optionalString cfg.egress ''
+    + lib.optionalString cfg.tlsEgress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport 443 redirect to :${toString egressTlsPort}
     '';
 
@@ -102,9 +104,11 @@ in
     ''
     + lib.optionalString cfg.dnsEgress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} udp dport ${toString egressDnsPort} counter accept comment "${tag cfg "dns"}"
+    ''
+    + lib.optionalString cfg.internet ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString egressDnsPort} counter accept comment "${tag cfg "dns-tcp"}"
     ''
-    + lib.optionalString cfg.egress ''
+    + lib.optionalString cfg.tlsEgress ''
       iifname "${cfg.bridge}" ip daddr ${cfg.hostIp} tcp dport ${toString egressTlsPort} counter accept comment "${tag cfg "egress-tls"}"
     ''
     + drop cfg ''iifname "${cfg.bridge}"'' "host-blocked";

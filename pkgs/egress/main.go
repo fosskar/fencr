@@ -11,13 +11,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -144,30 +144,40 @@ func run(cfg *config) error {
 	// the guest's resolver is this unit whenever it may resolve at all: with
 	// domain grants every name is answered with the bridge address, with an
 	// open grant the query is relayed to the host's stub
+	sockets, err := activated()
+	if err != nil {
+		return err
+	}
 	if len(cfg.Domains) > 0 || cfg.Resolver != "" {
-		conn, err := listenDNS(bridge, cfg.DNSPort)
+		conn, err := sockets.packet(cfg.DNSPort)
 		if err != nil {
 			return err
 		}
 		if cfg.Resolver == "" {
 			go answerDNS(conn, bridge)
 		} else {
-			stream, err := net.ListenTCP("tcp", &net.TCPAddr{IP: bridge, Port: cfg.DNSPort})
+			stream, err := sockets.stream(cfg.DNSPort)
 			if err != nil {
 				return err
 			}
 			go forwardDNS(conn, cfg.Resolver)
-			go forwardDNSStream(stream, cfg.Resolver)
+			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver)
 		}
 	}
 
 	// an open grant needs no tls door: there is no name to judge and the
 	// firewall lets the guest reach the internet itself
 	if len(cfg.Domains) == 0 && len(intercept) == 0 {
+		if err := sockets.unused(); err != nil {
+			return err
+		}
 		select {}
 	}
-	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: bridge, Port: cfg.TLSPort})
+	listener, err := sockets.stream(cfg.TLSPort)
 	if err != nil {
+		return err
+	}
+	if err := sockets.unused(); err != nil {
 		return err
 	}
 	// terminated connections are handed over one at a time, so the http
@@ -187,19 +197,63 @@ func run(cfg *config) error {
 	}
 }
 
-// the bridge gets its address from networkd, which may not have run yet
-func listenDNS(bridge net.IP, port int) (net.PacketConn, error) {
-	for range 120 {
-		conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: bridge, Port: port})
-		if err == nil {
-			return conn, nil
-		}
-		if !errors.Is(err, syscall.EADDRNOTAVAIL) {
-			return nil, err
-		}
-		time.Sleep(500 * time.Millisecond)
+// the socket unit binds the doors and holds them while this process
+// restarts, so no other host user can take a port the guest is redirected
+// to. which fd is which is read off the socket itself
+type listeners struct {
+	packets map[int]net.PacketConn
+	streams map[int]net.Listener
+}
+
+func activated() (*listeners, error) {
+	if os.Getenv("LISTEN_PID") != strconv.Itoa(os.Getpid()) {
+		return nil, fmt.Errorf("no sockets from systemd: run from the egress socket unit")
 	}
-	return nil, fmt.Errorf("the bridge never got its address")
+	count, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+	if err != nil {
+		return nil, fmt.Errorf("LISTEN_FDS: %w", err)
+	}
+	found := &listeners{packets: map[int]net.PacketConn{}, streams: map[int]net.Listener{}}
+	for fd := 3; fd < 3+count; fd++ {
+		syscall.CloseOnExec(fd)
+		file := os.NewFile(uintptr(fd), "listen")
+		if conn, err := net.FilePacketConn(file); err == nil {
+			found.packets[conn.LocalAddr().(*net.UDPAddr).Port] = conn
+		} else if listener, err := net.FileListener(file); err == nil {
+			found.streams[listener.Addr().(*net.TCPAddr).Port] = listener
+		} else {
+			return nil, fmt.Errorf("fd %d is neither a udp nor a tcp socket", fd)
+		}
+		file.Close()
+	}
+	return found, nil
+}
+
+func (l *listeners) packet(port int) (net.PacketConn, error) {
+	conn, ok := l.packets[port]
+	if !ok {
+		return nil, fmt.Errorf("the socket unit passed no udp socket on port %d", port)
+	}
+	delete(l.packets, port)
+	return conn, nil
+}
+
+func (l *listeners) stream(port int) (net.Listener, error) {
+	listener, ok := l.streams[port]
+	if !ok {
+		return nil, fmt.Errorf("the socket unit passed no tcp socket on port %d", port)
+	}
+	delete(l.streams, port)
+	return listener, nil
+}
+
+// a door the unit holds but does not serve is one the firewall and the
+// socket unit disagree about
+func (l *listeners) unused() error {
+	if len(l.packets) > 0 || len(l.streams) > 0 {
+		return fmt.Errorf("the socket unit passed sockets this configuration does not serve")
+	}
+	return nil
 }
 
 func route(cfg *config, intercept map[string][]*credential, handover chan net.Conn, conn net.Conn) {

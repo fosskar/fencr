@@ -7,6 +7,8 @@ let
     trustPort
     caUnitOf
     caCertOf
+    egressDnsPort
+    egressTlsPort
     guestTrust
     hardened
     egressServiceConfig
@@ -93,7 +95,23 @@ in
       # in a directory the sandbox's user owns and can swap a symlink into.
       # that directory's 0700 is what keeps other users off the socket
       sockets =
-        lib.optionalAttrs trusted {
+        lib.optionalAttrs instance.egress {
+          # pid 1 holds the guest's doors while the unit restarts, so no other
+          # host user can bind a port the firewall redirects the guest to.
+          # FreeBind: the bridge gets its address from networkd, maybe later
+          ${units.egress} = {
+            description = "egress doors for ${instance.name}";
+            wantedBy = [ "sockets.target" ];
+            socketConfig = {
+              ListenDatagram = lib.optional instance.dnsEgress "${instance.hostIp}:${toString egressDnsPort}";
+              ListenStream =
+                lib.optional instance.internet "${instance.hostIp}:${toString egressDnsPort}"
+                ++ lib.optional instance.tlsEgress "${instance.hostIp}:${toString egressTlsPort}";
+              FreeBind = true;
+            };
+          };
+        }
+        // lib.optionalAttrs trusted {
           ${units.trust} = {
             description = "certificate authority for ${instance.name}";
             wantedBy = [ "sockets.target" ];

@@ -339,6 +339,40 @@ assert lib.assertMsg (
   && !lib.hasInfix "dport 53 counter accept" (core.firewallOf longName)."fencr-coding-agent-1".content
   && !lib.hasInfix "dport 53 counter accept" filterTable
 ) "core check: the guest can still reach resolved on the bridge";
+# pid 1 binds exactly the doors the unit serves and the firewall redirects
+# to, so no host user can hold one of them: tcp dns only where it relays,
+# tls only where there is a name to judge
+assert facts "egress doors" {
+  "a domain sandbox's socket carries udp dns and tls" =
+    units.sockets."fencr-sbx-egress".socketConfig == {
+      ListenDatagram = [ "10.11.0.1:33053" ];
+      ListenStream = [ "10.11.0.1:33443" ];
+      FreeBind = true;
+    };
+  "an internet sandbox's socket carries udp and tcp dns" =
+    (core.hostUnits pkgs cli longName).sockets."fencr-coding-agent-1-egress".socketConfig == {
+      ListenDatagram = [ "10.11.1.1:33053" ];
+      ListenStream = [ "10.11.1.1:33053" ];
+      FreeBind = true;
+    };
+  "a credential-only sandbox's socket carries tls alone" =
+    keyedUnits.sockets."fencr-keyed-egress".socketConfig == {
+      ListenDatagram = [ ];
+      ListenStream = [ "10.11.2.1:33443" ];
+      FreeBind = true;
+    };
+  "a sandbox with no egress has no socket" =
+    !((core.hostUnits pkgs cli closed).sockets ? "fencr-sbx-egress");
+  "a domain sandbox's tcp 53 is not redirected" =
+    !lib.hasInfix "tcp dport 53 redirect" (core.firewallOf resolved)."fencr-sbx-nat".content;
+  "a domain sandbox's tcp dns port is not accepted" =
+    !lib.hasInfix "dns-tcp" (core.firewallOf resolved)."fencr-sbx".content;
+  "an internet sandbox's 443 is not redirected" =
+    !lib.hasInfix "tcp dport 443 redirect"
+      (core.firewallOf longName)."fencr-coding-agent-1-nat".content;
+  "an internet sandbox's tls port is not accepted" =
+    !lib.hasInfix "egress-tls" (core.firewallOf longName)."fencr-coding-agent-1".content;
+};
 # a resolver out on the internet is refused, so the sandbox's own unit is the one
 # road for plain dns; an explicit destination grant is accepted before the
 # drop, and a sandbox the unit does not resolve for keeps its dns as it was
@@ -553,7 +587,10 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   # this sandbox holds a credential and declares no secrets, so it gets the
   # authority's socket and none of the raw-secrets pipeline
-  builtins.attrNames units.sockets == [ "fencr-sbx-trust" ]
+  builtins.attrNames units.sockets == [
+    "fencr-sbx-egress"
+    "fencr-sbx-trust"
+  ]
   && units.sockets."fencr-sbx-trust".socketConfig.ListenStream == "/run/fencr-sbx/vsock_6"
   && !(units.sockets."fencr-sbx-trust".socketConfig ? SocketUser)
   && units.sockets."fencr-sbx-trust".socketConfig.SocketMode == "0666"
@@ -566,6 +603,7 @@ assert lib.assertMsg (
           secrets.raw = "/run/secrets/raw";
         }
       )).sockets == [
+      "fencr-sbx-egress"
       "fencr-sbx-secrets"
       "fencr-sbx-trust"
     ]

@@ -122,7 +122,7 @@ a guest chose. A sandbox could not be held to its own share of it — the EMFILE
 bursts that took dns down on one host were this — and its queries appeared
 in no journal fencr reads.
 
-The unit now owns udp and tcp 53 for every sandbox that may resolve at all, and
+The unit now owns udp 53 for every sandbox that may resolve at all, tcp 53 where it relays, and
 has two modes:
 
 - with domain grants it answers every name with the bridge address, as

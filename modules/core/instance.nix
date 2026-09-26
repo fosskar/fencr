@@ -243,6 +243,10 @@ in
       # speaks to resolved itself
       egress = domains != [ ] || granted != [ ] || internet;
       dnsEgress = domains != [ ] || internet;
+      # the doors the unit serves: tls where there is a name to judge, dns
+      # over tcp only where it relays. a redirect to a port it does not
+      # hold would deliver the guest to whoever binds it
+      tlsEgress = domains != [ ] || granted != [ ];
       errors =
         # every derived name is this one with a prefix, and "tap-" plus eleven
         # is IFNAMSIZ; the charset is what an interface, a unit and a user can
@@ -316,6 +320,7 @@ in
         denied
         egress
         dnsEgress
+        tlsEgress
         ;
       inherit (options)
         id
