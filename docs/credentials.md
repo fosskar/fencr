@@ -242,7 +242,9 @@ fencr.sandboxes.myagent.secrets."agent.env" = "/run/secrets/agent.env";
 ```
 
 The host file is fetched over vsock at boot into
-`/run/agent-secrets/agent.env`. This is where a value starts, and where it
+`/run/agent-secrets/agent.env`, once per start of the sandbox: vsock does not
+tell the host which guest user connects, so the relay closes after the boot
+fetch rather than serve any guest process later. This is where a value starts, and where it
 stays unless a credential can carry it: a signing key, an end-to-end
 encryption key, anything spoken over a protocol that is not HTTP. The cost is
 that a compromised guest has the value, which is the whole reason to promote

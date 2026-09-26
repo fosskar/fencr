@@ -165,7 +165,8 @@ configuration, SSH access and the checkpoint commands.
   beside its secrets and rebuilds the system trust store at boot in
   `/run/fencr`. Raw `secrets` instead enter guest `/run/agent-secrets`, fetched
   at boot over vsock port 5 from a socket-activated relay service that serves its
-  own systemd credentials; they are readable by guest root. Never put real secret
+  own systemd credentials once per start of the guest, then stops its socket,
+  since vsock carries no guest uid; they are readable by guest root. Never put real secret
   values in the Nix store.
 - `fencr.mcpGateway` is disabled by default; enabled sandboxes need explicit
   `mcp.allow` grants. `approvalTools` defaults to `[ "*" ]`. The default

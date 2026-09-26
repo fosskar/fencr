@@ -378,6 +378,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("fencr status sbx | grep -Fx 'VMM: Running'")
       # a raw secret arrived over vsock, readable by guest root only
       host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
+      # vsock carries no guest uid, so the relay closed after the boot fetch:
+      # no guest process, root included, fetches the secrets again
+      host.fail(f"{ssh} '${pkgs.socat}/bin/socat -u VSOCK-CONNECT:2:5 /dev/null'", timeout=60)
+      host.fail("systemctl is-active fencr-sbx-secrets.socket")
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = root:666")
       # the sandbox's vsock sockets belong to its user
@@ -416,6 +420,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # a clean stop, not a kill after the stop timeout
       host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
       host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
+      # and a new start of the guest opens it for one fetch again
+      host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
 
       # the clean stop above left one; a file written after the manual one
       # must vanish on restore while the earlier probe stays

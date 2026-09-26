@@ -57,6 +57,17 @@ in
               ExecStart = pkgs.writeShellScript "fencr-${instance.name}-secrets" ''
                 exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
               '';
+              # vsock carries no guest uid, so any guest process could fetch
+              # again what only guest root may read. the boot fetch runs before
+              # any payload does; after it, the door is closed until the guest
+              # starts again
+              ExecStopPost =
+                "+"
+                + pkgs.writeShellScript "fencr-${instance.name}-secrets-served" ''
+                  if [ "$SERVICE_RESULT" = success ]; then
+                    exec ${pkgs.systemd}/bin/systemctl --no-block stop ${units.secrets}.socket
+                  fi
+                '';
             };
           };
         }
