@@ -77,12 +77,14 @@ in
     '';
 
   # what the guest reaches on the host itself. v6 is dropped first: the
-  # host's own link-local multicast reflects off the bridge
+  # host's own link-local multicast reflects off the bridge. only replies
+  # pass on state: the guest's own packets meet the grants every time, so
+  # a grant a rebuild removes also ends the connections opened under it
   inputRules =
     cfg:
     ''
       iifname "${cfg.bridge}" meta nfproto ipv6 drop
-      iifname "${cfg.bridge}" ct state established,related accept
+      iifname "${cfg.bridge}" ct state established,related ct direction reply accept
     ''
     + connectionCap cfg
     # the egress unit listens on the bridge address, which the host itself

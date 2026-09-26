@@ -339,6 +339,14 @@ assert lib.assertMsg (
   && !lib.hasInfix "dport 53 counter accept" (core.firewallOf longName)."fencr-coding-agent-1".content
   && !lib.hasInfix "dport 53 counter accept" filterTable
 ) "core check: the guest can still reach resolved on the bridge";
+# a connection the guest opened is judged by the grants on every packet, so
+# revoking a host port ends it rather than only refusing new ones
+assert lib.assertMsg (
+  lib.hasInfix ''iifname "br-sbx" ct state established,related ct direction reply accept''
+    (core.firewallOf resolved)."fencr-sbx".content
+  && !lib.hasInfix ''iifname "br-sbx" ct state established,related accept''
+    (core.firewallOf resolved)."fencr-sbx".content
+) "core check: an established guest connection outlives its grant";
 # pid 1 binds exactly the doors the unit serves and the firewall redirects
 # to, so no host user can hold one of them: tcp dns only where it relays,
 # tls only where there is a name to judge
