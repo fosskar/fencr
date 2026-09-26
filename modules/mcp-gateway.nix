@@ -16,7 +16,6 @@ let
   );
   gatewayConfig = pkgs.writeText "fencr-mcp-gateway.json" (
     builtins.toJSON {
-      inherit (cfg) port;
       approval_mode = cfg.approvalMode;
       approval_command = cfg.approvalCommand;
       approval_timeout = cfg.approvalTimeout;
@@ -195,6 +194,14 @@ in
       # activation
       systemd.tmpfiles.rules = [ "d /var/lib/fencr-mcp 0700 root root -" ];
 
+      # pid 1 holds the port the egress units send principal tokens to, so no
+      # host user can take it while the gateway restarts
+      systemd.sockets.fencr-mcp-gateway = {
+        description = "per-sandbox MCP gateway";
+        wantedBy = [ "sockets.target" ];
+        listenStreams = [ "127.0.0.1:${toString cfg.port}" ];
+      };
+
       systemd.services = {
         fencr-mcp-tokens = {
           description = "create per-sandbox MCP gateway credentials";
@@ -246,8 +253,8 @@ in
       // lib.mapAttrs' (
         name: _:
         lib.nameValuePair (core.unitsOf name).egress {
-          requires = [ "fencr-mcp-gateway.service" ];
-          after = [ "fencr-mcp-gateway.service" ];
+          requires = [ "fencr-mcp-gateway.socket" ];
+          after = [ "fencr-mcp-gateway.socket" ];
         }
       ) members;
     })

@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 import signal
+import socket
 import time
 from pathlib import Path
 from typing import Any
@@ -97,7 +98,7 @@ class Sessions:
 
     Keyed by principal, so a session never carries one sandbox's state to
     another. Opened on first use, so a backend that is down cannot keep the
-    gateway from starting — every mcp-enabled sandbox's egress unit requires it.
+    gateway from starting and every mcp-enabled sandbox from its other backends.
     Dropped on the first call past the window, so a restarted backend heals
     without any reconnect logic of its own.
     """
@@ -336,7 +337,13 @@ def create_app(config):
 
 def main():
     config = json.loads(Path(os.environ["MCP_GATEWAY_CONFIG"]).read_text())
-    uvicorn.run(create_app(config), host="127.0.0.1", port=config["port"], access_log=False)
+    # pid 1 holds the port while this process restarts, so no other host user
+    # can bind it and receive the tokens the egress units send here
+    if os.environ.get("LISTEN_PID") != str(os.getpid()) or os.environ.get("LISTEN_FDS") != "1":
+        raise RuntimeError("no socket from systemd: run from fencr-mcp-gateway.socket")
+    listener = socket.socket(fileno=3)
+    server = uvicorn.Server(uvicorn.Config(create_app(config), access_log=False))
+    server.run(sockets=[listener])
 
 
 if __name__ == "__main__":

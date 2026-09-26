@@ -50,7 +50,6 @@ class GatewayTest(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
         self.config = {
-            "port": 8764,
             "servers": {"calendar": {
                 "url": "http://127.0.0.1:8765/mcp/",
                 "token_credential": "backend",

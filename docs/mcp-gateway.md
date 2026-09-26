@@ -167,9 +167,8 @@ keyed by sandbox and backend, never by backend alone, so it cannot carry one san
 state to another.
 
 Connections open on first use, not at startup, so a backend that is down
-cannot keep the gateway from starting — every MCP-enabled sandbox's egress unit
-requires the gateway, and a broken backend would otherwise take that sandbox off
-the network entirely. An idle session is dropped and remade on the next
+cannot keep the gateway from starting and every MCP-enabled sandbox from its
+other backends. An idle session is dropped and remade on the next
 call, so a restarted backend needs no intervention, and a call that fails
 runs once more on a fresh session.
 
@@ -203,8 +202,7 @@ own decision record if one is required.
 
 After rotating a backend's `tokenFile`, update the backend as needed and
 restart `fencr-mcp-gateway.service` so systemd reloads the credential. Restarting
-the gateway interrupts active sessions; clients must reconnect. Gateway
-restarts also restart the participating sandboxes' egress proxies.
+the gateway interrupts active sessions; clients must reconnect.
 
 Host root, the approval command and the backend implementations remain
 trusted. Host-held tokens do not make every permitted tool safe, or stop a

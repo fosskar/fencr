@@ -74,8 +74,9 @@ configuration, SSH access and the checkpoint commands.
   with host-held tokens. Its `Sessions` keeps a backend session open for a
   30-second idle window, keyed by principal and backend, never by backend
   alone: a sandbox reuses only what it opened itself. Sessions open on first use,
-  not at startup, so a backend that is down cannot keep the gateway — and with
-  it every mcp-enabled sandbox's egress unit — from starting. An `Open` task enters
+  not at startup, so a backend that is down cannot keep the gateway from
+  starting and every mcp-enabled sandbox from its other backends. The gateway's
+  port is held by `fencr-mcp-gateway.socket`, which the egress units require. An `Open` task enters
   and exits each session's context and nothing else does: anyio binds a cancel
   scope to the entering task, so a session entered in a request task and held
   past it makes the next request unwind out of order. Any test double for
