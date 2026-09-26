@@ -190,6 +190,15 @@ in
       message = "nixos module check: the bandwidth caps did not reach firecracker";
     }
     {
+      # a group-owned tap is one every sandbox user in kvm may attach
+      assertion =
+        config.systemd.network.netdevs."11-tap-sbx".tapConfig == {
+          User = "fencr-sbx";
+          VNetHeader = true;
+        };
+      message = "nixos module check: a tap belongs to more than its sandbox's user";
+    }
+    {
       assertion = !config.hardware.ksm.enable;
       message = "nixos module check: same-page merging is on";
     }

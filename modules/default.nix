@@ -202,9 +202,12 @@ in
     # would only add ports, leaving globally open ones reachable from the bridge
     networking.nftables.tables = forEachInstance (_: cfg: core.firewallOf cfg);
 
-    # firecracker attaches the tap by name with a virtio header and one queue
+    # firecracker attaches the tap by name with a virtio header and one queue.
+    # the tap belongs to the sandbox's user alone: every sandbox user shares
+    # group kvm, and a group-owned tap is one any of them may attach while
+    # its sandbox is down, taking over its address and grants
     systemd.network = forEachInstance (
-      _name: cfg: {
+      name: cfg: {
         netdevs."10-${cfg.bridge}".netdevConfig = {
           Name = cfg.bridge;
           Kind = "bridge";
@@ -215,7 +218,7 @@ in
             Kind = "tap";
           };
           tapConfig = {
-            Group = "kvm";
+            User = core.userOf name;
             VNetHeader = true;
           };
         };

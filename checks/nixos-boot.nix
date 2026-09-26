@@ -380,6 +380,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = root:666")
       # the sandbox's vsock sockets belong to its user
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock)\" = fencr-sbx:700")
+      # the tap is the sandbox user's alone, not group kvm's
+      host.succeed("test \"$(cat /sys/class/net/tap-sbx/owner):$(cat /sys/class/net/tap-sbx/group)\" = \"$(id -u fencr-sbx):-1\"")
 
       host.succeed(f"{ssh} 'findmnt -n -o FSTYPE /nix/store' | grep -Fx erofs", timeout=60)
       # the test host exposes svm and vmx; the guest must not see either
