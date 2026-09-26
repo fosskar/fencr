@@ -69,6 +69,12 @@ func prepare(c *credential) error {
 	return nil
 }
 
+// every request here holds an upstream connection and possibly a buffered
+// body, however many connections and streams it arrived over
+const maxInFlight = 256
+
+var inFlight = make(chan struct{}, maxInFlight)
+
 // a request body is substituted only when it is small enough to hold; a
 // larger or unmeasured one is forwarded untouched rather than buffered
 const maxBody = 1 << 20
@@ -98,6 +104,13 @@ func handler(byDomain map[string][]*credential) http.Handler {
 		refuse := func(status int, message string) {
 			record(r, uri, status)
 			http.Error(w, message, status)
+		}
+		select {
+		case inFlight <- struct{}{}:
+			defer func() { <-inFlight }()
+		default:
+			refuse(http.StatusServiceUnavailable, "fencr: too many requests in flight")
+			return
 		}
 		candidates, ok := byDomain[host]
 		if !ok {

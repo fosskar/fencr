@@ -233,3 +233,24 @@ func TestSingleCredentialStillAllowsEveryPath(t *testing.T) {
 		t.Fatalf("got %d %q", response.Code, response.Body.String())
 	}
 }
+
+func TestRequestsBeyondTheInFlightCapAreRefused(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request past the cap reached upstream")
+	}))
+	defer upstream.Close()
+	proxy := handler(map[string][]*credential{"api.test": {{Name: "api", Upstream: upstream.URL}}})
+	for range maxInFlight {
+		inFlight <- struct{}{}
+	}
+	defer func() {
+		for range maxInFlight {
+			<-inFlight
+		}
+	}()
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://api.test/", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("got status %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}

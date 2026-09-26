@@ -135,7 +135,9 @@ func run(cfg *config) error {
 			TLSConfig:         &tls.Config{GetCertificate: authority.certificate, MinVersion: tls.VersionTLS12},
 			ReadHeaderTimeout: 30 * time.Second,
 			IdleTimeout:       120 * time.Second,
-			ErrorLog:          log.New(io.Discard, "", 0),
+			// each stream is an upstream request held open; go's default is 250
+			HTTP2:    &http.HTTP2Config{MaxConcurrentStreams: 32},
+			ErrorLog: log.New(io.Discard, "", 0),
 		}
 	}
 

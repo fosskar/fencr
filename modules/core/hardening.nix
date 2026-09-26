@@ -58,7 +58,12 @@ in
 
   # the denied ranges keep an upstream or an allowed name from resolving
   # into the lan
+  # the guest drives this unit's memory, tasks and sockets, and it runs outside
+  # the microvm's MemoryMax; these keep the damage in its own cgroup
   egressHardening = hardened // {
+    MemoryMax = "512M";
+    TasksMax = 256;
+    LimitNOFILE = 8192;
     Restart = "always";
     RestartSec = 5;
     DynamicUser = true;
