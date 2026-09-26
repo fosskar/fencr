@@ -298,9 +298,17 @@ func requests(log string) []counted {
 		if !gotMethod || !gotHost || !gotURI || !gotStatus {
 			continue
 		}
-		hits[fmt.Sprintf("%s %s%s → %s", method, host, uri, status)]++
+		hits[fmt.Sprintf("%s %s%s → %s", visible(method), visible(host), visible(uri), visible(status))]++
 	}
 	return ranked(hits)
+}
+
+// the guest chose these bytes and root's terminal prints them: whatever is
+// not a graphic character is shown as its escape, so none can move the
+// cursor, retitle the window or reach the clipboard
+func visible(text string) string {
+	quoted := strconv.QuoteToGraphic(text)
+	return quoted[1 : len(quoted)-1]
 }
 
 func connections(log, verb, pattern string) uint64 {

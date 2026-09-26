@@ -105,6 +105,8 @@ let
         printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
         printf '{"msg":"handled request","method":"POST","host":"api.test","uri":"/v1/messages","status":200}\n'
         printf '{"msg":"handled request","method":"GET","host":"api.test","uri":"/v1/models?x=1","status":404}\n'
+        # the guest chose the uri; a raw c1 csi must not reach the terminal
+        printf '{"msg":"handled request","method":"GET","host":"api.test","uri":"/c1?q=\xc2\x9b0m","status":404}\n'
         ;;
     esac
   '';
@@ -167,6 +169,7 @@ pkgs.runCommand "fencr-cli-check" { } ''
 
   Credential requests (journal):
     POST api.test/v1/messages → 200           x2
+    GET api.test/c1?q=\u009b0m → 404          x1
     GET api.test/v1/models?x=1 → 404          x1
 
   Services: egress RUNNING
