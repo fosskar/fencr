@@ -24,7 +24,13 @@ in
     {
       description = "fencr sandbox ${instance.name}";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      # the sandbox's tables are what confine the guest: a ruleset that failed to
+      # load, or was stopped, must not leave the guest running unconfined
+      requires = [ "nftables.service" ];
+      after = [
+        "network.target"
+        "nftables.service"
+      ];
       # firecracker's own per-thread allowlist is tighter than
       # @system-service and includes mincore, which that group lacks
       serviceConfig =

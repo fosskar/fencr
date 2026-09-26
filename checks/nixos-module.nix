@@ -190,6 +190,12 @@ in
       message = "nixos module check: the bandwidth caps did not reach firecracker";
     }
     {
+      assertion =
+        lib.elem "nftables.service" config.systemd.services.fencr-sbx.requires
+        && lib.elem "nftables.service" config.systemd.services.fencr-sbx.after;
+      message = "nixos module check: a sandbox runs without its firewall";
+    }
+    {
       # a group-owned tap is one every sandbox user in kvm may attach
       assertion =
         config.systemd.network.netdevs."11-tap-sbx".tapConfig == {
