@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSharedDomainCredentials(t *testing.T) {
@@ -293,3 +295,55 @@ func TestAnInterimResponseIsScrubbed(t *testing.T) {
 		t.Fatalf("interim link headers %q", interim)
 	}
 }
+
+// the upstream has acted on a request whose response the guest abandons
+func TestAnAbortedRequestIsRecorded(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	if err := os.WriteFile(filepath.Join(directory, "key"), []byte("api-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "first")
+		w.(http.Flusher).Flush()
+		<-release
+		io.WriteString(w, strings.Repeat("more", 1<<16))
+	}))
+	defer upstream.Close()
+	defer close(release)
+	logged := make(chan string, 16)
+	previous := log.Writer()
+	log.SetOutput(writerFunc(func(line []byte) (int, error) {
+		logged <- string(line)
+		return len(line), nil
+	}))
+	defer log.SetOutput(previous)
+	proxy := httptest.NewServer(handler(map[string][]*credential{"api.test": prepared(t,
+		&credential{Name: "key", Upstream: upstream.URL, Header: "Authorization"})}))
+	defer proxy.Close()
+	conn, err := net.Dial("tcp", proxy.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.WriteString(conn, "GET /aborted HTTP/1.1\r\nHost: api.test\r\n\r\n")
+	if _, err := conn.Read(make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	release <- struct{}{}
+	for {
+		select {
+		case line := <-logged:
+			if strings.Contains(line, `"uri":"/aborted"`) {
+				return
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the aborted request is not on record")
+		}
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

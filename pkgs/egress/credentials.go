@@ -313,8 +313,10 @@ func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) 
 		},
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
+	// a guest that hangs up mid-response makes ServeHTTP panic with
+	// http.ErrAbortHandler; the upstream has acted by then, so it is recorded
+	defer func() { record(r, uri, status) }()
 	proxy.ServeHTTP(w, r)
-	record(r, uri, status)
 }
 
 // without this the transport asks for gzip itself and hands back a
