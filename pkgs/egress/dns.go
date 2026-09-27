@@ -40,7 +40,7 @@ func answerDNS(conn net.PacketConn, answer net.IP) {
 // speaks to the resolver itself: this unit is its one client. the stub
 // knows the host's names too, /etc/hosts, split dns, mdns, _gateway, so an
 // answer is screened before the guest sees it
-func forwardDNS(conn net.PacketConn, resolver string, private []netip.Prefix) {
+func forwardDNS(conn net.PacketConn, resolver string, rules *screen) {
 	slots := make(chan struct{}, maxQueries)
 	buffer := make([]byte, 4096)
 	for {
@@ -58,13 +58,13 @@ func forwardDNS(conn net.PacketConn, resolver string, private []netip.Prefix) {
 		}
 		go func() {
 			defer func() { <-slots }()
-			relayQuery(conn, peer, query, resolver, private)
+			relayQuery(conn, peer, query, resolver, rules)
 		}()
 	}
 }
 
-func relayQuery(conn net.PacketConn, peer net.Addr, query []byte, resolver string, private []netip.Prefix) {
-	if reversesPrivate(query, private) {
+func relayQuery(conn net.PacketConn, peer net.Addr, query []byte, resolver string, rules *screen) {
+	if reversesPrivate(query, rules) {
 		if refused := refusal(query); refused != nil {
 			_, _ = conn.WriteTo(refused, peer)
 		}
@@ -89,7 +89,7 @@ func relayQuery(conn net.PacketConn, peer net.Addr, query []byte, resolver strin
 		log.Printf("dns: %s: %v", questionName(query), err)
 		return
 	}
-	if answer := screened(query, reply[:n], private); answer != nil {
+	if answer := screened(query, reply[:n], rules); answer != nil {
 		_, _ = conn.WriteTo(answer, peer)
 	}
 }
@@ -112,7 +112,7 @@ func (conn dnsStream) Write(buffer []byte) (int, error) {
 
 // a truncated udp answer sends the guest to tcp, so that road has to exist
 // too, screened the same way: one message in, one answer out
-func forwardDNSStream(listener *net.TCPListener, resolver string, private []netip.Prefix) {
+func forwardDNSStream(listener *net.TCPListener, resolver string, rules *screen) {
 	slots := make(chan struct{}, maxQueries)
 	for {
 		conn, err := listener.AcceptTCP()
@@ -135,18 +135,18 @@ func forwardDNSStream(listener *net.TCPListener, resolver string, private []neti
 				return
 			}
 			defer upstream.Close()
-			relayStream(dnsStream{conn}, dnsStream{upstream}, private)
+			relayStream(dnsStream{conn}, dnsStream{upstream}, rules)
 		}()
 	}
 }
 
-func relayStream(guest, upstream io.ReadWriter, private []netip.Prefix) {
+func relayStream(guest, upstream io.ReadWriter, rules *screen) {
 	for {
 		query, err := readMessage(guest)
 		if err != nil {
 			return
 		}
-		if reversesPrivate(query, private) {
+		if reversesPrivate(query, rules) {
 			refused := refusal(query)
 			if refused == nil || writeMessage(guest, refused) != nil {
 				return
@@ -160,7 +160,7 @@ func relayStream(guest, upstream io.ReadWriter, private []netip.Prefix) {
 		if err != nil {
 			return
 		}
-		answer := screened(query, reply, private)
+		answer := screened(query, reply, rules)
 		if answer == nil || writeMessage(guest, answer) != nil {
 			return
 		}
@@ -187,10 +187,10 @@ func writeMessage(conn io.Writer, message []byte) error {
 
 // the reply unless it names an address in a special-use range; then, or
 // when it cannot be read, a refusal. whether the name exists still shows
-func screened(query, reply []byte, private []netip.Prefix) []byte {
+func screened(query, reply []byte, rules *screen) []byte {
 	if addresses, ok := answerAddresses(reply); ok {
 		for _, address := range addresses {
-			if withinPrefixes(private, address) {
+			if !rules.allows(address) {
 				log.Printf("dns: %s refused: its answer is a special-use address", questionName(query))
 				return refusal(query)
 			}
@@ -218,6 +218,36 @@ func refusal(query []byte) []byte {
 		reply[at] = 0
 	}
 	return reply
+}
+
+// what a relayed answer may name: public addresses, and the special-use ones
+// the sandbox is granted anyway. a host:<port> grant reaches the host on any
+// of its addresses, so a name for the host must still resolve
+type screen struct {
+	private   []netip.Prefix
+	reachable []netip.Prefix
+	host      bool
+}
+
+func (rules *screen) allows(address netip.Addr) bool {
+	switch {
+	case !withinPrefixes(rules.private, address), withinPrefixes(rules.reachable, address):
+		return true
+	case rules.host && !address.Unmap().IsLoopback():
+		return hostOwns(address)
+	}
+	return false
+}
+
+// the unit has no netlink, and a bind succeeds only on an address the host
+// holds
+func hostOwns(address netip.Addr) bool {
+	conn, err := net.ListenUDP("udp", net.UDPAddrFromAddrPort(netip.AddrPortFrom(address.Unmap(), 0)))
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // netip, not net: a net.IPNet for ::ffff:0:0/96 contains every IPv4 address
@@ -284,7 +314,7 @@ func skipName(message []byte, at int) (int, bool) {
 }
 
 // a PTR lookup of a special-use address answers with the host's name for it
-func reversesPrivate(query []byte, private []netip.Prefix) bool {
+func reversesPrivate(query []byte, rules *screen) bool {
 	end := questionEnd(query)
 	if len(query) < 12 || end < 0 {
 		return false
@@ -303,7 +333,7 @@ func reversesPrivate(query []byte, private []netip.Prefix) bool {
 	if !readable {
 		return true
 	}
-	for _, blocked := range private {
+	for _, blocked := range rules.private {
 		if blocked.Overlaps(network) {
 			return true
 		}

@@ -273,7 +273,12 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         id = 1;
         vcpu = 1;
         mem = 512;
-        outbound = [ "internet" ];
+        # a name for the host, or for a granted destination, must still resolve
+        outbound = [
+          "internet"
+          "host:80"
+          "192.168.1.2:8123"
+        ];
         authorizedKeys = [ snakeOilEd25519PublicKey ];
         services = [
           {
@@ -293,6 +298,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       networking.hosts."192.168.1.1" = [ "private.test" ];
       # a public address the relay passes; nothing is dialled
       networking.hosts."1.2.3.4" = [ "public.test" ];
+      networking.hosts."192.168.1.3" = [ "lan.test" ];
       # a granted name on host loopback: the unit allows loopback for a
       # credential's upstream, and an allowed name must not inherit it
       networking.hosts."127.0.0.1" = [ "loopback.allowed.test" ];
@@ -569,9 +575,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # the host's own view is not the guest's: a private answer, or a reverse
       # lookup of a private address, is refused over either road
       for road in ["", "+tcp"]:
-          host.succeed(f"{ssh_open} 'dig {road} allowed.test @10.11.1.1' | grep -F 'status: REFUSED'", timeout=60)
+          host.succeed(f"{ssh_open} 'dig {road} lan.test @10.11.1.1' | grep -F 'status: REFUSED'", timeout=60)
           host.succeed(f"{ssh_open} 'dig {road} -x 192.168.1.2 @10.11.1.1' | grep -F 'status: REFUSED'", timeout=60)
-      host.succeed("journalctl -u fencr-open-egress.service -o cat | grep -F 'allowed.test refused: its answer is a special-use address'")
+      host.succeed("journalctl -u fencr-open-egress.service -o cat | grep -F 'lan.test refused: its answer is a special-use address'")
+      # unless the sandbox may go there: the host itself under host:80, a
+      # destination under its grant, and the name then works end to end
+      host.succeed(f"{ssh_open} 'dig +short private.test @10.11.1.1' | grep -Fx 192.168.1.1", timeout=60)
+      host.succeed(f"{ssh_open} 'dig +short allowed.test @10.11.1.1' | grep -Fx 192.168.1.2", timeout=60)
+      host.succeed(f"{ssh_open} 'curl --fail --silent --max-time 10 http://private.test/' | grep -Fx 'fencr target'", timeout=60)
       # resolved never listens on a bridge, so the guest cannot reach it even
       # by naming the port the redirect came from
       host.fail("ss -lntupH | grep -E 'systemd-resolve.*10\\.11\\.[01]\\.1:53'")

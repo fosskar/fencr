@@ -21,6 +21,8 @@ var private = func() []netip.Prefix {
 	return networks
 }()
 
+var rules = &screen{private: private, reachable: []netip.Prefix{netip.MustParsePrefix("192.168.10.50/32")}}
+
 func dnsQuery(name string, kind uint16) []byte {
 	message := []byte{0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
 	for _, label := range strings.Split(name, ".") {
@@ -59,10 +61,12 @@ func TestScreenedAnswers(t *testing.T) {
 		{"myhost", 1, net.IPv4(127, 0, 0, 2).To4(), true},
 		{"ula.test", 28, net.ParseIP("fdde::1"), true},
 		{"text.test", 16, []byte("\x05hello"), false},
+		// a destination the sandbox is granted resolves by name
+		{"granted.lan", 1, net.IPv4(192, 168, 10, 50).To4(), false},
 	} {
 		query := dnsQuery(test.name, test.kind)
 		answer := dnsAnswer(query, test.kind, test.data)
-		got := screened(query, answer, private)
+		got := screened(query, answer, rules)
 		if refused(got) != test.refused {
 			t.Errorf("%s: refused %v, want %v", test.name, refused(got), test.refused)
 		}
@@ -74,8 +78,26 @@ func TestScreenedAnswers(t *testing.T) {
 		}
 	}
 	query := dnsQuery("broken.test", 1)
-	if !refused(screened(query, dnsAnswer(query, 1, net.IPv4(1, 1, 1, 1).To4())[:len(query)+5], private)) {
+	if !refused(screened(query, dnsAnswer(query, 1, net.IPv4(1, 1, 1, 1).To4())[:len(query)+5], rules)) {
 		t.Error("a truncated answer passed")
+	}
+}
+
+// a host:<port> grant reaches the host on its own addresses, never loopback
+func TestHostAddressesPassOnlyWithAHostGrant(t *testing.T) {
+	for _, test := range []struct {
+		rules *screen
+		want  bool
+	}{
+		{&screen{private: private}, false},
+		{&screen{private: private, host: true}, false},
+	} {
+		if got := test.rules.allows(netip.MustParseAddr("127.0.0.1")); got != test.want {
+			t.Errorf("loopback with host %v: got %v", test.rules.host, got)
+		}
+	}
+	if (&screen{private: private, host: true}).allows(netip.MustParseAddr("192.168.254.254")) {
+		t.Error("an address the host does not hold passed")
 	}
 }
 
@@ -91,7 +113,7 @@ func TestReverseLookupsOfPrivateAddressesAreRefused(t *testing.T) {
 		"8.b.d.0.1.0.0.2.ip6.arpa":                 false,
 		"example.com":                              false,
 	} {
-		if got := reversesPrivate(dnsQuery(name, 12), private); got != want {
+		if got := reversesPrivate(dnsQuery(name, 12), rules); got != want {
 			t.Errorf("%s: got %v, want %v", name, got, want)
 		}
 	}
@@ -125,7 +147,7 @@ func TestTheUDPRelayScreens(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer relay.Close()
-	go forwardDNS(relay, resolver.LocalAddr().String(), private)
+	go forwardDNS(relay, resolver.LocalAddr().String(), rules)
 	client, err := net.Dial("udp", relay.LocalAddr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +200,7 @@ func dnsRelayPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { relay.Close() })
-	go forwardDNSStream(relay, upstream.Addr().String(), private)
+	go forwardDNSStream(relay, upstream.Addr().String(), rules)
 	client, err := net.DialTCP("tcp", nil, relay.Addr().(*net.TCPAddr))
 	if err != nil {
 		t.Fatal(err)

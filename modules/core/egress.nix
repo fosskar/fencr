@@ -339,6 +339,8 @@ in
       # denied at the socket, where a host's own carve-out still counts
       blocked = [ cfg.subnet ];
       private = specialUseNetworks.v4 ++ specialUseNetworks.v6;
+      reachable = map (destination: destination.address) cfg.destinations;
+      hostGranted = cfg.hostPorts != [ ];
       inherit (cfg) domains denied;
       credentials = map (credential: {
         inherit (credential)

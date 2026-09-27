@@ -38,13 +38,17 @@ type config struct {
 	Blocked []string `json:"blocked"`
 	// the special-use ranges: a relayed answer pointing into one, or a reverse
 	// lookup of one, would hand the guest the host's private naming
-	Private     []string     `json:"private"`
+	Private []string `json:"private"`
+	// special-use destinations the sandbox is granted, and whether it may
+	// reach the host itself: answers naming these stay
+	Reachable   []string     `json:"reachable"`
+	HostGranted bool         `json:"hostGranted"`
 	Domains     []string     `json:"domains"`
 	Denied      []string     `json:"denied"`
 	Credentials []credential `json:"credentials"`
 
 	blocked []*net.IPNet
-	private []netip.Prefix
+	screen  screen
 }
 
 func main() {
@@ -114,8 +118,20 @@ func load(path string) (*config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: private %q is not a network", path, entry)
 		}
-		cfg.private = append(cfg.private, network.Masked())
+		cfg.screen.private = append(cfg.screen.private, network.Masked())
 	}
+	for _, entry := range cfg.Reachable {
+		network, err := netip.ParsePrefix(entry)
+		if err != nil {
+			address, addressErr := netip.ParseAddr(entry)
+			if addressErr != nil {
+				return nil, fmt.Errorf("%s: reachable %q is not an address or network", path, entry)
+			}
+			network = netip.PrefixFrom(address, address.BitLen())
+		}
+		cfg.screen.reachable = append(cfg.screen.reachable, network.Masked())
+	}
+	cfg.screen.host = cfg.HostGranted
 	for _, c := range cfg.Credentials {
 		for _, field := range []struct {
 			name  string
@@ -176,8 +192,8 @@ func run(cfg *config) error {
 			if err != nil {
 				return err
 			}
-			go forwardDNS(conn, cfg.Resolver, cfg.private)
-			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver, cfg.private)
+			go forwardDNS(conn, cfg.Resolver, &cfg.screen)
+			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver, &cfg.screen)
 		}
 	}
 
