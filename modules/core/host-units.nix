@@ -142,9 +142,10 @@ in
           };
         }
         // lib.optionalAttrs secrets {
+          # only the microvm unit pulls this in: armed by sockets.target, a
+          # switch would open it again under a guest that has long fetched
           ${units.secrets} = {
             description = "raw secrets for ${instance.name}";
-            wantedBy = [ "sockets.target" ];
             socketConfig = {
               ListenStream = "${vsockOf instance.name}_${toString secretsPort}";
               SocketMode = "0666";

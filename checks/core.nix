@@ -648,6 +648,16 @@ assert lib.assertMsg (
         secrets.raw = "/run/secrets/raw";
       }
     )).services."fencr-sbx-secrets@".serviceConfig.LoadCredential == [ "raw:/run/secrets/raw" ]
+  # armed by the guest's start only, never by a switch
+  && !(
+    (core.hostUnits pkgs cli (
+      resolve "sbx" {
+        id = 0;
+        secrets.raw = "/run/secrets/raw";
+      }
+    )).sockets."fencr-sbx-secrets"
+      ? wantedBy
+  )
 ) "unit check: the relays drifted";
 assert lib.assertMsg (
   occurrences ''oifname "br-sbx" ip daddr 10.11.0.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
