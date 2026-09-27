@@ -586,7 +586,11 @@ assert lib.assertMsg (
   && keyed.dns == null
   && keyedUnits.services ? "fencr-keyed-egress"
   && !(keyedUnits.services ? "fencr-keyed-credentials")
-  && keyedUnits.services."fencr-keyed-egress".requires == [ "fencr-keyed-ca.service" ]
+  &&
+    keyedUnits.services."fencr-keyed-egress".requires == [
+      "fencr-keyed-egress.socket"
+      "fencr-keyed-ca.service"
+    ]
   # the authority travels with the credentials; a sandbox declaring no secrets
   # gets none of the raw-secrets pipeline
   && keyedUnits.sockets ? "fencr-keyed-trust"
@@ -696,7 +700,11 @@ assert lib.assertMsg (
   !(units.services."fencr-sbx-egress".serviceConfig ? RuntimeDirectory)
   && !(units.services."fencr-sbx-egress".serviceConfig ? Group)
   && !(units.services ? "fencr-sbx-credentials")
-  && units.services."fencr-sbx-egress".requires == [ "fencr-sbx-ca.service" ]
+  &&
+    units.services."fencr-sbx-egress".requires == [
+      "fencr-sbx-egress.socket"
+      "fencr-sbx-ca.service"
+    ]
   &&
     units.services."fencr-sbx-egress".serviceConfig.LoadCredential == [
       "api:/run/secrets/api-token"
@@ -998,6 +1006,7 @@ assert lib.assertMsg (
   && core.reloadUnits pkgs { sbx = fetched; } == { }
   &&
     (core.hostUnits pkgs cli fetched).services."fencr-sbx-egress".requires == [
+      "fencr-sbx-egress.socket"
       "fencr-sbx-ca.service"
       "fencr-secret-rotating.socket"
     ]

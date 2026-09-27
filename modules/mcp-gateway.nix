@@ -229,8 +229,16 @@ in
         fencr-mcp-gateway = {
           description = "per-sandbox MCP gateway";
           wantedBy = [ "multi-user.target" ];
-          requires = [ "fencr-mcp-tokens.service" ] ++ backendUnits;
-          after = [ "fencr-mcp-tokens.service" ] ++ backendUnits;
+          requires = [
+            "fencr-mcp-gateway.socket"
+            "fencr-mcp-tokens.service"
+          ]
+          ++ backendUnits;
+          after = [
+            "fencr-mcp-gateway.socket"
+            "fencr-mcp-tokens.service"
+          ]
+          ++ backendUnits;
           environment.MCP_GATEWAY_CONFIG = gatewayConfig;
           serviceConfig = core.hardened // {
             DynamicUser = true;

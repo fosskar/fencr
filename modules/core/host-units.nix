@@ -97,8 +97,15 @@ in
           ${units.egress} = {
             description = "egress and credentials for ${instance.name}";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ] ++ ca ++ resolvers;
-            requires = ca ++ resolvers;
+            # the socket is implied only once both units exist; the first
+            # switch onto socket activation restarts this before starting it
+            after = [
+              "network.target"
+              "${units.egress}.socket"
+            ]
+            ++ ca
+            ++ resolvers;
+            requires = [ "${units.egress}.socket" ] ++ ca ++ resolvers;
             serviceConfig = egressServiceConfig pkgs instance;
           };
         };
