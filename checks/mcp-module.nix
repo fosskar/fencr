@@ -27,7 +27,6 @@ let
       ];
     }).config;
   config = evaluate { };
-  clientConfig = evaluate { fencr.mcpGateway.approvalMode = "client"; };
   errors =
     config:
     map (entry: entry.message) (
@@ -37,18 +36,11 @@ let
   gateway = config.systemd.services.fencr-mcp-gateway;
 in
 assert errors config == [ ];
-assert config.fencr.mcpGateway.approvalMode == "host";
-assert errors clientConfig == [ ];
-assert !(lib.any (warning: lib.hasPrefix "fencr.mcpGateway:" warning) clientConfig.warnings);
-assert
-  errors (evaluate {
-    fencr.mcpGateway.approvalMode = "client";
-    fencr.mcpGateway.approvalCommand = [ "/bin/true" ];
-  }) != [ ];
+assert lib.any (entry: !entry.assertion && lib.hasInfix "mcpGateway.approvalMode" entry.message)
+  (evaluate { fencr.mcpGateway.approvalMode = "client"; }).assertions;
 assert config.fencr.sandboxes.agent.credentials == [ "mcp-agent" ];
 assert config.fencr.sandboxes.reader.credentials == [ "mcp-reader" ];
 assert config.fencr.sandboxes.agent.mcp.allow == [ ];
-assert config.fencr.mcpGateway.servers.calendar.approvalTools == [ "*" ];
 assert credential.domain == "mcp.fencr" && !credential.substitutePlaceholder;
 assert credential.allow == [ "* /mcp/" ];
 assert !(config.fencr.guestSystems.agent.config.environment.sessionVariables ? MCP_GATEWAY_TOKEN);
@@ -76,10 +68,6 @@ assert
   errors (evaluate {
     fencr.mcpGateway.servers.calendar.url = lib.mkForce "http://192.168.1.2:8765/mcp/";
   }) != [ ];
-assert
-  errors (evaluate {
-    fencr.mcpGateway.approvalCommand = [ "relative-command" ];
-  }) != [ ];
 pkgs.runCommand "fencr-mcp-module" { } ''
   ${pkgs.python3}/bin/python3 - <<'PY'
   import json
@@ -87,12 +75,8 @@ pkgs.runCommand "fencr-mcp-module" { } ''
   config = json.loads(Path("${gateway.environment.MCP_GATEWAY_CONFIG}").read_text())
   assert config["principals"]["agent"]["allow"] == []
   assert config["principals"]["reader"]["allow"] == ["calendar.read"]
-  assert config["servers"]["calendar"]["approval_tools"] == ["*"]
   assert config["servers"]["calendar"]["token_credential"] == "backend-calendar"
-  assert config["approval_command"] == []
-  assert config["approval_mode"] == "host"
-  client = json.loads(Path("${clientConfig.systemd.services.fencr-mcp-gateway.environment.MCP_GATEWAY_CONFIG}").read_text())
-  assert client["approval_mode"] == "client"
+  assert "approval_mode" not in config
   PY
   touch "$out"
 ''

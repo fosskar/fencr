@@ -6,7 +6,6 @@ import contextlib
 import fnmatch
 import json
 import os
-import signal
 import socket
 import time
 from pathlib import Path
@@ -136,9 +135,8 @@ class Sessions:
         """Run action against the session, once more on a fresh one if it fails.
 
         A session can die between two calls without anything noticing, so the
-        first failure is retried rather than reported. Not for a call that
-        was approved: the backend may have acted before the failure, and one
-        approval is one invocation.
+        first failure is retried rather than reported. Only for a listing: a
+        tool call may have acted on the backend before the failure.
         """
         attempts = 2 if retry else 1
         for attempt in range(attempts):
@@ -155,59 +153,8 @@ class Sessions:
             await self.discard(key)
 
 
-async def approve(command: list[str], timeout: float, request: dict[str, Any]) -> None:
-    if not command:
-        raise PermissionError("no host approval command configured")
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            env={"PATH": os.defpath},
-            start_new_session=True,
-        )
-    except OSError as error:
-        raise PermissionError("host approval command unavailable") from error
-    try:
-        async with asyncio.timeout(timeout):
-            await process.communicate(json.dumps(request, sort_keys=True).encode())
-        if process.returncode != 0:
-            raise PermissionError("host approval refused")
-    except TimeoutError as error:
-        raise PermissionError("host approval timed out") from error
-    finally:
-        # an approval helper must not leave a pending decision alive after timeout
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        await process.wait()
-
-
-async def approve_client(context, timeout, request):
-    params = context.session.client_params
-    capability = params.capabilities.elicitation if params else None
-    # legacy clients advertise form elicitation as an empty capability object
-    if capability is None or (capability.form is None and capability.url is not None):
-        raise PermissionError("client does not support form elicitation")
-    try:
-        async with asyncio.timeout(timeout):
-            result = await context.session.elicit_form(
-                "Approve this tool call? " + json.dumps(request, sort_keys=True),
-                {"type": "object", "properties": {}},
-                related_request_id=context.request_id,
-            )
-    except TimeoutError as error:
-        raise PermissionError("client approval timed out") from error
-    if result.action != "accept":
-        raise PermissionError("client approval refused")
-
-
 def create_server(name, principal, config, sessions):
     servers = config["servers"]
-    approval_mode = config["approval_mode"]
-    approval_command = config["approval_command"]
-    approval_timeout = config["approval_timeout"]
     gateway = Server("fencr-mcp-gateway")
 
     def permitted(server_name, tool_name):
@@ -245,21 +192,10 @@ def create_server(name, principal, config, sessions):
             or not permitted(server_name, tool_name)
         ):
             raise ValueError("unknown MCP gateway tool")
-        server = servers[server_name]
-        approved = matches(tool_name, server["approval_tools"])
-        if approved:
-            request = {
-                "principal": name, "server": server_name,
-                "tool": tool_name, "arguments": arguments,
-            }
-            if approval_mode == "client":
-                await approve_client(gateway.request_context, approval_timeout, request)
-            else:
-                await approve(approval_command, approval_timeout, request)
         return await sessions.call(
-            (name, server_name), server,
+            (name, server_name), servers[server_name],
             lambda session: session.call_tool(tool_name, arguments),
-            retry=not approved,
+            retry=False,
         )
 
     return gateway
@@ -281,8 +217,6 @@ def live_sessions(manager) -> int:
 
 
 def create_app(config):
-    if config["approval_mode"] not in ("host", "client"):
-        raise ValueError("unknown approval mode")
     tokens = {}
     opening = {}
     sessions = Sessions()
@@ -292,8 +226,7 @@ def create_app(config):
             raise RuntimeError("gateway principals need distinct bearer credentials")
         tokens[token.encode()] = StreamableHTTPSessionManager(
             app=create_server(name, principal, config, sessions),
-            # elicitation requests must reach the client before the tool call completes
-            json_response=config["approval_mode"] == "host",
+            json_response=True,
             session_idle_timeout=1800,
         )
 

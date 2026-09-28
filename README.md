@@ -37,8 +37,8 @@ them on the host:
   grant is enforced by a host process the guest cannot configure.
 - **API keys stay on the host.** The guest holds a placeholder; the host puts
   the real key into the requests you permitted, and only those.
-- **MCP tool calls go through a gateway** that can require approval before a
-  tool runs.
+- **MCP tool calls go through a gateway** that lets each sandbox call only the
+  tools you granted it.
 
 > [!NOTE]
 > fencr ships no agent, clones no repositories and mounts no working tree. You
@@ -55,8 +55,7 @@ them on the host:
   OpenAI, OpenRouter and OpenCode Go/Zen; secret files, Clan vars and host
   commands as sources.
 - **MCP tool permissions.** Put existing MCP servers behind one gateway that
-  grants tools per sandbox and runs an approval command you supply before a
-  tool executes — allow calendar lookups, require approval to create events.
+  grants tools per sandbox — allow calendar lookups, not creating events.
   Backend tokens stay on the host.
 - **Outbound access you grant by name.** Sandboxes get public IPv4 and DNS by
   default, with the LAN and other special-use ranges closed. Narrow that to
@@ -197,12 +196,6 @@ against the guest, in that order.
 > host replaces the key with the placeholder in response headers and in bodies
 > up to 1 MiB; a streamed or unmeasured body is passed through untouched.
 
-> [!WARNING]
-> The MCP gateway has no approval UI. Under the default `approvalMode = "host"`
-> you supply `approvalCommand`, and a missing, failing or slow command denies
-> the call. `approvalMode = "client"` asks the requesting client instead, which
-> means a compromised client can approve its own calls.
-
 fencr is early. The interfaces here work and are covered by the checks in
 `checks/`, up to a guest booting under nested KVM, but options may still
 change.
@@ -245,7 +238,7 @@ package; the CLI is installed by the NixOS module when sandboxes are declared.
 | [Quickstart](docs/quickstart.md) | Creating a sandbox, defaults and resource limits |
 | [Network access](docs/networking.md) | Inbound ports, egress grants and their limits |
 | [Credentials and secrets](docs/credentials.md) | Provider presets, files, commands and OpenCode Go/Zen |
-| [MCP gateway](docs/mcp-gateway.md) | Tool permissions, host approvals and in-chat prompts |
+| [MCP gateway](docs/mcp-gateway.md) | Tool permissions and backends |
 | [Access and operation](docs/access.md) | SSH, status, checkpoints and restore |
 
 Design rationale lives in the [decision records](docs/decisions/).

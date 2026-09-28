@@ -233,7 +233,7 @@ This covers response headers and bodies up to 1 MiB; a streamed or unmeasured
 body is forwarded untouched.
 
 HTTP method/path rules do not understand MCP tools. Use the separate
-[MCP gateway](mcp-gateway.md) for tool-level permissions and approvals.
+[MCP gateway](mcp-gateway.md) for tool-level permissions.
 
 ## raw guest secrets
 

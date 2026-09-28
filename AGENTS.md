@@ -171,13 +171,10 @@ configuration, SSH access and the checkpoint commands.
   since vsock carries no guest uid; they are readable by guest root. Never put real secret
   values in the Nix store.
 - `fencr.mcpGateway` is disabled by default; enabled sandboxes need explicit
-  `mcp.allow` grants. `approvalTools` defaults to `[ "*" ]`. The default
-  `approvalMode = "host"` invokes `approvalCommand` with principal, server,
-  tool and full arguments; a missing command, failure or timeout denies
-  the call. `approvalMode = "client"` uses MCP form elicitation and trusts
-  the requesting client to obtain human approval: a compromised client can
-  approve its own calls. Refusal, unsupported elicitation and timeout deny
-  the call; no human approval UI is bundled. Generated MCP credentials set
+  `mcp.allow` grants. The gateway does not ask for approval; `mcp.allow`
+  and `hiddenTools` alone decide what a sandbox may list and call. A failed
+  tool listing is retried once on a fresh session, a failed tool call is
+  not: the backend may have acted. Generated MCP credentials set
   `substitutePlaceholder = false` so tool arguments cannot receive tokens
   through placeholder substitution. Backend URLs must use host IPv4
   loopback; guests cannot reach the gateway or backends directly by default.
@@ -242,8 +239,7 @@ nix flake check
   own `go test` cases in its check phase.
 - `checks.mcp-gateway` runs `pkgs/mcp-gateway/test_gateway.py` through
   `tests.contract`, covering authorization, session isolation, backend session
-  reuse and its per-principal keying, both approval
-  modes and backend transport. `checks/mcp-module.nix` verifies gateway
+  reuse and its per-principal keying, retries and backend transport. `checks/mcp-module.nix` verifies gateway
   options, credentials, unit wiring and validation.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.
@@ -255,7 +251,7 @@ nix flake check
   domain egress with a deny entry, credential injection with `allow`
   entries and the access log, the guest seeing the placeholder rather than the
   value in an echoed response, checkpoints and restore, and a clean stop.
-  It also checks MCP tool filtering, session isolation, missing host approval,
+  It also checks MCP tool filtering, session isolation,
   token secrecy and persistence, and blocked direct gateway/backend access.
   It checks guest-local logs, serial suppression, Firecracker diagnostics,
   API permissions, and bounded `fencr status` behavior with a stopped VMM

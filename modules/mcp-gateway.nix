@@ -16,13 +16,9 @@ let
   );
   gatewayConfig = pkgs.writeText "fencr-mcp-gateway.json" (
     builtins.toJSON {
-      approval_mode = cfg.approvalMode;
-      approval_command = cfg.approvalCommand;
-      approval_timeout = cfg.approvalTimeout;
       servers = lib.mapAttrs (name: server: {
         inherit (server) url;
         token_credential = "backend-${name}";
-        approval_tools = server.approvalTools;
         hidden_tools = server.hiddenTools;
       }) cfg.servers;
       principals = lib.mapAttrs (name: sandbox: {
@@ -33,44 +29,30 @@ let
   );
 in
 {
+  imports =
+    map
+      (
+        option:
+        lib.mkRemovedOptionModule
+          [
+            "fencr"
+            "mcpGateway"
+            option
+          ]
+          "the MCP gateway no longer asks for approval; mcp.allow and hiddenTools decide what a sandbox may call."
+      )
+      [
+        "approvalMode"
+        "approvalCommand"
+        "approvalTimeout"
+      ];
+
   options.fencr.mcpGateway = {
     enable = lib.mkEnableOption "the host-side MCP gateway";
     port = lib.mkOption {
       type = lib.types.port;
       default = 8764;
       description = "host loopback port for the gateway; never opened to guests directly.";
-    };
-    approvalMode = lib.mkOption {
-      type = lib.types.enum [
-        "host"
-        "client"
-      ];
-      default = "host";
-      description = ''
-        host requires approvalCommand to approve protected calls independently
-        of the guest. client sends MCP form elicitation to the requesting client,
-        which may display it in the same chat. client mode trusts that client to
-        obtain human approval; a compromised client can approve its own calls.
-        refusal, unsupported elicitation and timeout deny the call in either case.
-      '';
-    };
-    approvalCommand = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = ''
-        trusted host command receiving one JSON object on stdin with principal,
-        server, tool and full arguments. exit 0 approves this invocation only;
-        nonzero, timeout or no command denies it. it must obtain approval outside
-        the guest, not ask the requesting MCP client. runs as the gateway's
-        isolated user with a minimal environment, no login session and loopback
-        network access only. stdout is ignored; stderr goes to the journal.
-        use absolute paths.
-      '';
-    };
-    approvalTimeout = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 120;
-      description = "seconds to wait for approval in either mode before denying the call.";
     };
     servers = lib.mkOption {
       default = { };
@@ -91,11 +73,6 @@ in
               default = null;
               example = "calendar-mcp.service";
               description = "optional backend systemd unit required by the gateway.";
-            };
-            approvalTools = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ "*" ];
-              description = "tool-name globs requiring approval through approvalMode. all tools by default; explicitly exclude only tools safe to call without approval.";
             };
             hiddenTools = lib.mkOption {
               type = lib.types.listOf lib.types.str;
@@ -157,14 +134,6 @@ in
             server: builtins.match "http://127[.]0[.]0[.]1:[0-9]+/[^?#]*" server.url != null
           ) (lib.attrValues cfg.servers);
           message = "fencr.mcpGateway backends must use explicit http://127.0.0.1:<port>/<path> URLs.";
-        }
-        {
-          assertion = cfg.approvalCommand == [ ] || lib.hasPrefix "/" (lib.head cfg.approvalCommand);
-          message = "fencr.mcpGateway.approvalCommand must name an absolute executable path.";
-        }
-        {
-          assertion = cfg.approvalMode != "client" || cfg.approvalCommand == [ ];
-          message = "fencr.mcpGateway: approvalCommand is only used with approvalMode = host; remove it to select client approval.";
         }
       ]
       ++ lib.mapAttrsToList (name: sandbox: {

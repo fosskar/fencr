@@ -184,11 +184,7 @@ are fetched over vsock at boot into `/run/agent-secrets`, readable by guest
 root.
 
 MCP rides the same rail: `https://mcp.fencr/mcp/` with a per-sandbox token the
-host injects, into a gateway that filters `<server>.<tool>`. Under the
-default `approvalMode = "host"` it runs `approvalCommand` for every tool
-matching `approvalTools`, `[ "*" ]` by default. `"client"` mode asks the
-requesting client instead, which means a compromised client can approve its
-own calls.
+host injects, into a gateway that filters `<server>.<tool>`.
 
 ## where it lives
 

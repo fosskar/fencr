@@ -165,7 +165,6 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           url = "http://127.0.0.1:8766/mcp/";
           tokenFile = pkgs.writeText "test-backend-token" "backend-test-token";
           service = "mcp-backend.service";
-          approvalTools = [ "write" ];
           hiddenTools = [ "hidden" ];
         };
       };
@@ -632,8 +631,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
               f"curl --silent --max-time 10 -o /dev/null -w %{{http_code}} https://mcp.fencr{path}"), timeout=30)
           assert off_path.strip() == "403", (path, off_path)
       write = {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "test__write", "arguments": {}}}
-      refused = mcp(ssh, write, session)
-      assert "no host approval command configured" in refused and "called write" not in refused, refused
+      assert "called write" in mcp(ssh, write, session)
       for transport in [ssh, ssh_open]:
           for port in [8766, 8764]:
               status, output = host.execute(transport + f" 'curl --silent --show-error --fail --max-time 3 http://10.11.0.1:{port}/mcp/'", timeout=30)
@@ -642,7 +640,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           host.fail(transport + " 'grep -r backend-test-token /run /proc/self/environ'", timeout=60)
       host.succeed("curl --silent --max-time 5 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8766/mcp/ | grep -Fx 401", timeout=30)
       token = host.succeed("cat /var/lib/fencr-mcp/sbx").strip()
-      assert token not in answer + tools + refused
+      assert token not in answer + tools + echoed
       assert token != host.succeed("cat /var/lib/fencr-mcp/open").strip()
       host.fail(ssh + " " + shlex.quote("grep -rF " + shlex.quote(token) + " /run /proc/self/environ"), timeout=60)
       host.succeed("systemctl restart fencr-mcp-tokens.service fencr-mcp-gateway.service", timeout=60)

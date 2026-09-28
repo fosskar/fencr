@@ -2,22 +2,15 @@ import asyncio
 import contextlib
 import json
 import os
-import socket
-import time
 from pathlib import Path
-import sys
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import anyio
-import httpx
-import uvicorn
-from mcp import ClientSession, types
-from mcp.client.streamable_http import streamable_http_client
+from mcp import types
 from starlette.testclient import TestClient
 
 import gateway
@@ -53,13 +46,12 @@ class GatewayTest(unittest.TestCase):
             "servers": {"calendar": {
                 "url": "http://127.0.0.1:8765/mcp/",
                 "token_credential": "backend",
-                "approval_tools": ["write"], "hidden_tools": ["hidden"],
+                "hidden_tools": ["hidden"],
             }},
             "principals": {
                 "agent": {"token_credential": "agent", "allow": ["calendar.*"]},
                 "reader": {"token_credential": "reader", "allow": ["calendar.read"]},
             },
-            "approval_mode": "host", "approval_command": [], "approval_timeout": 1,
         }
         self.backend = Backend()
         self.opened = 0
@@ -141,29 +133,27 @@ class GatewayTest(unittest.TestCase):
             self.assertEqual(self.opened, 2)
             self.assertEqual(self.backend.calls, [("read", {})] * 3)
 
-    def test_a_dead_session_is_retried_on_a_fresh_one(self):
+    def test_a_dead_session_is_retried_on_a_fresh_one_for_a_listing(self):
         with self.client() as client:
             agent = self.initialize(client)
-            self.request(client, agent, "tools/call", {"name": "calendar__read"})
+            self.request(client, agent, "tools/list")
             self.assertEqual(self.opened, 1)
             # a backend may go away between two calls with nothing noticing
             failures = [True]
-            original = self.backend.call_tool
+            original = self.backend.list_tools
 
-            async def once(name, arguments):
+            async def once(cursor=None):
                 if failures.pop() if failures else False:
                     raise RuntimeError("the backend went away")
-                return await original(name, arguments)
+                return await original(cursor)
 
-            self.backend.call_tool = once
-            result = self.request(client, agent, "tools/call", {"name": "calendar__read"})
-            self.assertFalse(result["isError"], result)
+            self.backend.list_tools = once
+            tools = self.request(client, agent, "tools/list")["tools"]
+            self.assertEqual(len(tools), 2)
             self.assertEqual(self.opened, 2)
 
-    # the backend may have acted before the failure; one approval is one
-    # invocation, so an approved call is never sent twice
-    def test_an_approved_call_is_not_retried(self):
-        self.config["approval_command"] = [sys.executable, "-c", "raise SystemExit(0)"]
+    # the backend may have acted before the failure, so a call is never sent twice
+    def test_a_tool_call_is_not_retried(self):
         with self.client() as client:
             agent = self.initialize(client)
             original = self.backend.call_tool
@@ -176,6 +166,11 @@ class GatewayTest(unittest.TestCase):
             result = self.request(client, agent, "tools/call", {"name": "calendar__write"})
             self.assertTrue(result["isError"], result)
             self.assertEqual(self.backend.calls, [("write", {})])
+            # the next call opens a fresh session
+            self.backend.call_tool = original
+            result = self.request(client, agent, "tools/call", {"name": "calendar__read"})
+            self.assertFalse(result["isError"], result)
+            self.assertEqual(self.opened, 2)
 
     def test_empty_allow_denies_every_tool(self):
         self.config["principals"]["reader"]["allow"] = []
@@ -218,160 +213,6 @@ class GatewayTest(unittest.TestCase):
         Path(self.directory.name, "reader").write_text("Bearer agent-secret")
         with self.assertRaises(RuntimeError):
             gateway.create_app(self.config)
-
-    def test_approval_denial_timeout_error_and_missing_command(self):
-        for command in [[], ["/does/not/exist"], [sys.executable, "-c", "raise SystemExit(1)"],
-                        [sys.executable, "-c", "import time; time.sleep(60)"]]:
-            with self.subTest(command=command):
-                self.config["approval_command"] = command
-                self.config["approval_timeout"] = 0.1
-                with self.client() as client:
-                    session = self.initialize(client)
-                    result = self.request(client, session, "tools/call", {
-                        "name": "calendar__write", "arguments": {"approve": True},
-                    })
-                    self.assertTrue(result["isError"])
-                    self.assertEqual(self.backend.calls, [])
-
-    # one live client: the http stack, the session and its initialize, which
-    # every elicitation test needs before it can call a tool
-    @contextlib.asynccontextmanager
-    async def session(self, url, callback=None, principal="agent"):
-        async with (
-            httpx.AsyncClient(headers=self.headers(principal), trust_env=False) as http,
-            streamable_http_client(url, http_client=http) as (read, write, session_id),
-            ClientSession(read, write, elicitation_callback=callback) as session,
-        ):
-            await session.initialize()
-            yield session, session_id
-
-    @contextlib.contextmanager
-    def live_gateway(self):
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            listener.listen()
-            server = uvicorn.Server(uvicorn.Config(
-                gateway.create_app(self.config), log_level="error", timeout_graceful_shutdown=1,
-            ))
-            thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]})
-            thread.start()
-            try:
-                deadline = time.monotonic() + 5
-                while not server.started and thread.is_alive() and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                self.assertTrue(server.started, "gateway failed to start")
-                yield f"http://127.0.0.1:{listener.getsockname()[1]}/mcp/"
-            finally:
-                server.should_exit = True
-                thread.join(timeout=5)
-                self.assertFalse(thread.is_alive(), "gateway failed to stop")
-
-    def test_client_elicitation_over_http(self):
-        arguments = {"summary": "untrusted\ntext", "nested": {"x": [1, 2]}}
-        for action in ["accept", "decline", "cancel", "timeout", "error", "unsupported"]:
-            with self.subTest(action=action):
-                self.backend.calls.clear()
-                self.config["approval_mode"] = "client"
-                self.config["approval_timeout"] = 0.1 if action == "timeout" else 2
-                prompts = []
-
-                async def callback(context, params):
-                    prompts.append(params.message)
-                    if action == "timeout":
-                        await asyncio.sleep(0.3)
-                        return types.ElicitResult(action="accept")
-                    if action == "error":
-                        return types.ErrorData(code=-32603, message="elicitation failed")
-                    return types.ElicitResult(action=action)
-
-                async def run(url):
-                    callbacks = None if action == "unsupported" else callback
-                    async with self.session(url, callbacks) as (session, _):
-                        result = await session.call_tool("calendar__write", arguments)
-                        self.assertEqual(result.isError, action != "accept", result)
-
-                with self.live_gateway() as url:
-                    asyncio.run(run(url))
-                if action == "unsupported":
-                    self.assertEqual(prompts, [])
-                else:
-                    self.assertEqual(len(prompts), 1)
-                    self.assertEqual(json.loads(prompts[0].removeprefix("Approve this tool call? ")), {
-                        "principal": "agent", "server": "calendar", "tool": "write", "arguments": arguments,
-                    })
-                self.assertEqual(self.backend.calls, [("write", arguments)] if action == "accept" else [])
-
-    def test_legacy_form_capability_and_url_only_client(self):
-        for capability, supported in [({}, True), ({"form": {}}, True), ({"url": {}}, False)]:
-            with self.subTest(capability=capability):
-                session = SimpleNamespace(
-                    client_params=SimpleNamespace(capabilities=types.ClientCapabilities(elicitation=capability)),
-                    elicit_form=AsyncMock(return_value=types.ElicitResult(action="accept")),
-                )
-                context = SimpleNamespace(session=session, request_id=7)
-                if supported:
-                    asyncio.run(gateway.approve_client(context, 1, {"tool": "write"}))
-                    self.assertEqual(session.elicit_form.await_args.kwargs["related_request_id"], 7)
-                else:
-                    with self.assertRaises(PermissionError):
-                        asyncio.run(gateway.approve_client(context, 1, {"tool": "write"}))
-                    session.elicit_form.assert_not_awaited()
-
-    def test_client_prompts_do_not_replace_authorization_or_host_approval(self):
-        for mode, principal in [("client", "reader"), ("host", "agent")]:
-            with self.subTest(mode=mode, principal=principal):
-                self.config["approval_mode"] = mode
-                prompts = []
-
-                async def callback(context, params):
-                    prompts.append(params.message)
-                    return types.ElicitResult(action="accept")
-
-                async def run(url):
-                    async with self.session(url, callback, principal) as (session, _):
-                        result = await session.call_tool("calendar__write", {})
-                        self.assertTrue(result.isError)
-
-                with self.live_gateway() as url:
-                    asyncio.run(run(url))
-                self.assertEqual(prompts, [])
-                self.assertEqual(self.backend.calls, [])
-
-    def test_other_principal_cannot_answer_elicitation(self):
-        self.config["approval_mode"] = "client"
-        prompts = []
-
-        async def run(url):
-            async def callback(context, params):
-                prompts.append(params.message)
-                response = await http.post(url, headers=self.headers("reader", session_id()), json={
-                    "jsonrpc": "2.0", "id": context.request_id, "result": {"action": "accept"},
-                })
-                self.assertEqual(response.status_code, 404)
-                return types.ElicitResult(action="decline")
-
-            async with self.session(url, callback) as (session, session_id):
-                result = await session.call_tool("calendar__write", {})
-                self.assertTrue(result.isError)
-
-        with self.live_gateway() as url:
-            asyncio.run(run(url))
-        self.assertEqual(len(prompts), 1)
-        self.assertEqual(self.backend.calls, [])
-
-    def test_host_approval_receives_exact_invocation(self):
-        decision = str(Path(self.directory.name, "decision.json"))
-        self.config["approval_command"] = [sys.executable, "-c",
-            "import sys; from pathlib import Path; Path(sys.argv[1]).write_bytes(sys.stdin.buffer.read())", decision]
-        arguments = {"summary": "untrusted\ntext", "nested": {"x": [1, 2]}}
-        with self.client() as client:
-            session = self.initialize(client)
-            result = self.request(client, session, "tools/call", {"name": "calendar__write", "arguments": arguments})
-            self.assertFalse(result["isError"])
-        self.assertEqual(json.loads(Path(decision).read_text()), {
-            "principal": "agent", "server": "calendar", "tool": "write", "arguments": arguments,
-        })
-        self.assertEqual(self.backend.calls, [("write", arguments)])
 
 
 class TransportTest(unittest.TestCase):

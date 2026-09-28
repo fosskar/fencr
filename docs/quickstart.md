@@ -65,9 +65,7 @@ The agent still needs to select OpenCode Go. See
 together, host commands and raw guest secrets.
 
 For MCP tools, see the [optional gateway](mcp-gateway.md). It automatically
-wires per-sandbox credentials, with explicit tool grants and host-side approvals
-by default. Client-mediated same-chat approval is an explicit, less secure
-opt-in; there is no bundled human approval UI.
+wires per-sandbox credentials; each sandbox calls only the tools granted to it.
 
 ## workload and resource limits
 

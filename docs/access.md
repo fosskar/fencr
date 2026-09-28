@@ -80,7 +80,7 @@ configuration means changing the system configuration and running
 `nixos-rebuild`.
 
 For the optional [MCP gateway](mcp-gateway.md), `fencr status` shows HTTP
-requests to `mcp.fencr`, not individual tool calls or approval decisions.
+requests to `mcp.fencr`, not individual tool calls.
 Gateway diagnostics are in `journalctl -u fencr-mcp-gateway.service`.
 
 ## host root, stated plainly
