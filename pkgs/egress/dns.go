@@ -110,10 +110,17 @@ func (conn dnsStream) Write(buffer []byte) (int, error) {
 	return conn.Conn.Write(buffer)
 }
 
+// every tcp connection to resolved's stub counts against one limit it
+// shares with the host and every other sandbox. a truncated udp answer is
+// the one reason to be here, so a sandbox needs few at once
+const maxStreams = 16
+
 // a truncated udp answer sends the guest to tcp, so that road has to exist
-// too, screened the same way: one message in, one answer out
+// too, screened the same way: one message in, one answer out. the resolver
+// is dialled for the first query, so a connection that sends nothing holds
+// only this unit's slot
 func forwardDNSStream(listener *net.TCPListener, resolver string, rules *screen) {
-	slots := make(chan struct{}, maxQueries)
+	slots := make(chan struct{}, maxStreams)
 	for {
 		conn, err := listener.AcceptTCP()
 		if err != nil {
@@ -129,18 +136,13 @@ func forwardDNSStream(listener *net.TCPListener, resolver string, rules *screen)
 		go func() {
 			defer func() { <-slots }()
 			defer conn.Close()
-			upstream, err := net.DialTimeout("tcp", resolver, 2*time.Second)
-			if err != nil {
-				log.Printf("dns: %v", err)
-				return
-			}
-			defer upstream.Close()
-			relayStream(dnsStream{conn}, dnsStream{upstream}, rules)
+			relayStream(dnsStream{conn}, resolver, rules)
 		}()
 	}
 }
 
-func relayStream(guest, upstream io.ReadWriter, rules *screen) {
+func relayStream(guest io.ReadWriter, resolver string, rules *screen) {
+	var upstream io.ReadWriter
 	for {
 		query, err := readMessage(guest)
 		if err != nil {
@@ -152,6 +154,15 @@ func relayStream(guest, upstream io.ReadWriter, rules *screen) {
 				return
 			}
 			continue
+		}
+		if upstream == nil {
+			conn, err := net.DialTimeout("tcp", resolver, 2*time.Second)
+			if err != nil {
+				log.Printf("dns: %v", err)
+				return
+			}
+			defer conn.Close()
+			upstream = dnsStream{conn}
 		}
 		if writeMessage(upstream, query) != nil {
 			return

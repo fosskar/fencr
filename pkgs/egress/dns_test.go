@@ -188,7 +188,9 @@ func TestTheUDPRelayScreens(t *testing.T) {
 	}
 }
 
-func dnsRelayPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+// a guest connection to the relay, and the resolver's end of the
+// connection the relay opens once the guest has asked something
+func dnsRelayPair(t *testing.T) (*net.TCPConn, func() (*net.TCPConn, error)) {
 	t.Helper()
 	upstream, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -206,33 +208,36 @@ func dnsRelayPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { client.Close() })
-	if err := upstream.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := client.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	server, err := upstream.AcceptTCP()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { server.Close() })
-	for _, conn := range []*net.TCPConn{client, server} {
-		if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
-			t.Fatal(err)
+	accept := func() (*net.TCPConn, error) {
+		if err := upstream.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			return nil, err
 		}
+		server, err := upstream.AcceptTCP()
+		if err != nil {
+			return nil, err
+		}
+		t.Cleanup(func() { server.Close() })
+		return server, server.SetDeadline(time.Now().Add(2 * time.Second))
 	}
-	return client, server
+	return client, accept
 }
 
-func TestDNSRelayClientDisconnect(t *testing.T) {
-	client, server := dnsRelayPair(t)
+// a connection that asks nothing costs the shared resolver nothing
+func TestDNSRelayDialsOnlyForAQuery(t *testing.T) {
+	client, accept := dnsRelayPair(t)
 	client.Close()
-	var buffer [1]byte
-	if _, err := server.Read(buffer[:]); err != io.EOF {
-		t.Fatalf("disconnected client did not propagate EOF: %v", err)
+	if server, err := accept(); err == nil {
+		server.Close()
+		t.Fatal("the relay dialled the resolver for a connection that sent no query")
 	}
 }
 
 func TestDNSRelayScreensStreams(t *testing.T) {
-	client, server := dnsRelayPair(t)
+	client, accept := dnsRelayPair(t)
+	var server *net.TCPConn
 	for _, test := range []struct {
 		name    string
 		address net.IP
@@ -244,6 +249,12 @@ func TestDNSRelayScreensStreams(t *testing.T) {
 		query := dnsQuery(test.name, 1)
 		if err := writeMessage(client, query); err != nil {
 			t.Fatal(err)
+		}
+		if server == nil {
+			var err error
+			if server, err = accept(); err != nil {
+				t.Fatal(err)
+			}
 		}
 		asked, err := readMessage(server)
 		if err != nil || !bytes.Equal(asked, query) {
@@ -268,28 +279,61 @@ func TestDNSRelayScreensStreams(t *testing.T) {
 }
 
 func TestDNSRelayIdleTimeout(t *testing.T) {
-	client, server := dnsRelayPair(t)
-	for _, conn := range []*net.TCPConn{client, server} {
-		if err := conn.SetDeadline(time.Now().Add(35 * time.Second)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var buffer [1]byte
-	for _, conn := range []*net.TCPConn{client, server} {
-		if _, err := conn.Read(buffer[:]); err != io.EOF {
-			t.Fatalf("idle relay did not close connection: %v", err)
-		}
-	}
-}
-
-func TestDNSRelayUpstreamDisconnect(t *testing.T) {
-	client, server := dnsRelayPair(t)
-	server.Close()
-	if err := writeMessage(client, dnsQuery("public.test", 1)); err != nil {
+	client, _ := dnsRelayPair(t)
+	if err := client.SetDeadline(time.Now().Add(35 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	var buffer [1]byte
 	if _, err := client.Read(buffer[:]); err != io.EOF {
+		t.Fatalf("idle relay did not close connection: %v", err)
+	}
+}
+
+func TestDNSRelayUpstreamDisconnect(t *testing.T) {
+	client, accept := dnsRelayPair(t)
+	if err := writeMessage(client, dnsQuery("public.test", 1)); err != nil {
+		t.Fatal(err)
+	}
+	server, err := accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+	var buffer [1]byte
+	if _, err := client.Read(buffer[:]); err != io.EOF {
 		t.Fatalf("disconnected upstream did not propagate EOF: %v", err)
+	}
+}
+
+// past the cap the connection is closed rather than queued
+func TestDNSRelayCapsStreams(t *testing.T) {
+	relay, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+	go forwardDNSStream(relay, "127.0.0.1:1", rules)
+	var held []net.Conn
+	defer func() {
+		for _, conn := range held {
+			conn.Close()
+		}
+	}()
+	for range maxStreams {
+		conn, err := net.Dial("tcp", relay.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, conn)
+	}
+	extra, err := net.Dial("tcp", relay.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	extra.SetDeadline(time.Now().Add(2 * time.Second))
+	var buffer [1]byte
+	if _, err := extra.Read(buffer[:]); err != io.EOF {
+		t.Fatalf("a connection past the cap was kept: %v", err)
 	}
 }
