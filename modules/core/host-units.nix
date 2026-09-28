@@ -90,6 +90,15 @@ in
               ExecStart = pkgs.writeShellScript "fencr-${instance.name}-trust" ''
                 exec ${pkgs.gnutar}/bin/tar -C "$CREDENTIALS_DIRECTORY" -cf - .
               '';
+              # the certificate is public, but every connection is a unit pid 1
+              # starts, and one that is starting holds up a stop of the guest
+              ExecStopPost =
+                "+"
+                + pkgs.writeShellScript "fencr-${instance.name}-trust-served" ''
+                  if [ "$SERVICE_RESULT" = success ]; then
+                    exec ${pkgs.systemd}/bin/systemctl --no-block stop ${units.trust}.socket
+                  fi
+                '';
             };
           };
         }
@@ -130,9 +139,9 @@ in
           };
         }
         // lib.optionalAttrs trusted {
+          # like the secrets relay: one fetch per start of the guest
           ${units.trust} = {
             description = "certificate authority for ${instance.name}";
-            wantedBy = [ "sockets.target" ];
             socketConfig = {
               ListenStream = "${vsockOf instance.name}_${toString trustPort}";
               SocketMode = "0666";

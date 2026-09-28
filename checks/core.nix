@@ -658,6 +658,7 @@ assert lib.assertMsg (
     )).sockets."fencr-sbx-secrets"
       ? wantedBy
   )
+  && !(units.sockets."fencr-sbx-trust" ? wantedBy)
 ) "unit check: the relays drifted";
 assert lib.assertMsg (
   occurrences ''oifname "br-sbx" ip daddr 10.11.0.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''

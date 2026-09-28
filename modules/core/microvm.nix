@@ -28,9 +28,11 @@ in
       # the sandbox's tables are what confine the guest: a ruleset that failed to
       # load, or was stopped, must not leave the guest running unconfined
       requires = [ "nftables.service" ];
-      # the raw-secrets relay serves one fetch per boot and then closes; every
-      # start of the guest, restarts included, pulls it in again
-      wants = lib.optional (instance.secrets != { }) "${(unitsOf instance.name).secrets}.socket";
+      # the relays serve one fetch per boot and then close; every start of
+      # the guest, restarts included, pulls them in again
+      wants =
+        lib.optional (instance.secrets != { }) "${(unitsOf instance.name).secrets}.socket"
+        ++ lib.optional (instance.credentials != [ ]) "${(unitsOf instance.name).trust}.socket";
       after = [
         "network.target"
         "nftables.service"

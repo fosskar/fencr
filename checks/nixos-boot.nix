@@ -388,6 +388,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # no guest process, root included, fetches the secrets again
       host.fail(f"{ssh} '${pkgs.socat}/bin/socat -u VSOCK-CONNECT:2:5 /dev/null'", timeout=60)
       host.fail("systemctl is-active fencr-sbx-secrets.socket")
+      host.fail(f"{ssh} '${pkgs.socat}/bin/socat -u VSOCK-CONNECT:2:6 /dev/null'", timeout=60)
+      host.fail("systemctl is-active fencr-sbx-trust.socket")
       host.succeed(f"{ssh} 'stat -c %a /run/agent-secrets/raw' | grep -Fx 400", timeout=60)
       host.succeed("test \"$(stat -c %U:%a /run/fencr-sbx/vsock_5)\" = root:666")
       # the sandbox's vsock sockets belong to its user
