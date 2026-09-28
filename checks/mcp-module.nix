@@ -16,6 +16,11 @@ let
               url = "http://127.0.0.1:8765/mcp/";
               tokenFile = "/run/secrets/calendar";
             };
+            servers.time.command = [
+              "/bin/mcp-time"
+              "--format"
+              "%H:%M"
+            ];
           };
           fencr.sandboxes.agent.mcp.enable = true;
           fencr.sandboxes.reader.mcp = {
@@ -34,6 +39,8 @@ let
     );
   credential = config.fencr.credentials.mcp-agent;
   gateway = config.systemd.services.fencr-mcp-gateway;
+  timeSocket = config.systemd.sockets.fencr-mcp-backend-time;
+  timeService = config.systemd.services."fencr-mcp-backend-time@";
 in
 assert errors config == [ ];
 assert lib.any (entry: !entry.assertion && lib.hasInfix "mcpGateway.approvalMode" entry.message)
@@ -56,6 +63,37 @@ assert
     "principal-reader:/var/lib/fencr-mcp/reader"
     "backend-calendar:/run/secrets/calendar"
   ];
+assert lib.elem "fencr-mcp-backend-time.socket" gateway.requires;
+assert lib.elem "fencr-mcp-backend-time.socket" gateway.after;
+assert gateway.serviceConfig.SupplementaryGroups == [ "fencr-mcp" ];
+assert config.users.groups ? fencr-mcp;
+assert timeSocket.listenStreams == [ "/run/fencr-mcp/time.sock" ];
+assert
+  timeSocket.socketConfig.Accept
+  && timeSocket.socketConfig.SocketGroup == "fencr-mcp"
+  && timeSocket.socketConfig.SocketMode == "0660";
+assert timeService.serviceConfig.ExecStart == ''"/bin/mcp-time" "--format" "%%H:%%M"'';
+assert timeService.serviceConfig.DynamicUser;
+assert !(timeService.serviceConfig ? LoadCredential);
+assert
+  timeService.serviceConfig.StandardInput == "socket"
+  && timeService.serviceConfig.StandardOutput == "socket";
+assert
+  errors (evaluate {
+    fencr.mcpGateway.servers.calendar.command = [ "/bin/calendar" ];
+  }) != [ ];
+assert
+  errors (evaluate {
+    fencr.mcpGateway.servers.time.command = lib.mkForce [ "mcp-time" ];
+  }) != [ ];
+assert
+  errors (evaluate {
+    fencr.mcpGateway.servers.time.tokenFile = "/run/secrets/time";
+  }) != [ ];
+assert
+  errors (evaluate {
+    fencr.mcpGateway.servers.calendar.tokenFile = lib.mkForce null;
+  }) != [ ];
 assert
   errors (evaluate {
     fencr.sandboxes.agent.credentials = [ "mcp-reader" ];
@@ -76,6 +114,7 @@ pkgs.runCommand "fencr-mcp-module" { } ''
   assert config["principals"]["agent"]["allow"] == []
   assert config["principals"]["reader"]["allow"] == ["calendar.read"]
   assert config["servers"]["calendar"]["token_credential"] == "backend-calendar"
+  assert config["servers"]["time"] == {"socket": "/run/fencr-mcp/time.sock", "hidden_tools": []}
   assert "approval_mode" not in config
   PY
   touch "$out"

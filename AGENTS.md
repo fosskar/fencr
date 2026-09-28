@@ -70,8 +70,14 @@ configuration, SSH access and the checkpoint commands.
   `pkgs/mcp-gateway/`, a Python program using the MCP SDK. Enabled sandboxes call
   `https://mcp.fencr/mcp/` through their egress unit, which injects a per-sandbox
   token from `/var/lib/fencr-mcp/<name>`. `gateway.py` keeps separate session
-  registries per principal and forwards to explicit host-loopback backends
-  with host-held tokens. Its `Sessions` keeps a backend session open for a
+  registries per principal and forwards to explicit backends: `url` ones on
+  host loopback with host-held tokens, `command` ones over the stdio
+  transport through `socket_transport`. A stdio backend is not a child of
+  the gateway: `fencr-mcp-backend-<server>.socket` holds
+  `/run/fencr-mcp/<server>.sock` with `Accept=yes`, group `fencr-mcp` (the
+  gateway's supplementary group, nothing else's), and starts
+  `fencr-mcp-backend-<server>@.service` per connection under its own
+  dynamic user, so the backend cannot read the gateway's tokens. Its `Sessions` keeps a backend session open for a
   30-second idle window, keyed by principal and backend, never by backend
   alone: a sandbox reuses only what it opened itself. Sessions open on first use,
   not at startup, so a backend that is down cannot keep the gateway from
@@ -176,8 +182,10 @@ configuration, SSH access and the checkpoint commands.
   tool listing is retried once on a fresh session, a failed tool call is
   not: the backend may have acted. Generated MCP credentials set
   `substitutePlaceholder = false` so tool arguments cannot receive tokens
-  through placeholder substitution. Backend URLs must use host IPv4
-  loopback; guests cannot reach the gateway or backends directly by default.
+  through placeholder substitution. A backend sets exactly one of `url`
+  (host IPv4 loopback, with `tokenFile`) and `command` (absolute executable,
+  no `tokenFile`); guests cannot reach the gateway or backends directly by
+  default.
 - A sandbox name is letters, digits, `_` and `-`, at most 11 characters, checked
   once in `instance.nix`: every derived name is this one with a prefix, and
   `tap-<name>` must fit `IFNAMSIZ`. Assertions and log prefixes say `fencr:`,
@@ -239,7 +247,7 @@ nix flake check
   own `go test` cases in its check phase.
 - `checks.mcp-gateway` runs `pkgs/mcp-gateway/test_gateway.py` through
   `tests.contract`, covering authorization, session isolation, backend session
-  reuse and its per-principal keying, retries and backend transport. `checks/mcp-module.nix` verifies gateway
+  reuse and its per-principal keying, retries and both backend transports. `checks/mcp-module.nix` verifies gateway
   options, credentials, unit wiring and validation.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.
@@ -251,7 +259,8 @@ nix flake check
   domain egress with a deny entry, credential injection with `allow`
   entries and the access log, the guest seeing the placeholder rather than the
   value in an echoed response, checkpoints and restore, and a clean stop.
-  It also checks MCP tool filtering, session isolation,
+  It also checks MCP tool filtering, session isolation, a stdio backend's
+  process per sandbox and its lack of access to the gateway's tokens,
   token secrecy and persistence, and blocked direct gateway/backend access.
   It checks guest-local logs, serial suppression, Firecracker diagnostics,
   API permissions, and bounded `fencr status` behavior with a stopped VMM

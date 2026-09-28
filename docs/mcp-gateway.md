@@ -47,7 +47,47 @@ whatever listens there. While the backend is down, restarting or not yet
 started, any host user can bind that port, receive the token and answer in
 the backend's place, with tool listings and results every participating
 sandbox sees. Give the backend a port below 1024, or a systemd socket unit that
-holds the port while the backend is down.
+holds the port while the backend is down, or run it as a stdio backend.
+
+## stdio backends
+
+A backend that speaks MCP over stdin and stdout needs no port and no token:
+
+```nix
+fencr.mcpGateway.servers.time.command = [
+  "${pkgs.mcp-server-time}/bin/mcp-server-time"
+];
+```
+
+`command` replaces `url` and `tokenFile`; a backend sets one or the other.
+The first element must be an absolute path.
+
+fencr does not run the command inside the gateway. `fencr-mcp-backend-time.socket`
+holds `/run/fencr-mcp/time.sock`, which only the gateway may connect to. For
+each connection systemd starts `fencr-mcp-backend-time@.service` with that
+connection as the command's stdin and stdout, so:
+
+- each sandbox gets its own backend process, reused like an HTTP session and
+  ended when the gateway closes it;
+- the process runs under its own dynamic user and cannot read the gateway's
+  sandbox or backend tokens;
+- no host user can take its place: pid 1 holds the socket even while no
+  process runs.
+
+The unit uses the same hardening as fencr's other host units, with no network
+restriction. Add what the backend needs, such as credentials or network
+limits, to its template:
+
+```nix
+systemd.services."fencr-mcp-backend-time@".serviceConfig = {
+  LoadCredential = [ "api-key:/run/secrets/time-api-key" ];
+  IPAddressDeny = "any";
+};
+```
+
+The hardening includes `MemoryDenyWriteExecute`, which a JIT runtime such as
+Node.js does not start under; set it to `false` there for such a backend.
+The command's stderr goes to the journal of its instance unit.
 
 Configure the agent's MCP client to use **`https://mcp.fencr/mcp/`**, including
 the trailing slash. The payload still owns that application setting. No real

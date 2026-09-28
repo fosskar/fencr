@@ -11,11 +11,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import uvicorn
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.lowlevel import Server
+from mcp.shared.message import SessionMessage
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
@@ -34,19 +36,61 @@ def matches(name: str, patterns: list[str]) -> bool:
 
 
 @contextlib.asynccontextmanager
+async def socket_transport(path: str):
+    """The stdio transport, over a unix socket.
+
+    systemd accepts each connection and hands it to a fresh backend process
+    as its stdin and stdout, so the messages are the stdio transport's:
+    one JSON-RPC message per line.
+    """
+    read_writer, read_stream = anyio.create_memory_object_stream(0)
+    write_stream, write_reader = anyio.create_memory_object_stream(0)
+    async with await anyio.connect_unix(path) as connection:
+        async def reader():
+            async with read_writer:
+                buffer = b""
+                async for chunk in connection:
+                    lines = (buffer + chunk).split(b"\n")
+                    buffer = lines.pop()
+                    for line in lines:
+                        try:
+                            message = types.JSONRPCMessage.model_validate_json(line)
+                        except Exception as error:
+                            await read_writer.send(error)
+                            continue
+                        await read_writer.send(SessionMessage(message))
+
+        async def writer():
+            async with write_reader:
+                async for item in write_reader:
+                    line = item.message.model_dump_json(by_alias=True, exclude_none=True)
+                    await connection.send(line.encode() + b"\n")
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(reader)
+            group.start_soon(writer)
+            try:
+                yield read_stream, write_stream
+            finally:
+                group.cancel_scope.cancel()
+
+
+@contextlib.asynccontextmanager
 async def downstream(server: dict[str, Any]):
-    async with (
-        httpx.AsyncClient(
-            timeout=httpx.Timeout(30, read=300),
-            headers={"Authorization": f"Bearer {secret(server['token_credential'])}"},
-            follow_redirects=False,
-            trust_env=False,
-        ) as http_client,
-        streamable_http_client(server["url"], http_client=http_client) as (
-            read, write, _,
-        ),
-        ClientSession(read, write) as session,
-    ):
+    async with contextlib.AsyncExitStack() as stack:
+        if "socket" in server:
+            read, write = await stack.enter_async_context(socket_transport(server["socket"]))
+        else:
+            http_client = await stack.enter_async_context(httpx.AsyncClient(
+                timeout=httpx.Timeout(30, read=300),
+                headers={"Authorization": f"Bearer {secret(server['token_credential'])}"},
+                follow_redirects=False,
+                trust_env=False,
+            ))
+            read, write, _ = await stack.enter_async_context(
+                streamable_http_client(server["url"], http_client=http_client)
+            )
+        session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
         yield session
 

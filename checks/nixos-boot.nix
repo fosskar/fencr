@@ -167,6 +167,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           service = "mcp-backend.service";
           hiddenTools = [ "hidden" ];
         };
+        servers.local.command = [
+          "${pkgs.python3}/bin/python3"
+          "${./mcp-stdio-backend.py}"
+        ];
       };
       systemd.services.mcp-backend.serviceConfig.ExecStart =
         "${pkgs.python3}/bin/python3 ${./mcp-backend.py}";
@@ -174,7 +178,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       fencr.sandboxes.sbx = {
         mcp = {
           enable = true;
-          allow = [ "test.*" ];
+          allow = [
+            "test.*"
+            "local.*"
+          ];
         };
         id = 0;
         vcpu = 1;
@@ -267,7 +274,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       fencr.sandboxes.open = {
         mcp = {
           enable = true;
-          allow = [ "test.read" ];
+          allow = [
+            "test.read"
+            "local.*"
+          ];
         };
         id = 1;
         vcpu = 1;
@@ -632,6 +642,28 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           assert off_path.strip() == "403", (path, off_path)
       write = {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "test__write", "arguments": {}}}
       assert "called write" in mcp(ssh, write, session)
+
+      # a stdio backend: one process per sandbox, under its own user, which
+      # cannot read the gateway's tokens
+      def probe(transport, session):
+          answer = mcp(transport, {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                                   "params": {"name": "local__probe", "arguments": {}}}, session)
+          match = re.search(r'probe (\{[^}]*\})', answer.replace('\\"', '"'))
+          assert match is not None, answer
+          return json.loads(match.group(1))
+
+      assert "local__probe" in tools, tools
+      first = probe(ssh, session)
+      assert first == probe(ssh, session), "a sandbox reuses its own backend process"
+      assert not first["gateway"] and not first["tokens"], first
+      answer = mcp(ssh_open, initialize)
+      match = re.search(r"(?im)^mcp-session-id: (\S+)", answer)
+      assert match is not None, answer
+      open_session = match.group(1)
+      mcp(ssh_open, {"jsonrpc": "2.0", "method": "notifications/initialized"}, open_session)
+      assert probe(ssh_open, open_session)["pid"] != first["pid"]
+      host.succeed("systemctl list-units --no-legend 'fencr-mcp-backend-local@*' | grep -c running | grep -Fx 2")
+      host.succeed("stat -c '%U:%G %a' /run/fencr-mcp/local.sock | grep -Fx 'root:fencr-mcp 660'")
       for transport in [ssh, ssh_open]:
           for port in [8766, 8764]:
               status, output = host.execute(transport + f" 'curl --silent --show-error --fail --max-time 3 http://10.11.0.1:{port}/mcp/'", timeout=30)

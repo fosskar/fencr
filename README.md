@@ -54,7 +54,7 @@ them on the host:
   replaces the key with the placeholder on the way back. Presets for Anthropic,
   OpenAI, OpenRouter and OpenCode Go/Zen; secret files, Clan vars and host
   commands as sources.
-- **MCP tool permissions.** Put existing MCP servers behind one gateway that
+- **MCP tool permissions.** Put existing MCP servers, HTTP or stdio, behind one gateway that
   grants tools per sandbox — allow calendar lookups, not creating events.
   Backend tokens stay on the host.
 - **Outbound access you grant by name.** Sandboxes get public IPv4 and DNS by

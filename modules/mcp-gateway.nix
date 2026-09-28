@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }:
 let
@@ -11,16 +12,32 @@ let
   credentialName = name: "mcp-${name}";
   tokenPath = name: "/var/lib/fencr-mcp/${name}";
   gateway = pkgs.callPackage ../pkgs/mcp-gateway { };
-  backendUnits = lib.filter (unit: unit != null) (
-    lib.mapAttrsToList (_: server: server.service) cfg.servers
-  );
+  httpServers = lib.filterAttrs (_: server: server.url != null) cfg.servers;
+  stdioServers = lib.filterAttrs (_: server: server.command != null) cfg.servers;
+  # the prefix keeps these units and the dynamic user systemd derives from
+  # them apart from the gateway's own units
+  stdioUnit = name: "fencr-mcp-backend-${name}";
+  stdioSocket = name: "/run/fencr-mcp/${name}.sock";
+  backendUnits =
+    lib.filter (unit: unit != null) (lib.mapAttrsToList (_: server: server.service) cfg.servers)
+    ++ lib.mapAttrsToList (name: _: "${stdioUnit name}.socket") stdioServers;
   gatewayConfig = pkgs.writeText "fencr-mcp-gateway.json" (
     builtins.toJSON {
-      servers = lib.mapAttrs (name: server: {
-        inherit (server) url;
-        token_credential = "backend-${name}";
-        hidden_tools = server.hiddenTools;
-      }) cfg.servers;
+      servers = lib.mapAttrs (
+        name: server:
+        {
+          hidden_tools = server.hiddenTools;
+        }
+        // (
+          if server.command != null then
+            { socket = stdioSocket name; }
+          else
+            {
+              inherit (server) url;
+              token_credential = "backend-${name}";
+            }
+        )
+      ) cfg.servers;
       principals = lib.mapAttrs (name: sandbox: {
         inherit (sandbox.mcp) allow;
         token_credential = "principal-${name}";
@@ -60,13 +77,30 @@ in
         lib.types.submodule {
           options = {
             url = lib.mkOption {
-              type = lib.types.str;
+              type = lib.types.nullOr lib.types.str;
+              default = null;
               example = "http://127.0.0.1:8765/mcp/";
-              description = "streamable HTTP backend on host IPv4 loopback; it must bind only to loopback and require its token.";
+              description = "streamable HTTP backend on host IPv4 loopback; it must bind only to loopback and require its token. set this or command.";
             };
             tokenFile = lib.mkOption {
-              type = lib.types.path;
-              description = "host file containing the backend's bare bearer token, never granted to a sandbox.";
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = "host file containing the url backend's bare bearer token, never granted to a sandbox.";
+            };
+            command = lib.mkOption {
+              type = lib.types.nullOr (lib.types.nonEmptyListOf lib.types.str);
+              default = null;
+              example = [
+                "/run/current-system/sw/bin/mcp-server-time"
+              ];
+              description = ''
+                stdio backend: an absolute executable and its arguments. systemd
+                runs it as fencr-mcp-backend-<name>@.service, one process per
+                sandbox session, with the connection from the gateway as its stdin
+                and stdout, under its own dynamic user. it cannot read the gateway's
+                tokens; give it credentials, network limits and other settings
+                through systemd.services."fencr-mcp-backend-<name>@". set this or url.
+              '';
             };
             service = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
@@ -130,10 +164,23 @@ in
           message = "fencr.mcpGateway server names must use letters, digits, hyphens or underscores, without double underscores.";
         }
         {
+          assertion = lib.all (server: (server.url == null) != (server.command == null)) (
+            lib.attrValues cfg.servers
+          );
+          message = "fencr.mcpGateway backends must set exactly one of url and command.";
+        }
+        {
           assertion = lib.all (
-            server: builtins.match "http://127[.]0[.]0[.]1:[0-9]+/[^?#]*" server.url != null
-          ) (lib.attrValues cfg.servers);
-          message = "fencr.mcpGateway backends must use explicit http://127.0.0.1:<port>/<path> URLs.";
+            server:
+            builtins.match "http://127[.]0[.]0[.]1:[0-9]+/[^?#]*" server.url != null && server.tokenFile != null
+          ) (lib.attrValues httpServers);
+          message = "fencr.mcpGateway url backends must use explicit http://127.0.0.1:<port>/<path> URLs and a tokenFile.";
+        }
+        {
+          assertion = lib.all (
+            server: lib.hasPrefix "/" (lib.head server.command) && server.tokenFile == null
+          ) (lib.attrValues stdioServers);
+          message = "fencr.mcpGateway command backends must name an absolute executable and take no tokenFile.";
         }
       ]
       ++ lib.mapAttrsToList (name: sandbox: {
@@ -163,13 +210,30 @@ in
       # activation
       systemd.tmpfiles.rules = [ "d /var/lib/fencr-mcp 0700 root root -" ];
 
+      users.groups.fencr-mcp = { };
       # pid 1 holds the port the egress units send principal tokens to, so no
-      # host user can take it while the gateway restarts
-      systemd.sockets.fencr-mcp-gateway = {
-        description = "per-sandbox MCP gateway";
-        wantedBy = [ "sockets.target" ];
-        listenStreams = [ "127.0.0.1:${toString cfg.port}" ];
-      };
+      # host user can take it while the gateway restarts. it holds the stdio
+      # backends' sockets too, in a directory only it writes, so the chown to
+      # the group is not a race; only the gateway is in that group
+      systemd.sockets = {
+        fencr-mcp-gateway = {
+          description = "per-sandbox MCP gateway";
+          wantedBy = [ "sockets.target" ];
+          listenStreams = [ "127.0.0.1:${toString cfg.port}" ];
+        };
+      }
+      // lib.mapAttrs' (
+        name: _:
+        lib.nameValuePair (stdioUnit name) {
+          description = "MCP backend ${name}";
+          listenStreams = [ (stdioSocket name) ];
+          socketConfig = {
+            Accept = true;
+            SocketGroup = "fencr-mcp";
+            SocketMode = "0660";
+          };
+        }
+      ) stdioServers;
 
       systemd.services = {
         fencr-mcp-tokens = {
@@ -211,6 +275,7 @@ in
           environment.MCP_GATEWAY_CONFIG = gatewayConfig;
           serviceConfig = core.hardened // {
             DynamicUser = true;
+            SupplementaryGroups = [ "fencr-mcp" ];
             ExecStart = lib.getExe gateway;
             Restart = "on-failure";
             # every mcp-enabled sandbox drives this one process
@@ -223,10 +288,23 @@ in
             ];
             LoadCredential =
               lib.mapAttrsToList (name: _: "principal-${name}:${tokenPath name}") members
-              ++ lib.mapAttrsToList (name: server: "backend-${name}:${server.tokenFile}") cfg.servers;
+              ++ lib.mapAttrsToList (name: server: "backend-${name}:${server.tokenFile}") httpServers;
           };
         };
       }
+      // lib.mapAttrs' (
+        name: server:
+        lib.nameValuePair "${stdioUnit name}@" {
+          description = "MCP backend ${name}";
+          serviceConfig = core.hardened // {
+            DynamicUser = true;
+            ExecStart = utils.escapeSystemdExecArgs server.command;
+            StandardInput = "socket";
+            StandardOutput = "socket";
+            StandardError = "journal";
+          };
+        }
+      ) stdioServers
       // lib.mapAttrs' (
         name: _:
         lib.nameValuePair (core.unitsOf name).egress {

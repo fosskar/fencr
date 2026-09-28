@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 import os
+import socket
 from pathlib import Path
 import tempfile
 import threading
@@ -266,6 +267,59 @@ class TransportTest(unittest.TestCase):
                 server.shutdown()
                 thread.join()
                 server.server_close()
+
+
+    # systemd hands each accepted connection to a fresh backend process as its
+    # stdin and stdout; a thread per connection stands in for that process
+    def test_socket_transport_speaks_stdio_one_connection_per_session(self):
+        connections = []
+
+        def backend(connection):
+            with connection, connection.makefile("rwb") as stream:
+                for line in stream:
+                    request = json.loads(line)
+                    if "id" not in request:
+                        continue
+                    if request["method"] == "initialize":
+                        result = {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
+                                  "serverInfo": {"name": "backend", "version": "1"}}
+                    elif request["method"] == "tools/list":
+                        result = {"tools": [{"name": "read", "inputSchema": {"type": "object"}}]}
+                    else:
+                        # two messages in one write must still arrive as two
+                        stream.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/message",
+                                                 "params": {"level": "info", "data": "x"}}).encode() + b"\n")
+                        result = {"content": [{"type": "text", "text": f"connection {len(connections)}"}]}
+                    stream.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
+                    stream.flush()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory, "backend.sock"))
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(path)
+            listener.listen()
+
+            def accept():
+                while True:
+                    try:
+                        connection, _ = listener.accept()
+                    except OSError:
+                        return
+                    connections.append(connection)
+                    threading.Thread(target=backend, args=(connection,), daemon=True).start()
+
+            thread = threading.Thread(target=accept, daemon=True)
+            thread.start()
+            try:
+                async def run():
+                    for expected in ["connection 1", "connection 2"]:
+                        async with gateway.downstream({"socket": path}) as session:
+                            result = await session.call_tool("read", {})
+                            self.assertEqual(result.content[0].text, expected)
+                asyncio.run(run())
+                self.assertEqual(len(connections), 2)
+            finally:
+                listener.close()
 
 
 if __name__ == "__main__":
