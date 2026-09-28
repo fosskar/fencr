@@ -135,7 +135,8 @@ configuration, SSH access and the checkpoint commands.
   `queryBurst` shared by UDP and TCP, and a smaller
   `maxStreams` cap for TCP connections, dialled only once a query arrives, and judges no name, but answers REFUSED where the
   stub's answer holds a special-use address or a query is a reverse lookup
-  of one, so the guest does not see the host's private naming. `*.example.com` does not include `example.com`, and
+  of one, and answers AAAA queries empty, since the bridge drops IPv6, so the
+  guest does not see the host's private naming. `*.example.com` does not include `example.com`, and
   `"!name"` refuses a name a wildcard grant would otherwise admit; a deny no
   grant covers, or one equal to a grant, is an evaluation error.
 - `credentials` intercepts TLS for the credential's domain only: the guest's

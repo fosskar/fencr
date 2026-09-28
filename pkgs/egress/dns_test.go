@@ -361,3 +361,28 @@ func TestTheQueryRateIsTheSandboxs(t *testing.T) {
 		t.Fatal("more than the rate passed in a second")
 	}
 }
+
+// the bridge drops ipv6, so an AAAA answer could only leak the host's
+// overlay names; it is answered empty, over either road, without asking
+func TestAAAAIsAnsweredEmpty(t *testing.T) {
+	query := dnsQuery("overlay.test", 28)
+	empty := noAddress(query)
+	if empty == nil || empty[3]&0x0f != 0 || binary.BigEndian.Uint16(empty[6:]) != 0 || empty[0] != 0x12 {
+		t.Fatalf("got %x", empty)
+	}
+	if asksAAAA(dnsQuery("overlay.test", 1)) || !asksAAAA(query) {
+		t.Fatal("asksAAAA misreads the question type")
+	}
+	client, accept := dnsRelayPair(t)
+	if err := writeMessage(client, query); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := readMessage(client)
+	if err != nil || answer[3]&0x0f != 0 || binary.BigEndian.Uint16(answer[6:]) != 0 {
+		t.Fatalf("stream: %x, %v", answer, err)
+	}
+	if server, err := accept(); err == nil {
+		server.Close()
+		t.Fatal("an AAAA query reached the resolver")
+	}
+}

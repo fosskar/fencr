@@ -76,7 +76,8 @@ grants it answers names with the bridge address, then judges the destination
 from the TLS handshake. With `"internet"` it relays queries to the host's stub
 resolver, with limits on concurrent queries and on the rate of new ones. The stub also knows the host's
 own names (`/etc/hosts`, split DNS, mDNS, `_gateway`), so an answer holding a
-special-use address, and a reverse lookup of one, is answered REFUSED. Whether
+special-use address, and a reverse lookup of one, is answered REFUSED, and an
+AAAA query is answered empty, since the bridge carries no IPv6. Whether
 a name exists still shows. The guest does not reach the host's
 systemd-resolved listener directly.
 

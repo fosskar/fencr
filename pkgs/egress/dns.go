@@ -121,6 +121,12 @@ func forwardDNS(conn net.PacketConn, resolver string, rules *screen, limit *buck
 }
 
 func relayQuery(conn net.PacketConn, peer net.Addr, query []byte, resolver string, rules *screen) {
+	if asksAAAA(query) {
+		if empty := noAddress(query); empty != nil {
+			_, _ = conn.WriteTo(empty, peer)
+		}
+		return
+	}
 	if reversesPrivate(query, rules) {
 		if refused := refusal(query); refused != nil {
 			_, _ = conn.WriteTo(refused, peer)
@@ -213,6 +219,13 @@ func relayStream(guest io.ReadWriter, resolver string, rules *screen, limit *buc
 			}
 			continue
 		}
+		if asksAAAA(query) {
+			empty := noAddress(query)
+			if empty == nil || writeMessage(guest, empty) != nil {
+				return
+			}
+			continue
+		}
 		if reversesPrivate(query, rules) {
 			refused := refusal(query)
 			if refused == nil || writeMessage(guest, refused) != nil {
@@ -278,7 +291,21 @@ func screened(query, reply []byte, rules *screen) []byte {
 }
 
 // REFUSED with the guest's own id and question, nothing else
-func refusal(query []byte) []byte {
+func refusal(query []byte) []byte { return bare(query, 5) }
+
+// the guest has no ipv6: the bridge drops it. an AAAA answer could only
+// tell it the host's overlay names, so every one is answered empty, which
+// sends a client to its A record
+func noAddress(query []byte) []byte { return bare(query, 0) }
+
+func asksAAAA(query []byte) bool {
+	end := questionEnd(query)
+	return len(query) >= 12 && end >= 0 && end+4 <= len(query) &&
+		binary.BigEndian.Uint16(query[end:]) == 28
+}
+
+// the guest's own id and question with the given rcode, nothing else
+func bare(query []byte, rcode byte) []byte {
 	if len(query) < 12 {
 		return nil
 	}
@@ -288,7 +315,7 @@ func refusal(query []byte) []byte {
 	}
 	reply := append([]byte(nil), query[:end+4]...)
 	reply[2] = 0x80 | query[2]&0x79
-	reply[3] = 0x80 | 5
+	reply[3] = 0x80 | rcode
 	reply[4], reply[5] = 0, 1
 	for at := 6; at < 12; at++ {
 		reply[at] = 0
