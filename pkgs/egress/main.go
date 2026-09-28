@@ -192,8 +192,9 @@ func run(cfg *config) error {
 			if err != nil {
 				return err
 			}
-			go forwardDNS(conn, cfg.Resolver, &cfg.screen)
-			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver, &cfg.screen)
+			limit := newBucket()
+			go forwardDNS(conn, cfg.Resolver, &cfg.screen, limit)
+			go forwardDNSStream(stream.(*net.TCPListener), cfg.Resolver, &cfg.screen, limit)
 		}
 	}
 

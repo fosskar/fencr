@@ -147,7 +147,7 @@ func TestTheUDPRelayScreens(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer relay.Close()
-	go forwardDNS(relay, resolver.LocalAddr().String(), rules)
+	go forwardDNS(relay, resolver.LocalAddr().String(), rules, newBucket())
 	client, err := net.Dial("udp", relay.LocalAddr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func dnsRelayPair(t *testing.T) (*net.TCPConn, func() (*net.TCPConn, error)) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { relay.Close() })
-	go forwardDNSStream(relay, upstream.Addr().String(), rules)
+	go forwardDNSStream(relay, upstream.Addr().String(), rules, newBucket())
 	client, err := net.DialTCP("tcp", nil, relay.Addr().(*net.TCPAddr))
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestDNSRelayCapsStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer relay.Close()
-	go forwardDNSStream(relay, "127.0.0.1:1", rules)
+	go forwardDNSStream(relay, "127.0.0.1:1", rules, newBucket())
 	var held []net.Conn
 	defer func() {
 		for _, conn := range held {
@@ -335,5 +335,29 @@ func TestDNSRelayCapsStreams(t *testing.T) {
 	var buffer [1]byte
 	if _, err := extra.Read(buffer[:]); err != io.EOF {
 		t.Fatalf("a connection past the cap was kept: %v", err)
+	}
+}
+
+// a burst passes, then the steady rate, whatever the resolver behind
+func TestTheQueryRateIsTheSandboxs(t *testing.T) {
+	clock := time.Unix(0, 0)
+	limit := newBucket()
+	limit.last, limit.now = clock, func() time.Time { return clock }
+	for at := range queryBurst {
+		if !limit.take() {
+			t.Fatalf("query %d of the burst was refused", at)
+		}
+	}
+	if limit.take() {
+		t.Fatal("a query past the burst passed")
+	}
+	clock = clock.Add(time.Second)
+	for at := range queryRate {
+		if !limit.take() {
+			t.Fatalf("query %d a second later was refused", at)
+		}
+	}
+	if limit.take() {
+		t.Fatal("more than the rate passed in a second")
 	}
 }

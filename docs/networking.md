@@ -74,7 +74,7 @@ higher levels.
 Where DNS is enabled, the sandbox's own egress unit is its resolver. With domain
 grants it answers names with the bridge address, then judges the destination
 from the TLS handshake. With `"internet"` it relays queries to the host's stub
-resolver, with a limit on concurrent queries. The stub also knows the host's
+resolver, with limits on concurrent queries and on the rate of new ones. The stub also knows the host's
 own names (`/etc/hosts`, split DNS, mDNS, `_gateway`), so an answer holding a
 special-use address, and a reverse lookup of one, is answered REFUSED. Whether
 a name exists still shows. The guest does not reach the host's

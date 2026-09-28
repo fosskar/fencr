@@ -8,12 +8,64 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// one sandbox's share of the host resolver. a guest that asks faster than the
-// resolver answers loses its own queries, not the host's
-const maxQueries = 256
+// one sandbox's share of the host resolver, whatever resolver that is: a few
+// queries waiting at once, and a steady rate of new ones with room for a
+// burst. a query the resolver gives up on late still costs it until then,
+// so the rate is what bounds a guest asking names nobody answers. past
+// either, the guest loses its own queries, not the host's
+const (
+	maxQueries = 64
+	queryRate  = 10
+	queryBurst = 100
+)
+
+// tokens refill at queryRate a second up to queryBurst; one query spends one
+type bucket struct {
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
+	now    func() time.Time
+}
+
+func newBucket() *bucket {
+	return &bucket{tokens: queryBurst, last: time.Now(), now: time.Now}
+}
+
+func (b *bucket) take() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.now()
+	b.tokens = min(queryBurst, b.tokens+now.Sub(b.last).Seconds()*queryRate)
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// a guest that is dropped is also flooding, so the journal gets one line a
+// second at most, with the count
+type drops struct {
+	mu    sync.Mutex
+	count int
+	last  time.Time
+}
+
+func (d *drops) note(query []byte, why string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.count++
+	if time.Since(d.last) < time.Second {
+		return
+	}
+	log.Printf("dns: %d queries dropped, %s; the latest for %s", d.count, why, questionName(query))
+	d.count, d.last = 0, time.Now()
+}
 
 // every A query is answered with the bridge address, so every tls
 // connection the guest opens lands here and the client hello names the real
@@ -40,8 +92,9 @@ func answerDNS(conn net.PacketConn, answer net.IP) {
 // speaks to the resolver itself: this unit is its one client. the stub
 // knows the host's names too, /etc/hosts, split dns, mdns, _gateway, so an
 // answer is screened before the guest sees it
-func forwardDNS(conn net.PacketConn, resolver string, rules *screen) {
+func forwardDNS(conn net.PacketConn, resolver string, rules *screen, limit *bucket) {
 	slots := make(chan struct{}, maxQueries)
+	dropped := &drops{}
 	buffer := make([]byte, 4096)
 	for {
 		n, peer, err := conn.ReadFrom(buffer)
@@ -50,10 +103,14 @@ func forwardDNS(conn net.PacketConn, resolver string, rules *screen) {
 			return
 		}
 		query := append([]byte(nil), buffer[:n]...)
+		if !limit.take() {
+			dropped.note(query, "over the query rate")
+			continue
+		}
 		select {
 		case slots <- struct{}{}:
 		default:
-			log.Printf("dns: %s dropped, %d queries already waiting", questionName(query), maxQueries)
+			dropped.note(query, "too many waiting")
 			continue
 		}
 		go func() {
@@ -119,7 +176,7 @@ const maxStreams = 16
 // too, screened the same way: one message in, one answer out. the resolver
 // is dialled for the first query, so a connection that sends nothing holds
 // only this unit's slot
-func forwardDNSStream(listener *net.TCPListener, resolver string, rules *screen) {
+func forwardDNSStream(listener *net.TCPListener, resolver string, rules *screen, limit *bucket) {
 	slots := make(chan struct{}, maxStreams)
 	for {
 		conn, err := listener.AcceptTCP()
@@ -136,17 +193,25 @@ func forwardDNSStream(listener *net.TCPListener, resolver string, rules *screen)
 		go func() {
 			defer func() { <-slots }()
 			defer conn.Close()
-			relayStream(dnsStream{conn}, resolver, rules)
+			relayStream(dnsStream{conn}, resolver, rules, limit)
 		}()
 	}
 }
 
-func relayStream(guest io.ReadWriter, resolver string, rules *screen) {
+func relayStream(guest io.ReadWriter, resolver string, rules *screen, limit *bucket) {
 	var upstream io.ReadWriter
 	for {
 		query, err := readMessage(guest)
 		if err != nil {
 			return
+		}
+		// the udp road's rate, shared: tcp is no way around it
+		if !limit.take() {
+			refused := refusal(query)
+			if refused == nil || writeMessage(guest, refused) != nil {
+				return
+			}
+			continue
 		}
 		if reversesPrivate(query, rules) {
 			refused := refusal(query)
