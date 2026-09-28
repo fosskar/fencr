@@ -347,3 +347,17 @@ func TestAnAbortedRequestIsRecorded(t *testing.T) {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// a refused request is logged too, and its uri is the guest's to size
+func TestTheAccessLogBoundsWhatTheGuestSent(t *testing.T) {
+	var logged bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(previous)
+	proxy := handler(map[string][]*credential{})
+	request := httptest.NewRequest(http.MethodGet, "https://api.test/"+strings.Repeat("a", 1<<20), nil)
+	proxy.ServeHTTP(httptest.NewRecorder(), request)
+	if logged.Len() > 4096 || !strings.Contains(logged.String(), "(1048577 bytes)") {
+		t.Fatalf("logged %d bytes: %.200s", logged.Len(), logged.String())
+	}
+}

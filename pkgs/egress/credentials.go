@@ -336,11 +336,20 @@ func record(r *http.Request, uri string, status int) {
 		Host   string `json:"host"`
 		URI    string `json:"uri"`
 		Status int    `json:"status"`
-	}{"handled request", r.Method, r.Host, uri, status})
+	}{"handled request", clipped(r.Method, 16), clipped(r.Host, 255), clipped(uri, 2048), status})
 	if err != nil {
 		return
 	}
 	log.Print(string(line))
+}
+
+// the guest chooses these, up to a megabyte of uri, and the journal is the
+// host's; enough is kept to tell requests apart
+func clipped(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return fmt.Sprintf("%s…(%d bytes)", text[:limit], len(text))
 }
 
 // the host's authority, signing one certificate per domain the sandbox calls,
