@@ -23,10 +23,14 @@ own ssh key against the sandbox's authorized list, not your host privileges.
 ## from another machine (sandbox runs on a server)
 
 The sandbox's address is private to the server, so the connection jumps
-through it. Name the server and `fencr ssh` does the rest:
+through it. Put this in `~/.ssh/config` on your machine, with the address
+`fencr list` prints on the server:
 
-```console
-FENCR_HOST=server fencr ssh <sandbox-name>
+```
+Host myvm
+  HostName 10.11.0.2
+  User root
+  ProxyJump fencr-jump-myvm@server
 ```
 
 The jump lands on `fencr-jump-<sandbox-name>`, a host account the module
@@ -48,15 +52,10 @@ server in any useful sense. A key in `fencr.sandboxes.<name>.authorizedKeys`
 reaches that sandbox; a key in `fencr.adminKeys` is in every sandbox's list and so
 reaches all of them.
 
-Without the command installed, the same thing by hand — `fencr list` on
-the server prints the address:
-
-```
-Host myvm
-  HostName 10.11.0.2
-  User root
-  ProxyJump fencr-jump-myvm@server
-```
+`FENCR_HOST=server fencr ssh myvm` does the same without the config entry,
+but only where the `fencr` command exists and knows `myvm`: on a machine that
+declares the same sandboxes through the module. fencr ships no standalone
+command for a laptop.
 
 Either way your ssh authenticates directly against the sandbox, and the
 server only forwards bytes: it never sees your agent, and no key of
@@ -75,7 +74,9 @@ fencr restore sbx <name>      # stop, put the copy in place, start
 ```
 
 `list` and `status` read; `ssh` runs as guest root; `checkpoint` and
-`restore` change the sandbox's state, not its configuration. Changing a sandbox's
+`restore` change the sandbox's state, not its configuration. `list` and `ssh`
+work as any user; `status` and the checkpoint commands read the firewall, the
+journal and the sandbox's state, and need root. Changing a sandbox's
 configuration means changing the system configuration and running
 `nixos-rebuild`.
 

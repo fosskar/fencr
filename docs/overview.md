@@ -8,8 +8,8 @@ Every host change goes through `nixos-rebuild` — the `fencr` command never
 touches host configuration. It looks, checkpoints, restores, and opens a shell
 as guest root.
 
-Everything derives from the instance's `id`: subnet, mac, vsock cid, unit
-names and paths. Two roads connect host and guest — the bridge carries all
+Addresses derive from the sandbox's `id`: subnet, mac and vsock cid. Unit
+names, users and paths derive from its name. Two roads connect host and guest — the bridge carries all
 traffic, vsock carries only boot secrets and the power button.
 
 ## one sandbox, end to end
@@ -19,14 +19,15 @@ On the host, at `10.11.<id>.1`:
 | unit | what it is |
 | --- | --- |
 | `fencr-<sandbox>.service` | firecracker as user `fencr-<sandbox>`, empty read-only tmpfs root, `/dev/kvm` and `/dev/net/tun` as its only devices, `IPAddressDeny=any` |
-| `fencr-<sandbox>-egress.service` | the road out: DNS on `:33053`, TLS on `:33443`, `DynamicUser`, credentials through `LoadCredential` |
-| `fencr-<sandbox>-secrets@.service` | socket-activated on vsock port 5, tars the sandbox's raw secrets to the guest |
-| `fencr-<sandbox>-trust@.service` | socket-activated on vsock port 6, tars the sandbox's own ca certificate to the guest |
+| `fencr-<sandbox>-egress.service` | the road out: DNS on `:33053`, TLS on `:33443`, whichever it serves held by `fencr-<sandbox>-egress.socket`; `DynamicUser`, credentials through `LoadCredential` |
+| `fencr-<sandbox>-secrets@.service` | socket-activated on vsock port 5, tars the sandbox's raw secrets to the guest once per boot, then its socket closes |
+| `fencr-<sandbox>-trust@.service` | socket-activated on vsock port 6, tars the sandbox's own ca certificate to the guest once per boot, then its socket closes |
 | `fencr-<sandbox>-checkpoint@.service` | `cp --reflink` of the state image; timer optional, `ExecStopPost` by default |
 | `fencr-<sandbox>-ca.service` | the sandbox's own certificate authority, in `/var/lib/fencr/ca/<sandbox>`, only when it holds credentials |
 
-Host-wide: `fencr-credentials-reload`, `fencr-secret-<name>@` and
-`fencr-mcp-gateway`.
+Host-wide: `fencr-credentials-reload`, `fencr-secret-<name>@` for each
+`secretCommand` credential, and with the MCP gateway `fencr-mcp-gateway`,
+`fencr-mcp-tokens` and `fencr-mcp-backend-<server>@` for each stdio backend.
 
 In the guest, at `10.11.<id>.2`, vsock cid `3 + id`:
 
@@ -54,7 +55,7 @@ plain grant, always terminated for a credential's domain.
 flowchart TD
   G["guest opens TLS"] --> R{"A query → egress unit on :53"}
   R -->|domain grants| B["answered with the bridge address<br/>no query leaves the host"]
-  R -->|"internet"| S["relayed to 127.0.0.53<br/>real addresses, maxQueries cap"]
+  R -->|"internet"| S["relayed to 127.0.0.53<br/>special-use answers refused, AAAA empty<br/>rate and concurrency capped"]
   B --> N["nat: 443 → :33443"]
   S --> F["forward chain: public IPv4 only"]
   N --> H["readClientHello → server name"]
@@ -66,7 +67,8 @@ flowchart TD
 ```
 
 Outbound defaults to `[ "internet" ]` — public IPv4 and DNS, private ranges
-still closed. Setting it replaces that default; `[ ]` leaves no egress at all:
+still closed. Setting it replaces that default; `[ ]` leaves no egress at all
+but the domains of the sandbox's credentials and MCP access:
 
 ```nix
 outbound = [
@@ -97,8 +99,10 @@ Refused at runtime:
 - port 53 elsewhere, once the unit answers DNS and only then; a destination
   grant naming that resolver is still accepted first
 - special-use ranges under `"internet"`
-- a granted name resolving to loopback
+- a granted name resolving to loopback or `0.0.0.0/8`
 - a granted name resolving into the sandbox's own `/26`
+- a granted name resolving to an address the host holds, unless the sandbox
+  has `host:443`
 - more than `maxConnections` per chain
 
 ## the other direction, and what never gets built
@@ -134,6 +138,8 @@ reach a running sandbox:
 - a sandbox name outside letters, digits, `_` and `-`, or longer than 11
   characters, since every derived name is this one with a prefix and
   `tap-<name>` must fit `IFNAMSIZ`
+- a unit or user name two parts of fencr would both derive, such as a
+  sandbox `dev-secrets` beside a sandbox `dev`
 
 ## a credential the sandbox uses and never holds
 
@@ -177,7 +183,8 @@ leaves the value in fewer places.
 
 Either way, an upstream that echoes a request back would hand the guest the
 real value in its reply, so the proxy rewrites it to the placeholder on the
-way out: response headers, and bodies up to 1 MiB.
+way out: response headers, and bodies up to 1 MiB. For a value stored as
+`Bearer <key>`, the key alone is rewritten too.
 
 Raw `secrets` are the other door, for keys a program must hold itself. They
 are fetched over vsock at boot into `/run/agent-secrets`, readable by guest
@@ -237,6 +244,7 @@ The checks:
 | `mcp-module` | gateway option wiring |
 | `nixos-module` | builds a host toplevel |
 | `nixos-boot` | a real guest under nested KVM |
+| `nixos-scripted` | a host on scripted networking and dhcpcd, networkd for fencr only |
 
 ## state and the way back
 

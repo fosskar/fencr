@@ -34,9 +34,22 @@ fencr.sandboxes.myagent.mcp = {
 This assumes you already run a Streamable HTTP MCP backend exposing
 `list_events`. fencr does not install the backend or provision its service
 credentials. The optional `service` names an existing systemd unit that the
-gateway requires and starts after.
+gateway requires and starts after. A backend that speaks stdio instead needs
+no listener of its own; see [stdio backends](#stdio-backends).
 
-Backends must listen only on host IPv4 loopback and authenticate requests.
+Configure the agent's MCP client to use **`https://mcp.fencr/mcp/`**, including
+the trailing slash. The payload still owns that application setting. No real
+bearer token is needed in the guest; if the client requires one, a dummy value
+is sufficient because the proxy replaces the authorization header.
+
+fencr automatically creates and grants a separate `mcp-<sandbox-name>` credential
+for each participating sandbox. No manual `fencr.credentials` declaration or
+`outbound` host-port grant is needed. The gateway listens on host loopback
+port 8764 by default, configurable through `fencr.mcpGateway.port`.
+
+## HTTP backends
+
+A `url` backend must listen only on host IPv4 loopback and authenticate requests.
 `url` must use `http://127.0.0.1:<port>/<path>`. `tokenFile` contains the backend's
 bare bearer token; it can reference a Clan vars or other secret manager's
 host file. Do not expose the backend on a bridge or grant its token separately
@@ -88,16 +101,6 @@ systemd.services."fencr-mcp-backend-time@".serviceConfig = {
 The hardening includes `MemoryDenyWriteExecute`, which a JIT runtime such as
 Node.js does not start under; set it to `false` there for such a backend.
 The command's stderr goes to the journal of its instance unit.
-
-Configure the agent's MCP client to use **`https://mcp.fencr/mcp/`**, including
-the trailing slash. The payload still owns that application setting. No real
-bearer token is needed in the guest; if the client requires one, a dummy value
-is sufficient because the proxy replaces the authorization header.
-
-fencr automatically creates and grants a separate `mcp-<sandbox-name>` credential
-for each participating sandbox. No manual `fencr.credentials` declaration or
-`outbound` host-port grant is needed. The gateway listens on host loopback
-port 8764 by default, configurable through `fencr.mcpGateway.port`.
 
 ## tool permissions
 
@@ -164,7 +167,7 @@ journalctl -u fencr-myagent-egress.service
 `fencr status myagent` shows HTTP requests through the credential proxy; it
 is not a tool-level audit log.
 
-After rotating a backend's `tokenFile`, update the backend as needed and
+After rotating a `url` backend's `tokenFile`, update the backend as needed and
 restart `fencr-mcp-gateway.service` so systemd reloads the credential. Restarting
 the gateway interrupts active sessions; clients must reconnect.
 

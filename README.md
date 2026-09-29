@@ -256,7 +256,8 @@ Each check also builds on its own, as
 > [!NOTE]
 > `nixos-boot` needs nested KVM and runs a guest end to end — ssh, secrets,
 > egress, credential injection, MCP, checkpoints and a clean stop. It is the
-> slow one, and `nix flake check` includes it.
+> slow one, and `nix flake check` includes it. `nixos-scripted` needs nested
+> KVM as well.
 
 Flake outputs cover `x86_64-linux` and `aarch64-linux`. There is no default
 package; the CLI is installed by the NixOS module when sandboxes are declared.

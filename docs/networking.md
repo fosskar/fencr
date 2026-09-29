@@ -5,8 +5,8 @@ is named. `outbound` defaults to `[ "internet" ]`, which is public IPv4 and
 DNS with private and other special-use ranges still blocked. Setting
 `outbound` replaces that default rather than adding to it, so an allowlist
 needs no opt-out, and `outbound = [ ]` leaves the sandbox no egress at all,
-including DNS. SSH keys and credentials automatically open their required
-paths; `fencr status` shows those alongside explicit grants. Reply traffic
+including DNS. SSH keys, credentials and MCP access automatically open their
+required paths; `fencr status` shows those alongside explicit grants. Reply traffic
 needs no separate grant.
 
 ```nix
@@ -65,14 +65,14 @@ are not supported by these grants.
 
 Shared CDN infrastructure can allow a client to reach a different site
 through an allowed server name. Domain grants are not application-level
-request filtering.
+request filtering. [Credential `allow` rules](credentials.md#limiting-api-use)
+and [MCP tool permissions](mcp-gateway.md#tool-permissions) operate at those
+higher levels.
 
 An allowed name is dialled at the address it resolves to on the host, but
 never on loopback, `0.0.0.0/8` or the sandbox's own subnet, and never on an
 address the host itself holds unless the sandbox has a `host:443` grant. A
-name pointing there cannot reach a service listening on the host. [Credential `allow` rules](credentials.md#limiting-api-use)
-and [MCP tool permissions](mcp-gateway.md#tool-permissions) operate at those
-higher levels.
+name pointing there cannot reach a service listening on the host.
 
 ## DNS
 
