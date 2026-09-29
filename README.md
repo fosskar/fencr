@@ -121,6 +121,28 @@ Your agent's module reads its own contract — address, inbound ports,
 credential domains and placeholders — from `specialArgs.agentSandbox`, so it
 needs no fencr-specific configuration of its own.
 
+### Real-world example
+
+[fosskar/nixfiles](https://github.com/fosskar/nixfiles) runs two
+[Hermes](https://github.com/NousResearch/hermes-agent) agents in fencr
+sandboxes:
+
+- [`modules/nixos/virtualization/fencr.nix`](https://github.com/fosskar/nixfiles/blob/main/modules/nixos/virtualization/fencr.nix):
+  imports the module, sets `fencr.adminKeys` from root's SSH keys and has
+  Telegraf collect each sandbox's CPU and memory.
+- [`modules/clan-services/hermes/hermes.nix`](https://github.com/fosskar/nixfiles/blob/main/modules/clan-services/hermes/hermes.nix):
+  one sandbox per agent with `outbound = [ "internet" "host:443" ]`, the
+  OpenRouter and OpenCode Go keys as `fencr.credentials` with a `guestEnv`
+  placeholder, the agent's `.env` as a raw secret, its web dashboard, where
+  enabled, as an `inbound` port, and the MCP client pointed at `https://mcp.fencr/mcp/`.
+- [`modules/nixos/mcp/`](https://github.com/fosskar/nixfiles/tree/main/modules/nixos/mcp):
+  `fencr.mcpGateway` with two stdio backends, a self-written CalDAV server and
+  `mcp-grafana`, each with its own credentials and an `IPAddressAllow` that
+  reaches only what it talks to.
+- [`inventory/apps.nix`](https://github.com/fosskar/nixfiles/blob/main/inventory/apps.nix):
+  which agent may use which MCP tools: one gets `calendar.*` and
+  `grafana.*`, the other only `calendar.*`.
+
 ## How it works
 
 The sandbox above reaches `github.com` and nothing else. Give it an inbound
