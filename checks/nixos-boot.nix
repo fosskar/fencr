@@ -84,6 +84,9 @@ let
       import socket
 
       udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      # resolved's stub already holds 127.0.0.53:53 with SO_REUSEADDR; a
+      # wildcard bind beside it needs the same
+      udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
       udp.bind(("0.0.0.0", 53))
     ''
     + tlsServerText
