@@ -33,6 +33,33 @@ let
   secretUnits = core.secretUnits pkgs config.fencr.credentials;
   reloadUnits = core.reloadUnits pkgs resolvedInstances;
   forEachInstance = f: lib.mkMerge (lib.mapAttrsToList f resolvedInstances);
+  gateway = config.fencr.mcpGateway;
+  # the names each part of fencr derives; no two may share one
+  nameClaims =
+    lib.mapAttrsToList (name: _: {
+      owner = "sandbox ${name}";
+      names = core.namesOf name;
+    }) instances
+    ++ lib.mapAttrsToList (name: _: {
+      owner = "credential ${name}";
+      names = [ (core.secretUnitOf name) ];
+    }) (lib.filterAttrs (_: credential: credential.secretCommand != null) config.fencr.credentials)
+    ++ lib.optionals gateway.enable (
+      [
+        {
+          owner = "the MCP gateway";
+          names = [
+            "fencr-mcp"
+            "fencr-mcp-gateway"
+            "fencr-mcp-tokens"
+          ];
+        }
+      ]
+      ++ lib.mapAttrsToList (name: _: {
+        owner = "MCP server ${name}";
+        names = [ "fencr-mcp-backend-${name}" ];
+      }) (lib.filterAttrs (_: server: server.command != null) gateway.servers)
+    );
   guestSystems = lib.mapAttrs (
     name: cfg:
     import "${pkgs.path}/nixos/lib/eval-config.nix" {
@@ -70,6 +97,7 @@ in
         (
           lib.concatMap (instance: instance.errors) (lib.attrValues resolvedInstances)
           ++ core.hostErrors resolvedInstances
+          ++ core.nameErrors nameClaims
         )
       ++ [
         {

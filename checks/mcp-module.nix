@@ -82,6 +82,22 @@ assert
   errors (evaluate {
     fencr.mcpGateway.servers.calendar.command = [ "/bin/calendar" ];
   }) != [ ];
+# a sandbox's derived names may not land on the gateway's or a backend's
+assert lib.elem
+  "fencr: sandbox mcp-gateway and the MCP gateway derive fencr-mcp-gateway; rename one."
+  (
+    errors (evaluate {
+      fencr.sandboxes.mcp-gateway.id = 7;
+    })
+  );
+assert lib.elem
+  "fencr: sandbox mcp-backend and MCP server egress derive fencr-mcp-backend-egress; rename one."
+  (
+    errors (evaluate {
+      fencr.sandboxes.mcp-backend.id = 7;
+      fencr.mcpGateway.servers.egress.command = [ "/bin/egress" ];
+    })
+  );
 assert
   errors (evaluate {
     fencr.mcpGateway.servers.time.command = lib.mkForce [ "mcp-time" ];

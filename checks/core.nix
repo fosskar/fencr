@@ -424,6 +424,41 @@ assert lib.assertMsg (
   } == [ "instance id 0 is shared by first, second; set id on one of them" ]
 ) "core check: duplicate instance id accepted";
 assert lib.assertMsg (
+  core.nameErrors [
+    {
+      owner = "sandbox dev";
+      names = core.namesOf "dev";
+    }
+    {
+      owner = "sandbox dev-secrets";
+      names = core.namesOf "dev-secrets";
+    }
+    {
+      owner = "credential gh";
+      names = [ (core.secretUnitOf "gh") ];
+    }
+    {
+      owner = "sandbox secret-gh";
+      names = core.namesOf "secret-gh";
+    }
+  ] == [
+    "sandbox dev and sandbox dev-secrets derive fencr-dev-secrets; rename one"
+    "credential gh and sandbox secret-gh derive fencr-secret-gh; rename one"
+  ]
+) "core check: a sandbox took another part's derived name";
+assert lib.assertMsg (
+  core.nameErrors [
+    {
+      owner = "sandbox dev";
+      names = core.namesOf "dev";
+    }
+    {
+      owner = "sandbox dev2";
+      names = core.namesOf "dev2";
+    }
+  ] == [ ]
+) "core check: distinct sandboxes reported as sharing a name";
+assert lib.assertMsg (
   let
     names = [
       "zed"

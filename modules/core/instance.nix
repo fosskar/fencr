@@ -359,6 +359,42 @@ in
       subnet = subnetOf options;
     };
 
+  # every name a sandbox derives for its units, users, nftables tables and
+  # run directory. each is "fencr-" and a suffix, and a sandbox name may hold
+  # "-", so a sandbox named after another's suffix, or after a unit fencr
+  # runs for itself, would take that name, and systemd hands a dynamic user
+  # of an existing name to whoever asks
+  namesOf =
+    name:
+    [
+      (core.userOf name)
+      (core.jumpUserOf name)
+      "fencr-${name}-nat"
+      (core.caUnitOf name)
+    ]
+    ++ lib.attrValues (core.unitsOf name);
+
+  # claims: { owner, names }, the owner as an assertion names it
+  nameErrors =
+    claims:
+    let
+      flat = lib.concatMap (
+        claim:
+        map (name: {
+          inherit (claim) owner;
+          inherit name;
+        }) (lib.unique claim.names)
+      ) claims;
+    in
+    map (
+      name:
+      "${
+        lib.concatStringsSep " and " (
+          map (claim: claim.owner) (lib.filter (claim: claim.name == name) flat)
+        )
+      } derive ${name}; rename one"
+    ) (duplicates (map (claim: claim.name) flat));
+
   hostErrors =
     instances:
     map (

@@ -192,7 +192,12 @@ configuration, SSH access and the checkpoint commands.
   default.
 - A sandbox name is letters, digits, `_` and `-`, at most 11 characters, checked
   once in `instance.nix`: every derived name is this one with a prefix, and
-  `tap-<name>` must fit `IFNAMSIZ`. Assertions and log prefixes say `fencr:`,
+  `tap-<name>` must fit `IFNAMSIZ`. Since a name may hold `-`, one sandbox's
+  name can equal another's with a suffix; `namesOf` lists what a sandbox
+  derives, and `nameErrors` refuses any name two parts of fencr derive —
+  sandboxes, `secretCommand` resolvers, the MCP gateway and its stdio
+  backends. A new derived name belongs in one of those lists (`nameClaims`
+  in `default.nix`). Assertions and log prefixes say `fencr:`,
   never `fencr.sandboxes:` — this is fencr, not fencr sandboxes.
 - SSH combines `fencr.adminKeys` and per-sandbox `authorizedKeys`; no keys means no
   SSH listener and no output-chain pinhole for it. Guest root is the intended
