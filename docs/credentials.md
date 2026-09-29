@@ -59,8 +59,9 @@ A credential's name selects a matching preset automatically. Use
 `github` defaults to `allow = [ "GET,HEAD *" ]`, so a granted token reads and
 nothing more until you widen it. `openrouter` defaults to the inference
 endpoints (`chat/completions`, `completions`, `responses`, `messages`,
-`embeddings`, `models*`, `generation`), so the key cannot read the account's
-balance or manage keys until you widen it. `gemini` uses the native api's header; its
+`embeddings`, `models*`, `generation`) and the video models' catalogue
+(`GET /api/v1/videos/models`), so the key cannot read the account's balance,
+manage keys or generate video until you widen it. `gemini` uses the native api's header; its
 openai-shaped path under `/v1beta/openai/` wants `Authorization` instead, and
 a request carrying both is refused with "Multiple authentication credentials
 received".

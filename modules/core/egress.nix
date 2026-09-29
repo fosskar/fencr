@@ -198,6 +198,9 @@ in
         "POST /api/v1/messages"
         "POST /api/v1/embeddings"
         "GET /api/v1/models*"
+        # the video models' catalogue, public and read-only; making a video
+        # stays a grant of its own
+        "GET /api/v1/videos/models"
         "GET /api/v1/generation"
       ];
     };
