@@ -10,30 +10,14 @@ every command on the host unless a step says otherwise.
   `systemd.network.enable = true`. fencr checks for it but does not turn it on.
 - systemd-resolved, which networkd turns on by default
 
-## 1. add fencr to the host's flake
-
-In the host's `flake.nix`, add the input and the module:
+## 1. configure the host
 
 ```nix
-{
-  inputs.fencr.url = "github:fosskar/fencr";
+# flake input
+inputs.fencr.url = "github:fosskar/fencr";
 
-  outputs = { nixpkgs, fencr, ... }: {
-    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-      modules = [
-        ./configuration.nix
-        fencr.nixosModules.fencr
-      ];
-    };
-  };
-}
-```
-
-## 2. declare a sandbox
-
-In the host's `configuration.nix`:
-
-```nix
+# host configuration
+imports = [ fencr.nixosModules.fencr ];
 networking.useNetworkd = true;
 
 fencr.sandboxes.myagent = {
@@ -43,25 +27,17 @@ fencr.sandboxes.myagent = {
 };
 ```
 
-- `services` holds ordinary NixOS modules that run inside the sandbox. Put
-  your agent's module there; fencr does not install or configure an agent.
-- `authorizedKeys` holds the public SSH keys allowed into this sandbox. The
-  matching private key stays wherever you run `ssh` from.
-- `outbound = [ ]` blocks all network access, DNS included. Leave it out and
-  the sandbox gets the public internet; see [grant access](#grant-access).
+Replace `my-agent-module` with your agent's NixOS module and the key with your
+own public key. fencr does not install or configure an agent.
+`outbound = [ ]` blocks all network access, DNS included; leave it out and the
+sandbox gets the public internet (see [grant access](#grant-access)).
 
-## 3. deploy
+## 2. deploy
 
-On the host:
+Deploy the host the way you always do, for example with `nixos-rebuild`. This
+builds and starts the sandbox and installs the `fencr` command on the host.
 
-```console
-sudo nixos-rebuild switch --flake .#myhost
-```
-
-This builds the sandbox and starts it, and installs the `fencr` command on the
-host.
-
-## 4. connect
+## 3. connect
 
 On the host, as a user with a key from `authorizedKeys`:
 
@@ -85,7 +61,7 @@ Host myagent
 Then `ssh myagent` works from the laptop too. The jump account reaches this
 one sandbox and nothing else on the host; see [access and operation](access.md).
 
-## 5. look at it
+## 4. look at it
 
 On the host:
 
