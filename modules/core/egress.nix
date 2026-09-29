@@ -341,6 +341,7 @@ in
       private = specialUseNetworks.v4 ++ specialUseNetworks.v6;
       reachable = map (destination: destination.address) cfg.destinations;
       hostGranted = cfg.hostPorts != [ ];
+      hostTls = lib.elem 443 cfg.hostPorts;
       inherit (cfg) domains denied;
       credentials = map (credential: {
         inherit (credential)

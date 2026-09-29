@@ -194,7 +194,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         # the firewall: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
-        # private.test resolves to a private address the proxy unit denies.
+        # private.test resolves to the host's own address on the test
+        # network, lan.allowed.test to a private one the proxy unit denies.
         # the wildcard admits every name under allowed.test except the
         # one the deny entry names
         outbound = [
@@ -310,10 +311,25 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       networking.hosts."192.168.1.1" = [ "private.test" ];
       # a public address the relay passes; nothing is dialled
       networking.hosts."1.2.3.4" = [ "public.test" ];
-      networking.hosts."192.168.1.3" = [ "lan.test" ];
+      networking.hosts."192.168.1.3" = [
+        "lan.test"
+        "lan.allowed.test"
+      ];
       # a granted name on host loopback: the unit allows loopback for a
       # credential's upstream, and an allowed name must not inherit it
       networking.hosts."127.0.0.1" = [ "loopback.allowed.test" ];
+      # a connect to 0.0.0.0 lands on host loopback, and a public address the
+      # host holds reaches the squatter on *:443; IPAddressDeny stops neither
+      networking.hosts."0.0.0.0" = [ "zero.allowed.test" ];
+      networking.hosts."1.2.3.5" = [ "owned.allowed.test" ];
+      systemd.network.netdevs."10-owned".netdevConfig = {
+        Name = "owned0";
+        Kind = "dummy";
+      };
+      systemd.network.networks."10-owned" = {
+        matchConfig.Name = "owned0";
+        address = [ "1.2.3.5/32" ];
+      };
       # the test network is a private range the proxy unit denies; allow
       # the one target, which is the "internet" here
       systemd.services.fencr-sbx-egress.serviceConfig.IPAddressAllow = [ "192.168.1.2/32" ];
@@ -477,6 +493,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("nft list table inet fencr-sbx | grep -q 'ct count over 2048'")
       host.fail(f"{ssh} 'curl --insecure --silent --max-time 5 https://loopback.allowed.test/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'every address is loopback'")
+      host.succeed("ip -4 addr show owned0 | grep -F 1.2.3.5")
+      host.succeed("curl --insecure --fail --silent --max-time 5 --resolve owned.allowed.test:443:1.2.3.5 https://owned.allowed.test/ | grep -Fx 'fencr target'")
+      for name in ["zero.allowed.test", "owned.allowed.test"]:
+          host.fail(f"{ssh} 'curl --insecure --silent --max-time 5 https://{name}/'", timeout=60)
       host.succeed(f"{ssh} 'curl --fail --silent --max-time 5 http://192.168.1.2:8123' | grep -Fx 'fencr target'", timeout=60)
       host.fail(f"{ssh} 'curl --silent --max-time 5 http://192.168.1.2:80'", timeout=60)
       host.wait_for_unit("host-80.service")
@@ -502,10 +522,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'allow other.allowed.test'")
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'deny sub.allowed.test'")
       # an allowed name resolving into the lan: the unit's deny list drops the
-      # syn, so the connect times out where the squatter would have answered
+      # syn, so the connect times out
+      host.fail(f"{ssh} 'curl --silent --insecure --max-time 15 https://lan.allowed.test/'", timeout=60)
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'relay: dial tcp4 192.168.1.3:443: i/o timeout'")
+      # one resolving onto the host's own address never gets that far: the
+      # squatter answers there, and the sandbox holds no host:443
       host.fail(f"{ssh} 'curl --silent --insecure --max-time 15 https://private.test/'", timeout=60)
       host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -Fx 'allow private.test'")
-      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'relay: dial tcp4 192.168.1.1:443: i/o timeout'")
+      host.succeed("journalctl -u fencr-sbx-egress.service -o cat | grep -F 'relay: dial private.test: every address is loopback'")
 
       # the guest trusts the host's authority without being told to, and
       # whatever it sent as a header is replaced

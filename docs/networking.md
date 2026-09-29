@@ -65,7 +65,12 @@ are not supported by these grants.
 
 Shared CDN infrastructure can allow a client to reach a different site
 through an allowed server name. Domain grants are not application-level
-request filtering. [Credential `allow` rules](credentials.md#limiting-api-use)
+request filtering.
+
+An allowed name is dialled at the address it resolves to on the host, but
+never on loopback, `0.0.0.0/8` or the sandbox's own subnet, and never on an
+address the host itself holds unless the sandbox has a `host:443` grant. A
+name pointing there cannot reach a service listening on the host. [Credential `allow` rules](credentials.md#limiting-api-use)
 and [MCP tool permissions](mcp-gateway.md#tool-permissions) operate at those
 higher levels.
 

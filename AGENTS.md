@@ -133,7 +133,9 @@ configuration, SSH access and the checkpoint commands.
   unit's `IPAddressAllow` must carry both — loopback for a credential's
   upstream, the subnet so the guest can reach the unit at all — and
   `IPAddressDeny` cannot outrank them, so `dialPublic` refuses them itself
-  from the `blocked` list `egressConfig` renders. The sandbox's nftables filter chains run at `filter - 1`, before
+  from the `blocked` list `egressConfig` renders. It also refuses
+  `0.0.0.0/8`, whose connect lands on host loopback, and any address the host
+  holds (`hostOwns`), unless `hostTls` says the sandbox has `host:443`. The sandbox's nftables filter chains run at `filter - 1`, before
   the host firewall; preserve both the sandbox's tables and the host firewall integration.
 - Domain grants in `outbound` cannot accompany `"internet"`. Either way the
   sandbox's egress unit is the guest's resolver: for domain grants it answers

@@ -61,7 +61,7 @@ flowchart TD
   H --> C{"a credential's domain?"}
   C -->|yes| T["terminate with a cert from the sandbox's own ca<br/>match allow entries<br/>inject the header, scrub it from the reply"]
   C -->|no| A{"allowedName: grant ∧ ¬deny"}
-  A -->|allow| P["dialPublic: reject loopback<br/>and the sandbox's own /26<br/>splice bytes unread"]
+  A -->|allow| P["dialPublic: reject loopback, 0.0.0.0/8,<br/>host-owned and the sandbox's own /26<br/>splice bytes unread"]
   A -->|deny| X["close · journal: deny &lt;name&gt;"]
 ```
 

@@ -41,8 +41,10 @@ type config struct {
 	Private []string `json:"private"`
 	// special-use destinations the sandbox is granted, and whether it may
 	// reach the host itself: answers naming these stay
-	Reachable   []string     `json:"reachable"`
-	HostGranted bool         `json:"hostGranted"`
+	Reachable   []string `json:"reachable"`
+	HostGranted bool     `json:"hostGranted"`
+	// whether the sandbox holds host:443, which lets a splice reach the host
+	HostTLS     bool         `json:"hostTls"`
 	Domains     []string     `json:"domains"`
 	Denied      []string     `json:"denied"`
 	Credentials []credential `json:"credentials"`
@@ -317,15 +319,15 @@ func route(cfg *config, intercept map[string][]*credential, handover chan net.Co
 		return
 	}
 	log.Printf("allow %s", name)
-	splice(replayed, name, cfg.blocked)
+	splice(replayed, name, cfg.blocked, cfg.HostTLS)
 }
 
 // the unit's IPAddressDeny is what keeps an allowed name out of the lan, so
 // a refused destination shows up as a dial that never completes. only that
 // is worth a line; a copy ends when one side hangs up, which is not news
-func splice(client net.Conn, name string, blocked []*net.IPNet) {
+func splice(client net.Conn, name string, blocked []*net.IPNet, hostTLS bool) {
 	defer client.Close()
-	upstream, err := dialPublic(name, "443", blocked)
+	upstream, err := dialPublic(name, "443", blocked, hostTLS)
 	if err != nil {
 		log.Printf("relay: %v", err)
 		return
@@ -344,16 +346,16 @@ func splice(client net.Conn, name string, blocked []*net.IPNet) {
 // stops the special-use ranges, but IPAddressAllow has to carry the sandbox's own
 // subnet so the guest stays reachable, and that /26 outranks the /8; a
 // granted name resolving onto the bridge or the guest is refused here
-func dialPublic(name, port string, blocked []*net.IPNet) (net.Conn, error) {
+func dialPublic(name, port string, blocked []*net.IPNet, hostTLS bool) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resolved, err := net.DefaultResolver.LookupIP(ctx, "ip4", name)
 	if err != nil {
 		return nil, err
 	}
-	addresses := publicAddresses(resolved, blocked)
+	addresses := publicAddresses(resolved, blocked, hostTLS)
 	if len(addresses) == 0 {
-		return nil, fmt.Errorf("dial %s: every address is loopback or on the sandbox's own subnet", name)
+		return nil, fmt.Errorf("dial %s: every address is loopback, 0.0.0.0/8, the host's own or on the sandbox's own subnet", name)
 	}
 	var failure error
 	for _, address := range addresses {
@@ -366,10 +368,17 @@ func dialPublic(name, port string, blocked []*net.IPNet) (net.Conn, error) {
 	return nil, failure
 }
 
-func publicAddresses(resolved []net.IP, blocked []*net.IPNet) []net.IP {
+// a connect to 0.0.0.0 reaches the host's own loopback, and one to an
+// address the host holds reaches its listeners there; IPAddressDeny judges
+// neither as loopback. the host is reached through a splice only when the
+// sandbox holds host:443, the port every splice dials
+func publicAddresses(resolved []net.IP, blocked []*net.IPNet, hostTLS bool) []net.IP {
 	var addresses []net.IP
 	for _, address := range resolved {
-		if address.IsLoopback() || withinAny(blocked, address) {
+		if address.IsLoopback() || address.To4() == nil || address.To4()[0] == 0 || withinAny(blocked, address) {
+			continue
+		}
+		if owned, ok := netip.AddrFromSlice(address.To4()); ok && !hostTLS && hostOwns(owned) {
 			continue
 		}
 		addresses = append(addresses, address)

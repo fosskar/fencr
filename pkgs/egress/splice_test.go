@@ -34,20 +34,27 @@ func TestLoopbackAndTheVmsOwnSubnetAreNotDialled(t *testing.T) {
 		// that allowed an address on purpose keeps it
 		{[]string{"10.11.1.1"}, []string{"10.11.1.1"}},
 		{[]string{"192.168.1.2"}, []string{"192.168.1.2"}},
+		// a connect to 0.0.0.0 lands on the host's own loopback
+		{[]string{"0.0.0.0"}, nil},
+		{[]string{"0.1.2.3", "93.184.215.14"}, []string{"93.184.215.14"}},
 	} {
 		var resolved []net.IP
 		for _, address := range test.resolved {
 			resolved = append(resolved, net.ParseIP(address))
 		}
-		var got []string
-		for _, address := range publicAddresses(resolved, blocked) {
-			got = append(got, address.String())
-		}
-		if strings.Join(got, ",") != strings.Join(test.want, ",") {
-			t.Errorf("%v: got %v, want %v", test.resolved, got, test.want)
+		// none of these is an address the build sandbox holds, so host:443
+		// changes nothing
+		for _, hostTLS := range []bool{false, true} {
+			var got []string
+			for _, address := range publicAddresses(resolved, blocked, hostTLS) {
+				got = append(got, address.String())
+			}
+			if strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Errorf("%v (host:443 %v): got %v, want %v", test.resolved, hostTLS, got, test.want)
+			}
 		}
 	}
-	if _, err := dialPublic("localhost", "443", blocked); err == nil {
+	if _, err := dialPublic("localhost", "443", blocked, true); err == nil {
 		t.Fatal("a name on loopback was dialled")
 	}
 }
