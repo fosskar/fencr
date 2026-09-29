@@ -104,13 +104,15 @@ inputs.fencr.url = "github:fosskar/fencr";
     outbound = [ "github.com" ];
     services = [
       { environment.systemPackages = [ pkgs.ripgrep ]; }
+      ./my-agent.nix
     ];
   };
 }
 ```
 
-Replace the key, put your agent's module in `services`, and deploy with
-`nixos-rebuild`.
+`services` is the sandbox's own NixOS configuration: inline options, module
+files or modules from other flakes, anything NixOS accepts. Replace the key and
+deploy with `nixos-rebuild`.
 
 ### Use it
 

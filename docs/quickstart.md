@@ -27,16 +27,27 @@ imports = [ fencr.nixosModules.fencr ];
 networking.useNetworkd = true;
 
 fencr.sandboxes.myagent = {
-  services = [ my-agent-module ];
   authorizedKeys = [ "ssh-ed25519 AAAA... you" ];
   outbound = [ ];
+  services = [
+    # plain NixOS options
+    { environment.systemPackages = [ pkgs.git pkgs.ripgrep ]; }
+    # a module file
+    ./my-agent.nix
+    # a module from another flake
+    inputs.some-agent.nixosModules.default
+  ];
 };
 ```
 
-Replace `my-agent-module` with your agent's NixOS module and the key with your
-own public key. fencr does not install or configure an agent.
-`outbound = [ ]` blocks all network access, DNS included; leave it out and the
-sandbox gets the public internet (see [grant access](#grant-access)).
+`services` is the sandbox's own NixOS configuration: a list of modules, in any
+form NixOS accepts. Packages, users, systemd services, an agent's module:
+whatever you would write for a NixOS machine goes there. fencr adds no agent
+of its own.
+
+Put your own public key in `authorizedKeys`. `outbound = [ ]` blocks all
+network access, DNS included; leave it out and the sandbox gets the public
+internet (see [grant access](#grant-access)).
 
 ## 2. deploy
 
@@ -132,7 +143,7 @@ wires per-sandbox credentials; each sandbox calls only the tools granted to it.
 
 ```nix
 fencr.sandboxes.myagent.services = [
-  my-agent-module
+  ./my-agent.nix
   { environment.systemPackages = [ pkgs.ripgrep pkgs.nodejs ]; }
 ];
 ```
