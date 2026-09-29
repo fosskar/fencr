@@ -124,6 +124,11 @@ seconds of idle time. A sandbox reuses only what it opened itself: a session is
 keyed by sandbox and backend, never by backend alone, so it cannot carry one sandbox's
 state to another.
 
+A backend none of a sandbox's `allow` patterns can reach is never opened for
+it, so a stdio backend runs only for the sandboxes granted some of its tools.
+A pattern with a wildcard before its first dot, such as `*` or `cal*.read`,
+counts as reaching every backend.
+
 Connections open on first use, not at startup, so a backend that is down
 cannot keep the gateway from starting and every MCP-enabled sandbox from its
 other backends. An idle session is dropped and remade on the next

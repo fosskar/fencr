@@ -207,10 +207,27 @@ def create_server(name, principal, config, sessions):
             and matches(f"{server_name}.{tool_name}", principal["allow"])
         )
 
+    def reachable(server_name):
+        """Whether any allow pattern could match one of this server's tools.
+
+        A backend no pattern reaches is never opened for this principal: it
+        would run, or be asked for its tools, only to have all of them
+        dropped. A glob before the first dot could match any server, so such
+        a pattern counts as reaching every one.
+        """
+        for pattern in principal["allow"]:
+            head, dot, _ = pattern.partition(".")
+            if any(character in head for character in "*?[") or (dot and head == server_name):
+                return True
+        return False
+
     @gateway.list_tools()
     async def list_tools() -> list[types.Tool]:
         tools = []
         for server_name, server in servers.items():
+            if not reachable(server_name):
+                continue
+
             async def listing(session, server_name=server_name):
                 found = []
                 cursor = None

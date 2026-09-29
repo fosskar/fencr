@@ -173,6 +173,36 @@ class GatewayTest(unittest.TestCase):
             self.assertFalse(result["isError"], result)
             self.assertEqual(self.opened, 2)
 
+    def test_a_backend_no_pattern_reaches_is_never_opened(self):
+        self.config["servers"]["grafana"] = dict(self.config["servers"]["calendar"])
+        opened = []
+        for allow, expected in [
+            (["calendar.read", "calendar"], ["calendar"]),
+            (["grafana.read"], ["grafana"]),
+            (["graf*.read"], ["calendar", "grafana"]),
+            (["*"], ["calendar", "grafana"]),
+            ([], []),
+        ]:
+            with self.subTest(allow=allow):
+                self.config["principals"]["reader"]["allow"] = allow
+                original = gateway.downstream
+
+                @contextlib.asynccontextmanager
+                async def recording(server, original=original):
+                    opened.append(server)
+                    async with original(server) as session:
+                        yield session
+
+                with patch.object(gateway, "downstream", recording), self.client() as client:
+                    opened.clear()
+                    session = self.initialize(client, "reader")
+                    self.request(client, session, "tools/list", principal="reader")
+                    servers = self.config["servers"]
+                    self.assertEqual(
+                        [next(name for name in servers if servers[name] is server) for server in opened],
+                        expected,
+                    )
+
     def test_empty_allow_denies_every_tool(self):
         self.config["principals"]["reader"]["allow"] = []
         with self.client() as client:

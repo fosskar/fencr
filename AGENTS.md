@@ -79,7 +79,9 @@ configuration, SSH access and the checkpoint commands.
   `fencr-mcp-backend-<server>@.service` per connection under its own
   dynamic user, so the backend cannot read the gateway's tokens. Its `Sessions` keeps a backend session open for a
   30-second idle window, keyed by principal and backend, never by backend
-  alone: a sandbox reuses only what it opened itself. Sessions open on first use,
+  alone: a sandbox reuses only what it opened itself. A backend no `allow`
+  pattern of a principal can reach is never opened for it (`reachable`).
+  Sessions open on first use,
   not at startup, so a backend that is down cannot keep the gateway from
   starting and every mcp-enabled sandbox from its other backends. The gateway's
   port is held by `fencr-mcp-gateway.socket`, which the egress units require. An `Open` task enters
