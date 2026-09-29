@@ -161,7 +161,9 @@ configuration, SSH access and the checkpoint commands.
   echoes a request cannot hand the guest the real key.
   `LoadCredential` copies the source at startup;
   `reloadUnits` watches `secretFile` sources and restarts running credential
-  egress units through `fencr-credentials-reload.service` on changes. A
+  egress units through `fencr-credentials-reload.service` on changes; a
+  changed `secretCommand` restarts them at switch through the egress unit's
+  `restartTriggers`, since its resolver socket's path stays the same. A
   credential declares `secretFile` or `secretCommand`, never both;
   `secretCommand` is served by `fencr-secret-<name>.socket`, a
   socket-activated resolver `LoadCredential` reads instead of a file, which

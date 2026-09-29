@@ -27,9 +27,10 @@ in
       checkpoints = checkpointUnits cli instance;
       # the socket, not the resolver: systemd connects to it while starting
       # the egress unit, which starts an instance of the service behind it
-      resolvers = map (credential: "${secretUnitOf credential.name}.socket") (
-        lib.filter (credential: (credential.secretCommand or null) != null) instance.credentials
-      );
+      commandCredentials = lib.filter (
+        credential: (credential.secretCommand or null) != null
+      ) instance.credentials;
+      resolvers = map (credential: "${secretUnitOf credential.name}.socket") commandCredentials;
       secrets = instance.secrets != { };
       trusted = instance.credentials != [ ];
     in
@@ -115,6 +116,9 @@ in
             ++ ca
             ++ resolvers;
             requires = [ "${units.egress}.socket" ] ++ ca ++ resolvers;
+            # LoadCredential reads a resolver's socket, whose path stays the
+            # same when its command changes; the value is read only at start
+            restartTriggers = map (credential: lib.escapeShellArgs credential.secretCommand) commandCredentials;
             serviceConfig = egressServiceConfig pkgs instance;
           };
         };

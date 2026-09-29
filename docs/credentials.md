@@ -121,7 +121,9 @@ that access separately or use a non-interactive secret source.
 
 systemd reads the command's output through a socket when the sandbox's egress unit
 starts; fencr does not write it to a secret file. Restarting
-`fencr-<name>-egress.service` resolves it again. A failed or empty result
+`fencr-<name>-egress.service` resolves it again. A rebuild that changes the
+command restarts the egress unit of every sandbox granted the credential; a
+command that returns a new value by itself needs that restart by hand. A failed or empty result
 prevents startup; there is no last-known-good fallback.
 
 ## OpenCode Go and Zen

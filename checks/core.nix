@@ -460,6 +460,18 @@ assert lib.assertMsg (
 ) "core check: distinct sandboxes reported as sharing a name";
 assert lib.assertMsg (
   let
+    rotating = resolve "rot" {
+      id = 3;
+      credentials = [ "rotating" ];
+    };
+  in
+  (core.hostUnits pkgs cli rotating).services.fencr-rot-egress.restartTriggers == [
+    "/bin/rbw get openrouter"
+  ]
+  && keyedUnits.services.fencr-keyed-egress.restartTriggers == [ ]
+) "core check: a changed secretCommand does not restart the egress unit";
+assert lib.assertMsg (
+  let
     names = [
       "zed"
       "alpha"
