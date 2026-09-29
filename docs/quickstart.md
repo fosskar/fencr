@@ -1,22 +1,14 @@
 # quickstart
 
-One sandbox for one workload.
-
-Two machines appear below, and they can be the same one:
-
-- **the host** is the NixOS machine you add fencr to. It builds and runs the
-  sandboxes, and every command on this page runs there unless it says
-  otherwise;
-- **your machine** is where you sit, if that is somewhere else, such as a
-  laptop.
+This sets up one sandbox on a NixOS machine, called the host below. Run
+every command on the host unless a step says otherwise.
 
 ## what the host needs
 
-- KVM, on `x86_64-linux` or `aarch64-linux`;
-- `systemd.network.enable = true`, which `networking.useNetworkd = true` sets.
-  The sandbox's bridge and tap are networkd units; fencr checks for networkd
-  rather than switching the host's networking over itself;
-- systemd-resolved, which networkd turns on by default.
+- KVM, on `x86_64-linux` or `aarch64-linux`
+- networkd: `networking.useNetworkd = true`, or at least
+  `systemd.network.enable = true`. fencr checks for it but does not turn it on.
+- systemd-resolved, which networkd turns on by default
 
 ## 1. add fencr to the host's flake
 
@@ -55,10 +47,8 @@ fencr.sandboxes.myagent = {
   your agent's module there; fencr does not install or configure an agent.
 - `authorizedKeys` holds the public SSH keys allowed into this sandbox. The
   matching private key stays wherever you run `ssh` from.
-- `outbound = [ ]` closes all network access, DNS included; only
-  `credentials` and MCP access, added later, open their own domains. Leaving
-  `outbound` unset gives the sandbox the public internet instead; see
-  [grant access](#grant-access).
+- `outbound = [ ]` blocks all network access, DNS included. Leave it out and
+  the sandbox gets the public internet; see [grant access](#grant-access).
 
 ## 3. deploy
 
@@ -73,19 +63,17 @@ host.
 
 ## 4. connect
 
-**On the host**, as the user holding the private key for `authorizedKeys`:
+On the host, as a user with a key from `authorizedKeys`:
 
 ```console
 ssh myagent
 ```
 
-This works because fencr adds a `Host myagent` entry to the host's SSH
-configuration, pointing at the sandbox's private address. You land as root
-inside the sandbox.
+fencr adds `myagent` to the host's SSH configuration, so the name resolves to
+the sandbox. You are root inside it.
 
-**From your machine**, the sandbox's address is private to the host, so SSH
-jumps through it. Add this to `~/.ssh/config` on your machine, with the
-address `fencr list` prints on the host:
+From another machine, such as your laptop, jump through the host. Add this to
+`~/.ssh/config` there, with the address `fencr list` shows on the host:
 
 ```
 Host myagent
@@ -94,9 +82,8 @@ Host myagent
   ProxyJump fencr-jump-myagent@myhost
 ```
 
-Then `ssh myagent` works from your machine too. The jump account can open a
-connection to this one sandbox and do nothing else on the host; see
-[access and operation](access.md).
+Then `ssh myagent` works from the laptop too. The jump account reaches this
+one sandbox and nothing else on the host; see [access and operation](access.md).
 
 ## 5. look at it
 
@@ -110,16 +97,14 @@ sudo fencr status myagent      # health, grants in use, blocked traffic
 `fencr list` and `fencr ssh` work as any user. Everything else reads the
 firewall, the journal or the sandbox's state and needs root.
 
-With `outbound = [ ]`, no `credentials` and no `mcp.enable`:
+What this sandbox has now:
 
-- the sandbox reaches nothing outside itself, DNS included. A credential or
-  MCP access still reaches its own domain through the host's egress unit,
-  even with `outbound = [ ]`;
-- the host reaches only its SSH listener, and only with a key from
-  `authorizedKeys`;
-- the whole guest filesystem persists across reboots and rebuilds, except
-  that its read-only `/nix/store` image is replaced;
-- each clean stop takes a disk checkpoint, retaining the last five.
+- no network access, not even DNS. Credentials and MCP, once you add them,
+  reach their own domains even with `outbound = [ ]`.
+- one way in: SSH, with a key from `authorizedKeys`.
+- a persistent disk. Everything survives reboots and rebuilds, except the
+  read-only `/nix/store`, which each rebuild replaces.
+- a disk checkpoint on every clean stop; the last five are kept.
 
 ## grant access
 
