@@ -178,7 +178,9 @@ configuration, SSH access and the checkpoint commands.
   403\. Every preset in `core.providers` names the `guestEnv` its provider's
   own tools read; `opencode-go` and `opencode-zen` use distinct names and
   paths so one sandbox can hold both, and two granted credentials may not
-  share a `guestEnv`. Provider presets using `Authorization`
+  share a `guestEnv`. A preset never restricts its api: no `allow` besides
+  that Go/Zen path split; which endpoints a sandbox may call is the user's
+  `allow`, not fencr's. Provider presets using `Authorization`
   accept bare API keys and existing `Bearer ` values. Every request is
   logged without its headers, which `fencr status` lists. The guest fetches the authority
   beside its secrets and rebuilds the system trust store at boot in

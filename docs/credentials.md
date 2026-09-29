@@ -60,20 +60,21 @@ names so one sandbox can hold both keys. Set `guestEnv` on a credential to use
 another name, or `null` for none. Two credentials granted to one sandbox
 cannot set the same variable.
 
-`github` defaults to `allow = [ "GET,HEAD *" ]`, so a granted token reads and
-nothing more until you widen it. `openrouter` defaults to the inference
-endpoints (`chat/completions`, `completions`, `responses`, `messages`,
-`embeddings`, `models*`, `generation`) and the video models' catalogue
-(`GET /api/v1/videos/models`), so the key cannot read the account's balance,
-manage keys or generate video until you widen it. `gemini` uses the native api's header; its
+A preset does not restrict what the key may do: fencr does not decide which
+endpoints of a provider a sandbox may call. Narrow a credential yourself with
+[`allow`](#limiting-api-use) where you want to. The `opencode-go` and
+`opencode-zen` presets carry path entries only because both keys go to
+`opencode.ai`, and the path is what tells which key a request needs.
+
+`gemini` uses the native api's header; its
 openai-shaped path under `/v1beta/openai/` wants `Authorization` instead, and
 a request carrying both is refused with "Multiple authentication credentials
 received".
 
 There is no preset for every provider and there will not be. A preset earns
 its place by encoding something you would otherwise get wrong — a header that
-is not `Authorization`, a `guestEnv` the client refuses to start without, or a
-default `allow`. Anything that is a bearer token at a url you know is two
+is not `Authorization`, or a `guestEnv` the client refuses to start without.
+Anything that is a bearer token at a url you know is two
 lines without one:
 
 ```nix
@@ -206,8 +207,9 @@ fencr.credentials.github = {
 
 Rules use `"<methods> <path>"`. Methods are comma-separated, or `*` for any
 method. A path's `*` matches any characters, including `/`. An empty `allow`
-list allows every request for that credential; provider presets may set a
-narrower default. Unmatched requests receive 403 without reaching upstream.
+list allows every request for that credential, and so does every preset
+except the path split of `opencode-go` and `opencode-zen`. Unmatched requests
+receive 403 without reaching upstream.
 `fencr status` shows request methods, paths and status codes, not headers.
 
 The header is injected either way, so most credentials need nothing further.

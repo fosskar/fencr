@@ -190,24 +190,10 @@ in
       header = "Authorization";
       guestEnv = "OPENAI_API_KEY";
     };
-    # inference only: the key also answers for the account's balance, its
-    # own limits and, for a provisioning key, key management under /api/v1/key*
     openrouter = {
       upstream = "https://openrouter.ai";
       header = "Authorization";
       guestEnv = "OPENROUTER_API_KEY";
-      allow = [
-        "POST /api/v1/chat/completions"
-        "POST /api/v1/completions"
-        "POST /api/v1/responses"
-        "POST /api/v1/messages"
-        "POST /api/v1/embeddings"
-        "GET /api/v1/models*"
-        # the video models' catalogue, public and read-only; making a video
-        # stays a grant of its own
-        "GET /api/v1/videos/models"
-        "GET /api/v1/generation"
-      ];
     };
     opencode = {
       upstream = "https://opencode.ai";
@@ -222,16 +208,14 @@ in
       header = "x-goog-api-key";
       guestEnv = "GEMINI_API_KEY";
     };
-    # read-only by default: a token that can open a pull request or push is
-    # the one an escaped agent would most like to have
     github = {
       upstream = "https://api.github.com";
       header = "Authorization";
       guestEnv = "GITHUB_TOKEN";
-      allow = [ "GET,HEAD *" ];
     };
     # opencode reads OPENCODE_API_KEY for either; these names keep apart the
-    # two keys a sandbox may hold at once
+    # two keys a sandbox may hold at once, and the paths are what tells a
+    # request for one from a request for the other on the same domain
     opencode-zen = {
       upstream = "https://opencode.ai";
       header = "Authorization";

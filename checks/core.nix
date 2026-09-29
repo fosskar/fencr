@@ -915,19 +915,17 @@ assert lib.assertMsg (
     "twice: credentials first and second both set guestEnv ANTHROPIC_API_KEY; set another guestEnv on one of them"
   ]
 ) "core check: two credentials set one guestEnv";
-# every preset allow entry parses, and the two read-only ones stay so
+# a preset restricts nothing: only go and zen carry allow entries, the
+# paths that tell their two keys apart on one domain, and those parse
 assert lib.assertMsg (
-  lib.all (
+  lib.attrNames (lib.filterAttrs (_: provider: provider ? allow) core.providers) == [
+    "opencode-go"
+    "opencode-zen"
+  ]
+  && lib.all (
     provider: lib.all (rule: rule.error == null) (map core.parseAllow (provider.allow or [ ]))
   ) (lib.attrValues core.providers)
-  && core.providers.github.allow == [ "GET,HEAD *" ]
-  && lib.all (
-    entry: lib.hasPrefix "GET " entry || lib.hasPrefix "POST /api/v1/" entry
-  ) core.providers.openrouter.allow
-  && !lib.any (
-    entry: lib.hasInfix "/api/v1/key" entry || lib.hasInfix "/api/v1/credits" entry
-  ) core.providers.openrouter.allow
-) "core check: a provider preset's allow entries drifted";
+) "core check: a provider preset restricts its api";
 assert lib.assertMsg (
   let
     bearerFor =
