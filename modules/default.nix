@@ -114,7 +114,21 @@ in
       lib.optional (instances != { } && plain != [ ])
         "fencr: swap without randomEncryption (${
           lib.concatMapStringsSep ", " (swap: swap.device) plain
-        }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap.";
+        }) can hold guest memory on disk; enable swapDevices.*.randomEncryption or use zramSwap."
+      # networkd turns resolved on, and dhcpcd, still the host's own dhcp
+      # client, cannot hand it the servers it learns: "Failed to set DNS
+      # configuration: Access denied". the host falls back to resolved's
+      # compiled-in servers
+      ++
+        lib.optional
+          (
+            instances != { }
+            && !config.networking.useNetworkd
+            && config.services.resolved.enable
+            && config.systemd.services ? dhcpcd
+            && config.networking.nameservers == [ ]
+          )
+          "fencr: networkd turns on systemd-resolved, which cannot take the dns servers dhcpcd learns; set networking.nameservers or networking.useNetworkd = true.";
 
     environment.systemPackages = lib.mkIf (instances != { }) [ cli ];
 
@@ -250,19 +264,34 @@ in
             VNetHeader = true;
           };
         };
+        # a sandbox is no uplink: a stopped one has no carrier, and the host
+        # is online without it
         networks."10-${cfg.bridge}" = {
           matchConfig.Name = cfg.bridge;
           networkConfig = {
             Address = "${cfg.hostIp}/${toString core.prefixLength}";
             ConfigureWithoutCarrier = true;
           };
+          linkConfig.RequiredForOnline = "no";
         };
         networks."11-${cfg.tap}" = {
           matchConfig.Name = cfg.tap;
           networkConfig.Bridge = cfg.bridge;
+          linkConfig.RequiredForOnline = "no";
         };
       }
     );
+
+    # a host whose own networking is not networkd still runs dhcpcd or
+    # NetworkManager, and either takes every link it is not told to leave
+    networking.dhcpcd.denyInterfaces = lib.concatMap (cfg: [
+      cfg.bridge
+      cfg.tap
+    ]) (lib.attrValues resolvedInstances);
+    networking.networkmanager.unmanaged = lib.concatMap (cfg: [
+      "interface-name:${cfg.bridge}"
+      "interface-name:${cfg.tap}"
+    ]) (lib.attrValues resolvedInstances);
 
     # the sandbox's input chain accepts first, but the main chain's drop policy
     # still runs after it

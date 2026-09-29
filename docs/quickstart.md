@@ -6,9 +6,15 @@ every command on the host unless a step says otherwise.
 ## what the host needs
 
 - KVM, on `x86_64-linux` or `aarch64-linux`
-- networkd: `networking.useNetworkd = true`, or at least
-  `systemd.network.enable = true`. fencr checks for it but does not turn it on.
+- networkd, best through `networking.useNetworkd = true`. fencr checks for it
+  but does not turn it on.
 - systemd-resolved, which networkd turns on by default
+
+A host that keeps its own networking scripted or on NetworkManager can turn on
+networkd for fencr alone with `systemd.network.enable = true`; fencr keeps
+dhcpcd and NetworkManager off its interfaces. networkd then also turns on
+systemd-resolved, which dhcpcd cannot hand the DNS servers it learns, so set
+`networking.nameservers` on such a host. fencr warns until you do.
 
 ## 1. configure the host
 

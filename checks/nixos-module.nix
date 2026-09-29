@@ -218,6 +218,22 @@ in
         && !lib.hasInfix "sda3" (lib.head swap);
       message = "nixos module check: the swap warning names the wrong devices";
     }
+    {
+      assertion =
+        lib.all (name: lib.elem name config.networking.dhcpcd.denyInterfaces) [
+          "br-sbx"
+          "tap-sbx"
+          "br-sealed"
+          "tap-sealed"
+        ]
+        && lib.elem "interface-name:tap-sbx" config.networking.networkmanager.unmanaged
+        && lib.all (network: network.linkConfig.RequiredForOnline == "no") [
+          config.systemd.network.networks."10-br-sbx"
+          config.systemd.network.networks."11-tap-sbx"
+        ]
+        && !lib.any (lib.hasPrefix "fencr: networkd turns on") config.warnings;
+      message = "nixos module check: another network manager may take a sandbox's links, or they hold up network-online";
+    }
   ];
 
   # one plain partition, which the module warns about, and one encrypted

@@ -77,9 +77,11 @@ them on the host:
 ### Requirements
 
 - A NixOS host with KVM, on `x86_64-linux` or `aarch64-linux`
-- `networking.useNetworkd = true` — the bridge and tap are networkd units, and
-  fencr asserts this rather than switching your host's networking underneath
-  you
+- networkd, best through `networking.useNetworkd = true`: the bridge and tap
+  are networkd units, and fencr checks for networkd rather than switching your
+  host's networking underneath you. A host that keeps its own networking can
+  set `systemd.network.enable = true` instead; see the
+  [quickstart](docs/quickstart.md#what-the-host-needs)
 - systemd-resolved, which networkd turns on by default: each sandbox's egress
   unit resolves granted names, and relays `"internet"` DNS, through its stub
 
@@ -247,6 +249,7 @@ Each check also builds on its own, as
 | `mcp-module` | gateway options, credentials and unit wiring |
 | `nixos-module` | builds a host toplevel, not just evaluation |
 | `nixos-boot` | a Firecracker guest under nested KVM |
+| `nixos-scripted` | a host on its own scripted networking and dhcpcd, networkd for fencr only |
 
 > [!NOTE]
 > `nixos-boot` needs nested KVM and runs a guest end to end — ssh, secrets,

@@ -69,6 +69,7 @@
         egress = pkgs.callPackage ./pkgs/egress { };
 
         nixos-boot = import ./checks/nixos-boot.nix self pkgs;
+        nixos-scripted = import ./checks/nixos-scripted.nix self pkgs;
       });
 
       devShells = forAllSystems (pkgs: {

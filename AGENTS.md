@@ -212,7 +212,13 @@ configuration, SSH access and the checkpoint commands.
   connection must not start a stopped sandbox. Keep relay identities separate from
   sandbox users.
 - Hosts need KVM, systemd-networkd and systemd-resolved, whose stub at
-  `127.0.0.53` the egress units resolve through. No guest reaches it:
+  `127.0.0.53` the egress units resolve through. The module checks
+  `systemd.network.enable`, not `useNetworkd`; a host keeping its own
+  networking gets fencr's `br-*`/`tap-*` in `networking.dhcpcd.denyInterfaces`
+  and `networking.networkmanager.unmanaged`, and both links carry
+  `RequiredForOnline = no`. networkd turns resolved on, and dhcpcd cannot hand
+  it the servers it learns ("Failed to set DNS configuration: Access
+  denied"), so the module warns on dhcpcd without `networking.nameservers`. No guest reaches it:
   with domain grants or `"internet"`, guest queries to the bridge's port 53
   are redirected to the sandbox's own egress unit. It answers A queries with the
   bridge address for domain grants and relays queries for `"internet"`. KSM is disabled. The microvm unit runs as
@@ -248,6 +254,7 @@ nix build .#checks.x86_64-linux.mcp-gateway --no-link
 nix build .#checks.x86_64-linux.mcp-module --no-link
 nix build .#checks.x86_64-linux.nixos-module --no-link
 nix build .#checks.x86_64-linux.nixos-boot --no-link -L
+nix build .#checks.x86_64-linux.nixos-scripted --no-link -L
 nix flake check
 ```
 
@@ -281,4 +288,9 @@ nix flake check
   process (`SIGSTOP`, then `SIGCONT`), without changing systemd's active state.
   Its timeout is 1800 seconds; `nix flake check` includes this integration
   test.
+- `checks/nixos-scripted.nix` boots a host that keeps scripted networking
+  with dhcpcd and sets only `systemd.network.enable`, beside a dnsmasq node:
+  the uplink stays dhcpcd's, dhcpcd leaves `br-*` alone, `wait-online`
+  succeeds and the sandbox answers SSH. It also evaluates the resolved
+  warning with and without `networking.nameservers`.
 - `effects.nix` defines nixbot's scheduled flake-input updates.
