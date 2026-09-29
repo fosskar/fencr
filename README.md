@@ -51,37 +51,40 @@ them on the host:
 
 ## Features
 
-- **Credentials the guest never holds.** The host injects the real key into
+- **[Credentials the guest never holds](docs/credentials.md).** The host injects the real key into
   requests whose method and path you allowed, answers the rest with 403, and
   replaces the key with the placeholder on the way back. Presets for Anthropic,
   OpenAI, OpenRouter, OpenCode Go/Zen, Gemini and GitHub; secret files, Clan vars and host
   commands as sources.
-- **MCP tool permissions.** Put existing MCP servers, HTTP or stdio, behind one gateway that
+- **[MCP tool permissions](docs/mcp-gateway.md).** Put existing MCP servers, HTTP or stdio, behind one gateway that
   grants tools per sandbox — allow calendar lookups, not creating events.
   Backend tokens stay on the host.
-- **Outbound access you grant by name.** Sandboxes get public IPv4 and DNS by
+- **[Outbound access you grant by name](docs/networking.md#outbound-grants).** Sandboxes get public IPv4 and DNS by
   default, with the LAN and other special-use ranges closed. Narrow that to
   named domains, IP/port pairs or host ports, or to nothing at all.
-- **Inbound only from the host.** Guest ports you list are reachable from host
+- **[Inbound only from the host](docs/networking.md#inbound-ports).** Guest ports you list are reachable from host
   processes. Nothing is published to the LAN.
-- **Persistent state and checkpoints.** The guest's disk survives reboots and
+- **[Persistent state and checkpoints](docs/access.md#checkpoints).** The guest's disk survives reboots and
   rebuilds. Copies are taken on clean stops, on a schedule or on demand, and
   `fencr restore` puts one back.
-- **Per-sandbox limits.** CPU, memory, disk size, disk and network bandwidth,
+- **[Per-sandbox limits](docs/quickstart.md#workload-and-resource-limits).** CPU, memory, disk size, disk and network bandwidth,
   and concurrent connections.
-- **Visibility from one command.** `fencr status` reports which grants were
+- **[Visibility from one command](docs/access.md).** `fencr status` reports which grants were
   used, what was blocked and why, and every API request the host proxied.
 
 ## Getting started
 
+> [!TIP]
+> The [quickstart](docs/quickstart.md) walks through these steps with every
+> option explained, including SSH from another machine.
+
 ### Requirements
 
 - A NixOS host with KVM, on `x86_64-linux` or `aarch64-linux`
-- networkd, best through `networking.useNetworkd = true`: the bridge and tap
-  are networkd units, and fencr checks for networkd rather than switching your
-  host's networking underneath you. A host that keeps its own networking can
-  set `systemd.network.enable = true` instead; see the
-  [quickstart](docs/quickstart.md#what-the-host-needs)
+- networkd, best through `networking.useNetworkd = true`, or
+  `systemd.network.enable = true` on a host that keeps its own networking. The
+  bridge and tap are networkd units; fencr checks for networkd rather than
+  switching your host's networking underneath you
 - systemd-resolved, which networkd turns on by default: each sandbox's egress
   unit resolves granted names, and relays `"internet"` DNS, through its stub
 
@@ -125,29 +128,15 @@ Your agent's module reads its own contract — address, inbound ports,
 credential domains and placeholders — from `specialArgs.agentSandbox`, so it
 needs no fencr-specific configuration of its own.
 
-### Real-world example
-
-[fosskar/nixfiles](https://github.com/fosskar/nixfiles) runs two
-[Hermes](https://github.com/NousResearch/hermes-agent) agents in fencr
-sandboxes:
-
-- [`modules/nixos/virtualization/fencr.nix`](https://github.com/fosskar/nixfiles/blob/main/modules/nixos/virtualization/fencr.nix):
-  imports the module, sets `fencr.adminKeys` from root's SSH keys and has
-  Telegraf collect each sandbox's CPU and memory.
-- [`modules/clan-services/hermes/hermes.nix`](https://github.com/fosskar/nixfiles/blob/main/modules/clan-services/hermes/hermes.nix):
-  one sandbox per agent with `outbound = [ "internet" "host:443" ]`, the
-  OpenRouter and OpenCode Go keys as `fencr.credentials` with a `guestEnv`
-  placeholder, the agent's `.env` as a raw secret, its web dashboard, where
-  enabled, as an `inbound` port, and the MCP client pointed at `https://mcp.fencr/mcp/`.
-- [`modules/nixos/mcp/`](https://github.com/fosskar/nixfiles/tree/main/modules/nixos/mcp):
-  `fencr.mcpGateway` with two stdio backends, a self-written CalDAV server and
-  `mcp-grafana`, each with its own credentials and an `IPAddressAllow` that
-  reaches only what it talks to.
-- [`inventory/apps.nix`](https://github.com/fosskar/nixfiles/blob/main/inventory/apps.nix):
-  which agent may use which MCP tools: one gets `calendar.*` and
-  `grafana.*`, the other only `calendar.*`.
+> [!TIP]
+> [Access and operation](docs/access.md) covers SSH from another machine,
+> `fencr status`, checkpoints and restore.
 
 ## How it works
+
+> [!TIP]
+> [How fencr works](docs/overview.md) goes through every unit, table and
+> refusal in detail.
 
 The sandbox above reaches `github.com` and nothing else. Give it an inbound
 port, two more grants and an API credential:
