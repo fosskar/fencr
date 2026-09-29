@@ -219,6 +219,32 @@ func TestTheScrubSeesAnEchoInTheClear(t *testing.T) {
 	}
 }
 
+// a value stored as "Bearer <key>" is sent whole, and an upstream may echo
+// the key alone
+func TestTheScrubFindsTheKeyOfAStoredBearerValue(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", directory)
+	if err := os.WriteFile(filepath.Join(directory, "key"), []byte("Bearer api-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent := r.Header.Get("Authorization")
+		w.Header().Set("X-Echo", strings.TrimPrefix(sent, "Bearer "))
+		io.WriteString(w, "key "+strings.TrimPrefix(sent, "Bearer ")+", header "+sent)
+	}))
+	defer upstream.Close()
+	proxy := handler(map[string][]*credential{"api.test": prepared(t,
+		&credential{Name: "key", Upstream: upstream.URL, Header: "Authorization", Bearer: true, Placeholder: "fencr-placeholder"})})
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://api.test/v1/models", nil))
+	if body := response.Body.String(); body != "key fencr-placeholder, header fencr-placeholder" {
+		t.Fatalf("got %d %q", response.Code, body)
+	}
+	if echo := response.Header().Get("X-Echo"); echo != "fencr-placeholder" {
+		t.Fatalf("header echo %q", echo)
+	}
+}
+
 func TestSingleCredentialStillAllowsEveryPath(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("CREDENTIALS_DIRECTORY", directory)

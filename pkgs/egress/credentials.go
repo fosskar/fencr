@@ -270,12 +270,24 @@ func scrubHeader(header http.Header, value, placeholder string) {
 	}
 }
 
+// the part of a value an upstream holds as the secret: a stored
+// "Bearer <key>" is sent whole, but an upstream may echo the key alone.
+// the whole value is scrubbed first, so an echoed header still reads as the
+// placeholder the guest knows
+func secretOf(value string) string {
+	if len(value) > len("bearer ") && strings.EqualFold(value[:len("bearer ")], "bearer ") {
+		return strings.TrimSpace(value[len("bearer "):])
+	}
+	return value
+}
+
 type roundTripper func(*http.Request) (*http.Response, error)
 
 func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) {
 	value, upstream := c.value, c.upstream
+	secret := secretOf(value)
 	status := http.StatusBadGateway
 	proxy := &httputil.ReverseProxy{
 		// the proxy relays an interim response from a trace hook of its own,
@@ -284,6 +296,7 @@ func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) 
 		Transport: roundTripper(func(out *http.Request) (*http.Response, error) {
 			trace := &httptrace.ClientTrace{Got1xxResponse: func(_ int, header textproto.MIMEHeader) error {
 				scrubHeader(http.Header(header), value, c.Placeholder)
+				scrubHeader(http.Header(header), secret, c.Placeholder)
 				return nil
 			}}
 			return transport.RoundTrip(out.WithContext(httptrace.WithClientTrace(out.Context(), trace)))
@@ -305,7 +318,10 @@ func forward(c *credential, uri string, w http.ResponseWriter, r *http.Request) 
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			status = resp.StatusCode
-			return scrub(resp, value, c.Placeholder)
+			if err := scrub(resp, value, c.Placeholder); err != nil {
+				return err
+			}
+			return scrub(resp, secret, c.Placeholder)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			log.Printf("fencr: %s: %v", c.Name, err)

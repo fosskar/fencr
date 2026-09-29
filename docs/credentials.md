@@ -231,7 +231,8 @@ worthless against another.
 If an upstream echoes a request back — some APIs reflect payloads in errors
 or debug endpoints — the proxy rewrites the credential out of the response
 before the guest reads it, putting the placeholder back where the value was.
-This covers response headers and bodies up to 1 MiB; a streamed or unmeasured
+For a value stored as `Bearer <key>`, the key alone is rewritten too. This
+covers response headers and bodies up to 1 MiB; a streamed or unmeasured
 body is forwarded untouched.
 
 HTTP method/path rules do not understand MCP tools. Use the separate

@@ -158,7 +158,8 @@ configuration, SSH access and the checkpoint commands.
   credential's header, read from `$CREDENTIALS_DIRECTORY` per request rather
   than from its environment, and scrubs the value back to the placeholder in
   the response, in headers and in bodies up to 1 MiB, so an upstream that
-  echoes a request cannot hand the guest the real key.
+  echoes a request cannot hand the guest the real key. For a stored
+  `Bearer <key>` it then scrubs the key alone too (`secretOf`).
   `LoadCredential` copies the source at startup;
   `reloadUnits` watches `secretFile` sources and restarts running credential
   egress units through `fencr-credentials-reload.service` on changes; a
