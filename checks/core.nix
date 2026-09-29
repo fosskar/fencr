@@ -813,15 +813,20 @@ assert lib.assertMsg (
 ) "unit check: the egress config drifted";
 assert lib.assertMsg (
   let
-    credentials = lib.genAttrs [ "opencode-go" "opencode-zen" ] (
-      name:
-      core.providers.${name}
-      // {
-        provider = name;
-        domain = null;
-        secretFile = "/run/secrets/${name}";
-      }
-    );
+    # two keys on one domain, told apart by path
+    credential = name: path: {
+      provider = null;
+      upstream = "https://shared.example";
+      header = "Authorization";
+      domain = null;
+      secretFile = "/run/secrets/${name}";
+      guestEnv = "${lib.toUpper name}_KEY";
+      allow = [ "* ${path}" ];
+    };
+    credentials = {
+      first = credential "first" "/first/*";
+      second = credential "second" "/second/*";
+    };
     resolveShared =
       credentials:
       core.resolveInstance {
@@ -837,40 +842,35 @@ assert lib.assertMsg (
     unscoped = resolveShared (
       credentials
       // {
-        opencode-go = credentials.opencode-go // {
+        first = credentials.first // {
           allow = [ ];
         };
       }
     );
   in
   shared.errors == [ ]
-  && shared.credentialEnv.OPENCODE_GO_API_KEY == core.placeholderOf "shared" "opencode-go"
-  && shared.credentialEnv.OPENCODE_ZEN_API_KEY == core.placeholderOf "shared" "opencode-zen"
-  &&
-    map (credential: credential.bearer) rendered == [
-      true
-      true
-    ]
+  && shared.credentialEnv.FIRST_KEY == core.placeholderOf "shared" "first"
+  && shared.credentialEnv.SECOND_KEY == core.placeholderOf "shared" "second"
   &&
     map (credential: credential.allow) rendered == [
       [
         {
           methods = [ ];
-          path = "/zen/go/v1/*";
+          path = "/first/*";
         }
       ]
       [
         {
           methods = [ ];
-          path = "/zen/v1/*";
+          path = "/second/*";
         }
       ]
     ]
   &&
     unscoped.errors == [
-      "shared: credential \"opencode-go\" shares domain opencode.ai and needs non-empty allow entries"
+      "shared: credential \"first\" shares domain shared.example and needs non-empty allow entries"
     ]
-) "core check: shared-domain provider credentials drifted";
+) "core check: shared-domain credentials drifted";
 # the presets name the variable their provider's own tools read
 assert lib.assertMsg (
   lib.mapAttrs (_: provider: provider.guestEnv or null) core.providers == {
@@ -878,8 +878,6 @@ assert lib.assertMsg (
     openai = "OPENAI_API_KEY";
     openrouter = "OPENROUTER_API_KEY";
     opencode = "OPENCODE_API_KEY";
-    opencode-go = "OPENCODE_GO_API_KEY";
-    opencode-zen = "OPENCODE_ZEN_API_KEY";
     gemini = "GEMINI_API_KEY";
     github = "GITHUB_TOKEN";
   }
@@ -915,16 +913,9 @@ assert lib.assertMsg (
     "twice: credentials first and second both set guestEnv ANTHROPIC_API_KEY; set another guestEnv on one of them"
   ]
 ) "core check: two credentials set one guestEnv";
-# a preset restricts nothing: only go and zen carry allow entries, the
-# paths that tell their two keys apart on one domain, and those parse
+# a preset restricts nothing; which endpoints a sandbox calls is allow's
 assert lib.assertMsg (
-  lib.attrNames (lib.filterAttrs (_: provider: provider ? allow) core.providers) == [
-    "opencode-go"
-    "opencode-zen"
-  ]
-  && lib.all (
-    provider: lib.all (rule: rule.error == null) (map core.parseAllow (provider.allow or [ ]))
-  ) (lib.attrValues core.providers)
+  !lib.any (provider: provider ? allow) (lib.attrValues core.providers)
 ) "core check: a provider preset restricts its api";
 assert lib.assertMsg (
   let
@@ -945,8 +936,6 @@ assert lib.assertMsg (
     "openai"
     "openrouter"
     "opencode"
-    "opencode-go"
-    "opencode-zen"
   ]
   && !(bearerFor "anthropic" "x-api-key")
   && !(bearerFor "anthropic" "Authorization")

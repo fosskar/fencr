@@ -195,6 +195,8 @@ in
       header = "Authorization";
       guestEnv = "OPENROUTER_API_KEY";
     };
+    # one key reaches zen and go alike; the subscription decides which
+    # models answer
     opencode = {
       upstream = "https://opencode.ai";
       header = "Authorization";
@@ -212,21 +214,6 @@ in
       upstream = "https://api.github.com";
       header = "Authorization";
       guestEnv = "GITHUB_TOKEN";
-    };
-    # opencode reads OPENCODE_API_KEY for either; these names keep apart the
-    # two keys a sandbox may hold at once, and the paths are what tells a
-    # request for one from a request for the other on the same domain
-    opencode-zen = {
-      upstream = "https://opencode.ai";
-      header = "Authorization";
-      guestEnv = "OPENCODE_ZEN_API_KEY";
-      allow = [ "* /zen/v1/*" ];
-    };
-    opencode-go = {
-      upstream = "https://opencode.ai";
-      header = "Authorization";
-      guestEnv = "OPENCODE_GO_API_KEY";
-      allow = [ "* /zen/go/v1/*" ];
     };
   };
 

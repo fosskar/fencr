@@ -43,6 +43,19 @@ let
   timeService = config.systemd.services."fencr-mcp-backend-time@";
 in
 assert errors config == [ ];
+# the split opencode presets are gone, and their names say what replaces them
+assert
+  !(builtins.tryEval
+    (evaluate { fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode"; })
+    .fencr.credentials.opencode-go.provider
+  ).success;
+assert
+  (evaluate {
+    fencr.credentials.opencode-go = {
+      provider = "opencode";
+      secretFile = "/run/secrets/opencode";
+    };
+  }).fencr.credentials.opencode-go.upstream == "https://opencode.ai";
 assert lib.any (entry: !entry.assertion && lib.hasInfix "mcpGateway.approvalMode" entry.message)
   (evaluate { fencr.mcpGateway.approvalMode = "client"; }).assertions;
 assert config.fencr.sandboxes.agent.credentials == [ "mcp-agent" ];

@@ -124,15 +124,15 @@ not published to other machines. See [network access](networking.md).
 For a provider credential:
 
 ```nix
-fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode-go";
-fencr.sandboxes.myagent.credentials = [ "opencode-go" ];
+fencr.credentials.opencode.secretFile = "/run/secrets/opencode";
+fencr.sandboxes.myagent.credentials = [ "opencode" ];
 ```
 
-`/run/secrets/opencode-go` is a file on the host containing just the API key.
-The sandbox gets an `OPENCODE_GO_API_KEY` placeholder; the host inserts the
-real header into requests to OpenCode. The agent still needs to select
-OpenCode Go. See [credentials and secrets](credentials.md) for other
-providers, Go and Zen together, host commands and raw guest secrets.
+`/run/secrets/opencode` is a file on the host containing just the API key.
+The sandbox gets an `OPENCODE_API_KEY` placeholder; the host inserts the real
+header into requests to OpenCode, for Zen and Go alike. See
+[credentials and secrets](credentials.md) for other providers, host commands
+and raw guest secrets.
 
 For MCP tools, see the [optional gateway](mcp-gateway.md). It automatically
 wires per-sandbox credentials; each sandbox calls only the tools granted to it.

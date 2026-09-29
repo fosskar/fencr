@@ -176,11 +176,11 @@ configuration, SSH access and the checkpoint commands.
   rest. Credentials sharing a domain need non-empty `allow` entries;
   exactly one credential must match a request, otherwise the host returns
   403\. Every preset in `core.providers` names the `guestEnv` its provider's
-  own tools read; `opencode-go` and `opencode-zen` use distinct names and
-  paths so one sandbox can hold both, and two granted credentials may not
-  share a `guestEnv`. A preset never restricts its api: no `allow` besides
-  that Go/Zen path split; which endpoints a sandbox may call is the user's
-  `allow`, not fencr's. Provider presets using `Authorization`
+  own tools read, and two granted credentials may not share a `guestEnv`. A
+  preset never restricts its api and carries no `allow`; which endpoints a
+  sandbox may call is the user's `allow`, not fencr's. One OpenCode key
+  reaches Zen and Go, so `opencode` is the one OpenCode preset; a credential
+  named `opencode-go` or `opencode-zen` without a provider throws, naming it. Provider presets using `Authorization`
   accept bare API keys and existing `Bearer ` values. Every request is
   logged without its headers, which `fencr status` lists. The guest fetches the authority
   beside its secrets and rebuilds the system trust store at boot in

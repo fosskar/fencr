@@ -54,7 +54,7 @@ them on the host:
 - **[Credentials the guest never holds](docs/credentials.md).** The host injects the real key into
   requests whose method and path you allowed, answers the rest with 403, and
   replaces the key with the placeholder on the way back. Presets for Anthropic,
-  OpenAI, OpenRouter, OpenCode Go/Zen, Gemini and GitHub; secret files, Clan vars and host
+  OpenAI, OpenRouter, OpenCode, Gemini and GitHub; secret files, Clan vars and host
   commands as sources.
 - **[MCP tool permissions](docs/mcp-gateway.md).** Put existing MCP servers, HTTP or stdio, behind one gateway that
   grants tools per sandbox — allow calendar lookups, not creating events.
@@ -258,7 +258,7 @@ package; the CLI is installed by the NixOS module when sandboxes are declared.
 | [How fencr works](docs/overview.md) | The units, the road out and what is refused where |
 | [Quickstart](docs/quickstart.md) | Creating a sandbox, defaults and resource limits |
 | [Network access](docs/networking.md) | Inbound ports, egress grants and their limits |
-| [Credentials and secrets](docs/credentials.md) | Provider presets, files, commands and OpenCode Go/Zen |
+| [Credentials and secrets](docs/credentials.md) | Provider presets, files, commands and raw secrets |
 | [MCP gateway](docs/mcp-gateway.md) | Tool permissions and backends |
 | [Access and operation](docs/access.md) | SSH, status, checkpoints and restore |
 

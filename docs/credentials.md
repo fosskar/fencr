@@ -48,23 +48,22 @@ A credential's name selects a matching preset automatically. Use
 | `openai` | `Authorization: Bearer <key>` | `OPENAI_API_KEY` |
 | `openrouter` | `Authorization: Bearer <key>` | `OPENROUTER_API_KEY` |
 | `opencode` | `Authorization: Bearer <key>` | `OPENCODE_API_KEY` |
-| `opencode-go` | `Authorization: Bearer <key>` | `OPENCODE_GO_API_KEY` |
-| `opencode-zen` | `Authorization: Bearer <key>` | `OPENCODE_ZEN_API_KEY` |
 | `gemini` | `x-goog-api-key: <key>` | `GEMINI_API_KEY` |
 | `github` | `Authorization: Bearer <key>` | `GITHUB_TOKEN` |
 
 Each default is the variable the provider's own tools read, set only in
-sandboxes granted the credential. OpenCode itself reads `OPENCODE_API_KEY` for
-Go and Zen alike; the `opencode-go` and `opencode-zen` presets use distinct
-names so one sandbox can hold both keys. Set `guestEnv` on a credential to use
-another name, or `null` for none. Two credentials granted to one sandbox
-cannot set the same variable.
+sandboxes granted the credential. Set `guestEnv` on a credential to use
+another name, such as `OPENCODE_GO_API_KEY` for a client that reads that one,
+or `null` for none. Two credentials granted to one sandbox cannot set the same
+variable.
 
 A preset does not restrict what the key may do: fencr does not decide which
 endpoints of a provider a sandbox may call. Narrow a credential yourself with
-[`allow`](#limiting-api-use) where you want to. The `opencode-go` and
-`opencode-zen` presets carry path entries only because both keys go to
-`opencode.ai`, and the path is what tells which key a request needs.
+[`allow`](#limiting-api-use) where you want to.
+
+One OpenCode key reaches Zen (`https://opencode.ai/zen/v1`) and Go
+(`https://opencode.ai/zen/go/v1`) alike; the account's subscription and
+balance decide which models answer. The `opencode` preset covers both.
 
 `gemini` uses the native api's header; its
 openai-shaped path under `/v1beta/openai/` wants `Authorization` instead, and
@@ -132,31 +131,6 @@ command restarts the egress unit of every sandbox granted the credential; a
 command that returns a new value by itself needs that restart by hand. A failed or empty result
 prevents startup; there is no last-known-good fallback.
 
-## OpenCode Go and Zen
-
-Go and Zen use different API paths and credentials on the same domain.
-Both can be granted to one sandbox:
-
-```nix
-fencr.credentials.opencode-go.secretFile = "/run/secrets/opencode-go";
-fencr.credentials.opencode-zen.secretFile = "/run/secrets/opencode-zen";
-fencr.sandboxes.myagent.credentials = [ "opencode-go" "opencode-zen" ];
-```
-
-The client uses `https://opencode.ai/zen/go/v1` for Go and
-`https://opencode.ai/zen/v1` for Zen. Their placeholder environment variables
-are supplied automatically. The presets use `https://opencode.ai` as the
-upstream origin, preserving the client's path and query rather than adding
-the API path again.
-
-Their default `allow` entries are `"* /zen/go/v1/*"` and `"* /zen/v1/*"`.
-For multiple credentials on one domain, every credential needs non-empty
-`allow` entries. Exactly one credential must match a request; zero or multiple
-matches return 403. Order never selects a key.
-
-The legacy `opencode` preset has no path restrictions. Do not combine it with
-the distinct presets on one sandbox without giving it non-overlapping `allow` entries.
-
 ## custom APIs
 
 Set the upstream and header explicitly:
@@ -207,9 +181,12 @@ fencr.credentials.github = {
 
 Rules use `"<methods> <path>"`. Methods are comma-separated, or `*` for any
 method. A path's `*` matches any characters, including `/`. An empty `allow`
-list allows every request for that credential, and so does every preset
-except the path split of `opencode-go` and `opencode-zen`. Unmatched requests
-receive 403 without reaching upstream.
+list allows every request for that credential, and so does every preset.
+Unmatched requests receive 403 without reaching upstream.
+
+Two credentials may share a domain, say two keys for one API, when every one
+of them has non-empty `allow` entries. Exactly one credential must match a
+request; zero or multiple matches return 403. Order never selects a key.
 `fencr status` shows request methods, paths and status codes, not headers.
 
 The header is injected either way, so most credentials need nothing further.

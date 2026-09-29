@@ -20,7 +20,18 @@ in
           options = {
             provider = lib.mkOption {
               type = lib.types.nullOr (lib.types.enum (lib.attrNames core.providers));
-              default = if core.providers ? ${name} then name else null;
+              default =
+                if
+                  lib.elem name [
+                    "opencode-go"
+                    "opencode-zen"
+                  ]
+                then
+                  throw "fencr: the opencode-go and opencode-zen presets are gone, since one OpenCode key reaches Zen and Go alike; set fencr.credentials.${name}.provider = \"opencode\"."
+                else if core.providers ? ${name} then
+                  name
+                else
+                  null;
               defaultText = "the credential's name when it names a provider";
               description = ''
                 a known api, which supplies upstream and header and may
