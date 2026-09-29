@@ -33,8 +33,10 @@ A useful sandbox still needs network access and API credentials. Keeping those
 inside it would put them within reach of whatever runs there, so fencr keeps
 them on the host:
 
-- **Outbound traffic is denied unless you grant the destination**, and the
-  grant is enforced by a host process the guest cannot configure.
+- **Outbound traffic goes only where you grant it.** By default that is the
+  public internet, with the LAN and other special-use ranges closed; narrow it
+  to named domains or addresses, or to nothing. The host's firewall and egress
+  unit enforce it, and the guest can configure neither.
 - **API keys stay on the host.** The guest holds a placeholder; the host puts
   the real key into the requests you permitted, and only those.
 - **MCP tool calls go through a gateway** that lets each sandbox call only the
@@ -52,7 +54,7 @@ them on the host:
 - **Credentials the guest never holds.** The host injects the real key into
   requests whose method and path you allowed, answers the rest with 403, and
   replaces the key with the placeholder on the way back. Presets for Anthropic,
-  OpenAI, OpenRouter and OpenCode Go/Zen; secret files, Clan vars and host
+  OpenAI, OpenRouter, OpenCode Go/Zen, Gemini and GitHub; secret files, Clan vars and host
   commands as sources.
 - **MCP tool permissions.** Put existing MCP servers, HTTP or stdio, behind one gateway that
   grants tools per sandbox — allow calendar lookups, not creating events.
@@ -78,6 +80,8 @@ them on the host:
 - `networking.useNetworkd = true` — the bridge and tap are networkd units, and
   fencr asserts this rather than switching your host's networking underneath
   you
+- systemd-resolved, which networkd turns on by default: each sandbox's egress
+  unit resolves granted names, and relays `"internet"` DNS, through its stub
 
 ### Add the flake
 
