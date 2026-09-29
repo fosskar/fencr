@@ -175,8 +175,10 @@ configuration, SSH access and the checkpoint commands.
   credential to methods and paths, and the host answers 403 itself for the
   rest. Credentials sharing a domain need non-empty `allow` entries;
   exactly one credential must match a request, otherwise the host returns
-  403\. `opencode-go` and `opencode-zen` supply distinct path and `guestEnv`
-  defaults in `core.providers`. Provider presets using `Authorization`
+  403\. Every preset in `core.providers` names the `guestEnv` its provider's
+  own tools read; `opencode-go` and `opencode-zen` use distinct names and
+  paths so one sandbox can hold both, and two granted credentials may not
+  share a `guestEnv`. Provider presets using `Authorization`
   accept bare API keys and existing `Bearer ` values. Every request is
   logged without its headers, which `fencr status` lists. The guest fetches the authority
   beside its secrets and rebuilds the system trust store at boot in

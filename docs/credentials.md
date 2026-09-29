@@ -31,10 +31,7 @@ credentials, its matrix recovery key and signing keys as secrets.
 Declare a host credential and grant it to a sandbox:
 
 ```nix
-fencr.credentials.anthropic = {
-  secretFile = "/run/secrets/anthropic";
-  guestEnv = "ANTHROPIC_API_KEY";
-};
+fencr.credentials.anthropic.secretFile = "/run/secrets/anthropic";
 fencr.sandboxes.myagent.credentials = [ "anthropic" ];
 ```
 
@@ -47,14 +44,21 @@ A credential's name selects a matching preset automatically. Use
 
 | Preset | Injected header | Default `guestEnv` |
 | --- | --- | --- |
-| `anthropic` | `x-api-key: <key>` | None |
-| `openai` | `Authorization: Bearer <key>` | None |
-| `openrouter` | `Authorization: Bearer <key>` | None |
-| `opencode` | `Authorization: Bearer <key>` | None |
+| `anthropic` | `x-api-key: <key>` | `ANTHROPIC_API_KEY` |
+| `openai` | `Authorization: Bearer <key>` | `OPENAI_API_KEY` |
+| `openrouter` | `Authorization: Bearer <key>` | `OPENROUTER_API_KEY` |
+| `opencode` | `Authorization: Bearer <key>` | `OPENCODE_API_KEY` |
 | `opencode-go` | `Authorization: Bearer <key>` | `OPENCODE_GO_API_KEY` |
 | `opencode-zen` | `Authorization: Bearer <key>` | `OPENCODE_ZEN_API_KEY` |
-| `gemini` | `x-goog-api-key: <key>` | None |
-| `github` | `Authorization: Bearer <key>` | None |
+| `gemini` | `x-goog-api-key: <key>` | `GEMINI_API_KEY` |
+| `github` | `Authorization: Bearer <key>` | `GITHUB_TOKEN` |
+
+Each default is the variable the provider's own tools read, set only in
+sandboxes granted the credential. OpenCode itself reads `OPENCODE_API_KEY` for
+Go and Zen alike; the `opencode-go` and `opencode-zen` presets use distinct
+names so one sandbox can hold both keys. Set `guestEnv` on a credential to use
+another name, or `null` for none. Two credentials granted to one sandbox
+cannot set the same variable.
 
 `github` defaults to `allow = [ "GET,HEAD *" ]`, so a granted token reads and
 nothing more until you widen it. `openrouter` defaults to the inference

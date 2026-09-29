@@ -235,6 +235,13 @@ in
       grantedExactly = pattern: lib.elem (lib.toLower pattern) (map lib.toLower domains);
       granted = credentialsOf (options // { inherit name; }) credentials;
       sharedDomains = duplicates (map (credential: credential.domain) granted);
+      # two placeholders cannot share one variable, and the guest would
+      # silently get one of them
+      sharedEnv = duplicates (
+        map (credential: credential.guestEnv) (
+          lib.filter (credential: credential.guestEnv or null != null) granted
+        )
+      );
       tap = tapOf name;
       secretNames = lib.attrNames options.secrets;
       # the guest's resolver is always the sandbox's egress unit, which answers
@@ -306,7 +313,17 @@ in
                 credential: (credential.allow or [ ]) == [ ] && lib.elem credential.domain sharedDomains
               ) granted
             )
-        ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates options.inbound);
+        ++ map (port: "${name}: inbound port ${toString port} declared twice") (duplicates options.inbound)
+        ++ map (
+          variable:
+          "${name}: credentials ${
+            lib.concatStringsSep " and " (
+              map (credential: credential.name) (
+                lib.filter (credential: credential.guestEnv or null == variable) granted
+              )
+            )
+          } both set guestEnv ${variable}; set another guestEnv on one of them"
+        ) sharedEnv;
     in
     {
       inherit

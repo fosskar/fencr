@@ -177,20 +177,25 @@ in
     '';
   };
 
+  # guestEnv is the variable the provider's own tools read; a client that
+  # reads another name overrides it per credential
   providers = {
     anthropic = {
       upstream = "https://api.anthropic.com";
       header = "x-api-key";
+      guestEnv = "ANTHROPIC_API_KEY";
     };
     openai = {
       upstream = "https://api.openai.com";
       header = "Authorization";
+      guestEnv = "OPENAI_API_KEY";
     };
     # inference only: the key also answers for the account's balance, its
     # own limits and, for a provisioning key, key management under /api/v1/key*
     openrouter = {
       upstream = "https://openrouter.ai";
       header = "Authorization";
+      guestEnv = "OPENROUTER_API_KEY";
       allow = [
         "POST /api/v1/chat/completions"
         "POST /api/v1/completions"
@@ -207,6 +212,7 @@ in
     opencode = {
       upstream = "https://opencode.ai";
       header = "Authorization";
+      guestEnv = "OPENCODE_API_KEY";
     };
     # the native api takes x-goog-api-key; the openai-shaped path under
     # /v1beta/openai/ takes Authorization instead, and a request carrying both
@@ -214,14 +220,18 @@ in
     gemini = {
       upstream = "https://generativelanguage.googleapis.com";
       header = "x-goog-api-key";
+      guestEnv = "GEMINI_API_KEY";
     };
     # read-only by default: a token that can open a pull request or push is
     # the one an escaped agent would most like to have
     github = {
       upstream = "https://api.github.com";
       header = "Authorization";
+      guestEnv = "GITHUB_TOKEN";
       allow = [ "GET,HEAD *" ];
     };
+    # opencode reads OPENCODE_API_KEY for either; these names keep apart the
+    # two keys a sandbox may hold at once
     opencode-zen = {
       upstream = "https://opencode.ai";
       header = "Authorization";

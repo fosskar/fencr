@@ -871,6 +871,50 @@ assert lib.assertMsg (
       "shared: credential \"opencode-go\" shares domain opencode.ai and needs non-empty allow entries"
     ]
 ) "core check: shared-domain provider credentials drifted";
+# the presets name the variable their provider's own tools read
+assert lib.assertMsg (
+  lib.mapAttrs (_: provider: provider.guestEnv or null) core.providers == {
+    anthropic = "ANTHROPIC_API_KEY";
+    openai = "OPENAI_API_KEY";
+    openrouter = "OPENROUTER_API_KEY";
+    opencode = "OPENCODE_API_KEY";
+    opencode-go = "OPENCODE_GO_API_KEY";
+    opencode-zen = "OPENCODE_ZEN_API_KEY";
+    gemini = "GEMINI_API_KEY";
+    github = "GITHUB_TOKEN";
+  }
+) "core check: a preset's guestEnv drifted";
+# two placeholders cannot share one variable
+assert lib.assertMsg (
+  let
+    credential = name: {
+      inherit name;
+      provider = "anthropic";
+      upstream = "https://api.anthropic.com";
+      domain = null;
+      header = "x-api-key";
+      secretFile = "/run/secrets/${name}";
+      guestEnv = "ANTHROPIC_API_KEY";
+      allow = [ "POST /v1/${name}" ];
+    };
+  in
+  (core.resolveInstance {
+    name = "twice";
+    credentials = {
+      first = credential "first";
+      second = credential "second";
+    };
+    options = {
+      id = 0;
+      credentials = [
+        "first"
+        "second"
+      ];
+    };
+  }).errors == [
+    "twice: credentials first and second both set guestEnv ANTHROPIC_API_KEY; set another guestEnv on one of them"
+  ]
+) "core check: two credentials set one guestEnv";
 # every preset allow entry parses, and the two read-only ones stay so
 assert lib.assertMsg (
   lib.all (
