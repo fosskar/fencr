@@ -116,7 +116,9 @@ configuration, SSH access and the checkpoint commands.
   Copies of the image live in `checkpoints/` beside it, taken after a
   clean stop when `checkpoints.onStop` is enabled (the default), by
   `fencr checkpoint` and by an optional timer, always with
-  `cp --reflink=always` except on the stop path. Never mount a state image or
+  `cp --reflink=always` except on the stop path. Writers take turns on a
+  `flock` of `checkpoints/`, and the one holding it removes any `*.img.tmp`, a
+  copy killed before its rename. Never mount a state image or
   a checkpoint on the host: `debugfs` reads them without the host kernel.
 
 ## boundaries

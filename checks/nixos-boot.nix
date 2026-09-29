@@ -462,7 +462,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # the clean stop above left one; a file written after the manual one
       # must vanish on restore while the earlier probe stays
       host.succeed("fencr checkpoints sbx | grep '^stop-'")
+      # a stop copy killed before its rename; the next checkpoint clears it
+      host.succeed("su -s /bin/sh fencr-sbx -c 'touch /var/lib/fencr-sandboxes/sbx/checkpoints/stop-20200101T000000.img.tmp'")
       host.succeed("fencr checkpoint sbx before-agent | grep '^before-agent '")
+      host.succeed("test ! -e /var/lib/fencr-sandboxes/sbx/checkpoints/stop-20200101T000000.img.tmp")
       host.succeed("test \"$(stat -c %U:%a /var/lib/fencr-sandboxes/sbx/checkpoints/before-agent.img)\" = fencr-sbx:600")
       # the copy is on disk when the command returns, not only in page cache
       host.succeed("test \"$(stat -c %b /var/lib/fencr-sandboxes/sbx/checkpoints/before-agent.img)\" -gt 0")

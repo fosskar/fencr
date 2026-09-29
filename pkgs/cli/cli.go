@@ -905,6 +905,30 @@ func writeCheckpoint(sandbox *Sandbox, label string) {
 		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
 		os.Exit(1)
 	}
+	// each checkpoint unit instance is a writer of its own, so they take
+	// turns; while one holds the directory, a .tmp in it is no one's copy
+	// but one killed before its rename, and every name is stamped anew, so
+	// nothing else would ever remove it
+	lock, err := os.Open(sandbox.CheckpointDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		os.Exit(1)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: lock %s: %v\n", sandbox.CheckpointDir, err)
+		os.Exit(1)
+	}
+	stale, err := filepath.Glob(filepath.Join(sandbox.CheckpointDir, "*.img.tmp"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		os.Exit(1)
+	}
+	for _, path := range stale {
+		if err := os.Remove(path); err != nil {
+			fmt.Fprintf(os.Stderr, "fencr: %v\n", err)
+		}
+	}
 	file := filepath.Join(sandbox.CheckpointDir, name+".img")
 	if _, err := os.Stat(file); err == nil {
 		fmt.Fprintf(os.Stderr, "fencr: checkpoint %q exists\n", name)
