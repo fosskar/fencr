@@ -37,7 +37,7 @@ let
     map (entry: entry.message) (
       lib.filter (entry: !entry.assertion && lib.hasPrefix "fencr" entry.message) config.assertions
     );
-  credential = config.fencr.credentials.mcp-agent;
+  guest = config.fencr.guestSystems.agent.config;
   gateway = config.systemd.services.fencr-mcp-gateway;
   timeSocket = config.systemd.sockets.fencr-mcp-backend-time;
   timeService = config.systemd.services."fencr-mcp-backend-time@";
@@ -58,24 +58,38 @@ assert
   }).fencr.credentials.opencode-go.upstream == "https://opencode.ai";
 assert lib.any (entry: !entry.assertion && lib.hasInfix "mcpGateway.approvalMode" entry.message)
   (evaluate { fencr.mcpGateway.approvalMode = "client"; }).assertions;
-assert config.fencr.sandboxes.agent.credentials == [ "mcp-agent" ];
-assert config.fencr.sandboxes.reader.credentials == [ "mcp-reader" ];
+# mcp rides vsock, not the egress unit: no credential, no authority, no
+# egress unit for a sandbox with no other grant
+assert config.fencr.sandboxes.agent.credentials == [ ];
 assert config.fencr.sandboxes.agent.mcp.allow == [ ];
-assert credential.domain == "mcp.fencr" && !credential.substitutePlaceholder;
-assert credential.allow == [ "* /mcp/" ];
-assert !(config.fencr.guestSystems.agent.config.environment.sessionVariables ? MCP_GATEWAY_TOKEN);
-assert lib.elem "fencr-mcp-gateway.socket" config.systemd.services.fencr-agent-egress.requires;
-assert config.systemd.sockets.fencr-mcp-gateway.listenStreams == [ "127.0.0.1:8764" ];
-assert lib.elem "fencr-mcp-tokens.service" gateway.requires;
-assert lib.elem "d /var/lib/fencr-mcp 0700 root root -" config.systemd.tmpfiles.rules;
+assert !(config.fencr.credentials ? mcp-agent);
+assert !(config.systemd.services ? fencr-agent-ca);
+assert
+  !((evaluate { fencr.sandboxes.agent.outbound = [ ]; }).systemd.services ? fencr-agent-egress);
+assert !(config.systemd.services ? fencr-mcp-tokens);
+assert
+  config.systemd.sockets.fencr-mcp-gateway.listenStreams == [
+    "/run/fencr-agent/vsock_7"
+    "/run/fencr-reader/vsock_7"
+  ];
+assert config.systemd.sockets.fencr-mcp-gateway.socketConfig.SocketMode == "0666";
+assert !(config.systemd.sockets.fencr-mcp-gateway.socketConfig ? SocketUser);
 assert gateway.serviceConfig.IPAddressDeny == "any";
 assert gateway.serviceConfig.IPAddressAllow == [ "127.0.0.1/32" ];
+assert gateway.serviceConfig.LoadCredential == [ "backend-calendar:/run/secrets/calendar" ];
+# the guest forwards its loopback port to vsock port 7
+assert guest.systemd.sockets.fencr-mcp.listenStreams == [ "127.0.0.1:8764" ];
+assert guest.systemd.sockets.fencr-mcp.socketConfig.Accept;
+assert lib.hasSuffix "socat STDIO VSOCK-CONNECT:2:7"
+  guest.systemd.services."fencr-mcp@".serviceConfig.ExecStart;
 assert
-  gateway.serviceConfig.LoadCredential == [
-    "principal-agent:/var/lib/fencr-mcp/agent"
-    "principal-reader:/var/lib/fencr-mcp/reader"
-    "backend-calendar:/run/secrets/calendar"
-  ];
+  (evaluate { fencr.mcpGateway.port = 9000; })
+  .fencr.guestSystems.reader.config.systemd.sockets.fencr-mcp.listenStreams == [ "127.0.0.1:9000" ];
+assert
+  !(
+    (evaluate { fencr.sandboxes.other.id = 7; }).fencr.guestSystems.other.config.systemd.sockets
+      ? fencr-mcp
+  );
 assert lib.elem "fencr-mcp-backend-time.socket" gateway.requires;
 assert lib.elem "fencr-mcp-backend-time.socket" gateway.after;
 assert gateway.serviceConfig.SupplementaryGroups == [ "fencr-mcp" ];
@@ -125,10 +139,6 @@ assert
   }) != [ ];
 assert
   errors (evaluate {
-    fencr.sandboxes.agent.credentials = [ "mcp-reader" ];
-  }) != [ ];
-assert
-  errors (evaluate {
     fencr.mcpGateway.enable = lib.mkForce false;
   }) != [ ];
 assert
@@ -140,7 +150,7 @@ pkgs.runCommand "fencr-mcp-module" { } ''
   import json
   from pathlib import Path
   config = json.loads(Path("${gateway.environment.MCP_GATEWAY_CONFIG}").read_text())
-  assert config["principals"]["agent"]["allow"] == []
+  assert config["principals"]["agent"] == {"allow": [], "socket": "/run/fencr-agent/vsock_7"}
   assert config["principals"]["reader"]["allow"] == ["calendar.read"]
   assert config["servers"]["calendar"]["token_credential"] == "backend-calendar"
   assert config["servers"]["time"] == {"socket": "/run/fencr-mcp/time.sock", "hidden_tools": []}

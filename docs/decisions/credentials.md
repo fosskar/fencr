@@ -276,3 +276,31 @@ written and removed: polling a vault to discover nothing is noise, and the
 number is a guess standing in for an expiry fencr cannot see. A token that
 expires on its own wants the upstream's 401 as its trigger, which is a
 different mechanism and its own decision.
+
+## 2026-10-13: the mcp gateway left the credential rail
+
+Until now a sandbox called `https://mcp.fencr/mcp/`, and its egress unit
+ended the tls with a certificate from the sandbox's authority and injected
+an `mcp-<name>` credential, a token `fencr-mcp-tokens.service` kept in
+`/var/lib/fencr-mcp`, which told the gateway who was calling. That path
+existed because the egress unit was already there. It also meant that
+`mcp.enable` alone gave a sandbox an egress unit, an authority, the trust
+relay and a rebuilt trust store, all for one host-local call.
+
+The guest now reaches the gateway over vsock port 7
+([#65](https://github.com/fosskar/fencr/issues/65)). Firecracker delivers
+the connection to `/run/fencr-<name>/vsock_7`, in the run directory only the
+sandbox's user enters, so the socket names the sandbox the way the secrets
+and trust relays already rely on. The gateway holds one such socket per
+sandbox and maps a request to its principal by the path uvicorn reports as
+the scope's server. No token, no tls and no certificate. A guest loopback
+port forwards to vsock because MCP clients speak http.
+
+What it cost: MCP requests no longer appear in `fencr status`, so the
+gateway logs each call itself; the client URL became
+`http://127.0.0.1:8764/mcp/`; and the gateway itself now rejects paths
+outside `/mcp/`, which the credential's `allow` used to do.
+
+The guest reaching the gateway on the bridge address was rejected: a
+firewall pinhole per sandbox, and a source address is a weaker identity than
+a socket of its own.

@@ -1,13 +1,13 @@
 # MCP gateway
 
 The optional host-side gateway gives each sandbox its own MCP tool permissions
-without putting backend credentials in the guest. It is separate from the
-HTTP credential proxy: the proxy injects a header; the gateway decides which
-tools may be listed or called.
+without putting backend credentials in the guest. It does not use the egress
+unit or the credential proxy: a sandbox reaches it over vsock, and the
+socket a request arrives on names the sandbox.
 
 ```text
-agent sandbox → HTTPS credential proxy → MCP gateway → host MCP backend
-           adds the sandbox's token      checks tools   keeps service credentials
+MCP client → guest 127.0.0.1:8764 → vsock port 7 → /run/fencr-<name>/vsock_7 → MCP gateway → host MCP backend
+                                                   one socket per sandbox      checks tools   keeps service credentials
 ```
 
 ## configure backends and sandbox access
@@ -37,15 +37,18 @@ credentials. The optional `service` names an existing systemd unit that the
 gateway requires and starts after. A backend that speaks stdio instead needs
 no listener of its own; see [stdio backends](#stdio-backends).
 
-Configure the agent's MCP client to use **`https://mcp.fencr/mcp/`**, including
-the trailing slash. The payload still owns that application setting. No real
-bearer token is needed in the guest; if the client requires one, a dummy value
-is sufficient because the proxy replaces the authorization header.
+Configure the agent's MCP client to use **`http://127.0.0.1:8764/mcp/`**,
+including the trailing slash. Payloads read it as `agentSandbox.mcp.url`; the
+port is `fencr.mcpGateway.port`. The payload still owns that application
+setting. The client needs no token.
 
-fencr automatically creates and grants a separate `mcp-<sandbox-name>` credential
-for each participating sandbox. No manual `fencr.credentials` declaration or
-`outbound` host-port grant is needed. The gateway listens on host loopback
-port 8764 by default, configurable through `fencr.mcpGateway.port`.
+In the guest, `fencr-mcp.socket` listens on that loopback port and hands each
+connection to `fencr-mcp@.service`, which forwards it to vsock port 7.
+Firecracker delivers it to `/run/fencr-<name>/vsock_7` on the host, in the run
+directory only the sandbox's own user enters, and `fencr-mcp-gateway.socket`
+holds one such socket per participating sandbox. Every guest process can use
+the loopback port. MCP needs no credential, no certificate authority and no
+`outbound` grant, and works with `outbound = [ ]`.
 
 ## HTTP backends
 
@@ -83,7 +86,7 @@ connection as the command's stdin and stdout, so:
 - each sandbox gets its own backend process, reused like an HTTP session and
   ended when the gateway closes it;
 - the process runs under its own dynamic user and cannot read the gateway's
-  sandbox or backend tokens;
+  backend tokens;
 - no host user can take its place: pid 1 holds the socket even while no
   process runs.
 
@@ -117,7 +120,7 @@ The gateway does not ask for approval: a tool the list grants is called at
 once. A wildcard such as `calendar.*` also grants tools the backend adds
 later, so prefer explicit tool grants for tools that change things.
 
-Each sandbox has a separate authenticated session registry. Reusing another sandbox's
+Each sandbox has a separate session registry. Reusing another sandbox's
 MCP session ID is rejected, including requests to read or delete that session.
 
 ## backend connections
@@ -140,32 +143,21 @@ runs once more on a fresh session; a tool call does not, because the backend
 may have acted before the failure. It fails, and the next call opens a fresh
 session.
 
-## credentials and operation
-
-Per-sandbox gateway credentials are generated on the host under
-`/var/lib/fencr-mcp/` and retained across service restarts. systemd delivers
-only the required credentials to each egress proxy and the gateway. MCP
-credentials have `substitutePlaceholder = false`, so a tool argument cannot
-cause the proxy to insert the real token into data the tool might echo.
-
-Their `allow` is `[ "* /mcp/" ]`. A credential's `upstream` is an origin, so
-without that entry the sandbox's token would be injected into a request for any
-path the gateway's port serves; pinning the path keeps it to the one route the
-gateway mounts. The methods are deliberately not pinned. The MCP transport
-chooses those, and it rejects the ones it does not use itself — listing them
-here would only refuse a method a later transport revision starts relying on,
-and the symptom would be a 403 in `fencr status` rather than an obvious break.
+## operation
 
 Inspect the host units:
 
 ```console
 systemctl status fencr-mcp-gateway.service
 journalctl -u fencr-mcp-gateway.service
-journalctl -u fencr-myagent-egress.service
 ```
 
-`fencr status myagent` shows HTTP requests through the credential proxy; it
-is not a tool-level audit log.
+The gateway logs every tool call and refused tool name as
+`<sandbox>: called <server>.<tool>` or `<sandbox>: refused '<name>'`.
+`fencr status` does not list MCP requests.
+
+pid 1 holds every sandbox's socket while the gateway restarts, so a restart
+loses sessions but no sandbox loses its way in.
 
 After rotating a `url` backend's `tokenFile`, update the backend as needed and
 restart `fencr-mcp-gateway.service` so systemd reloads the credential. Restarting

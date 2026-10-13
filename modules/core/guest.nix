@@ -7,6 +7,7 @@ let
     powerPort
     secretsPort
     trustPort
+    mcpPort
     prefixLength
     guestTrust
     trustVariables
@@ -220,6 +221,16 @@ in
             ];
           };
         })
+        (lib.mkIf (agentSandbox.mcp != null) {
+          "fencr-mcp@" = {
+            description = "fencr MCP gateway over vsock";
+            serviceConfig = {
+              DynamicUser = true;
+              StandardInput = "socket";
+              ExecStart = "${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:2:${toString mcpPort}";
+            };
+          };
+        })
         {
           # firecracker exits on cpu reset; a power-off only halts and leaves the process
           fencr-power = {
@@ -272,6 +283,13 @@ in
       };
       # no systemd-ssh-generator sshd on vsock
       boot.kernelParams = [ "systemd.ssh_auto=0" ];
+      # mcp clients speak http, so guest loopback carries it to the host's vsock
+      systemd.sockets.fencr-mcp = lib.mkIf (agentSandbox.mcp != null) {
+        description = "fencr MCP gateway over vsock";
+        wantedBy = [ "sockets.target" ];
+        listenStreams = [ "127.0.0.1:${toString agentSandbox.mcp.port}" ];
+        socketConfig.Accept = true;
+      };
       # the socket binds before networkd assigns the address
       systemd.sockets.sshd.socketConfig.FreeBind = lib.mkIf (agentSandbox.sshKeys != [ ]) true;
       services.openssh = {

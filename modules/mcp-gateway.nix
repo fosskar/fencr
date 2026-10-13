@@ -9,8 +9,9 @@ let
   core = import ./core { inherit lib; };
   cfg = config.fencr.mcpGateway;
   members = lib.filterAttrs (_: sandbox: sandbox.mcp.enable) config.fencr.sandboxes;
-  credentialName = name: "mcp-${name}";
-  tokenPath = name: "/var/lib/fencr-mcp/${name}";
+  # firecracker delivers the guest's vsock port to this path, in the run
+  # directory only the sandbox's user enters, so the path names the sandbox
+  socketOf = name: "${core.vsockOf name}_${toString core.mcpPort}";
   gateway = pkgs.callPackage ../pkgs/mcp-gateway { };
   httpServers = lib.filterAttrs (_: server: server.url != null) cfg.servers;
   stdioServers = lib.filterAttrs (_: server: server.command != null) cfg.servers;
@@ -40,7 +41,7 @@ let
       ) cfg.servers;
       principals = lib.mapAttrs (name: sandbox: {
         inherit (sandbox.mcp) allow;
-        token_credential = "principal-${name}";
+        socket = socketOf name;
       }) members;
     }
   );
@@ -69,7 +70,7 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 8764;
-      description = "host loopback port for the gateway; never opened to guests directly.";
+      description = "guest loopback port where an mcp-enabled sandbox reaches the gateway, as http://127.0.0.1:<port>/mcp/; the guest forwards it over vsock.";
     };
     servers = lib.mkOption {
       default = { };
@@ -122,20 +123,17 @@ in
 
   options.fencr.sandboxes = lib.mkOption {
     type = lib.types.attrsOf (
-      lib.types.submodule (
-        { config, name, ... }: {
-          config.credentials = lib.mkIf (cfg.enable && config.mcp.enable) [ (credentialName name) ];
-          options.mcp = {
-            enable = lib.mkEnableOption "access to the host MCP gateway at https://mcp.fencr/mcp/";
-            allow = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-              example = [ "calendar.list_events" ];
-              description = "<server>.<tool> globs this sandbox may list and call; empty grants nothing. application-side MCP settings remain the payload's responsibility.";
-            };
+      lib.types.submodule {
+        options.mcp = {
+          enable = lib.mkEnableOption "access to the host MCP gateway at http://127.0.0.1:<fencr.mcpGateway.port>/mcp/ in the guest";
+          allow = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            example = [ "calendar.list_events" ];
+            description = "<server>.<tool> globs this sandbox may list and call; empty grants nothing. application-side MCP settings remain the payload's responsibility.";
           };
-        }
-      )
+        };
+      }
     );
   };
 
@@ -182,44 +180,20 @@ in
           ) (lib.attrValues stdioServers);
           message = "fencr.mcpGateway command backends must name an absolute executable and take no tokenFile.";
         }
-      ]
-      ++ lib.mapAttrsToList (name: sandbox: {
-        assertion = lib.all (
-          other: other == name || !(lib.elem (credentialName other) sandbox.credentials)
-        ) (builtins.attrNames members);
-        message = "fencr: ${name} may not borrow another sandbox's MCP credential.";
-      }) config.fencr.sandboxes;
-
-      fencr.credentials = lib.mapAttrs' (
-        name: _:
-        lib.nameValuePair (credentialName name) {
-          upstream = "http://127.0.0.1:${toString cfg.port}";
-          domain = "mcp.fencr";
-          secretFile = tokenPath name;
-          substitutePlaceholder = false;
-          # upstream is an origin, so the path is what keeps this token off
-          # every other route on that port. the methods are the mcp sdk's to
-          # choose and it rejects the rest itself; pinning them here only
-          # breaks the transport the day it uses one more
-          allow = [ "* /mcp/" ];
-        }
-      ) members;
-
-      # StateDirectoryMode sets the mode when the directory is created; an
-      # existing one keeps whatever it has, and this reasserts it on every
-      # activation
-      systemd.tmpfiles.rules = [ "d /var/lib/fencr-mcp 0700 root root -" ];
+      ];
 
       users.groups.fencr-mcp = { };
-      # pid 1 holds the port the egress units send principal tokens to, so no
-      # host user can take it while the gateway restarts. it holds the stdio
+      # pid 1 holds each sandbox's socket while the gateway restarts. 0666 and
+      # no SocketUser, as with the trust and secrets relays: the run
+      # directory's 0700 keeps other users off it. pid 1 holds the stdio
       # backends' sockets too, in a directory only it writes, so the chown to
       # the group is not a race; only the gateway is in that group
       systemd.sockets = {
         fencr-mcp-gateway = {
           description = "per-sandbox MCP gateway";
           wantedBy = [ "sockets.target" ];
-          listenStreams = [ "127.0.0.1:${toString cfg.port}" ];
+          listenStreams = lib.mapAttrsToList (name: _: socketOf name) members;
+          socketConfig.SocketMode = "0666";
         };
       }
       // lib.mapAttrs' (
@@ -236,42 +210,11 @@ in
       ) stdioServers;
 
       systemd.services = {
-        fencr-mcp-tokens = {
-          description = "create per-sandbox MCP gateway credentials";
-          serviceConfig = core.hardened // {
-            Type = "oneshot";
-            RemainAfterExit = true;
-            StateDirectory = "fencr-mcp";
-            StateDirectoryMode = "0700";
-            ExecStart = "${pkgs.python3}/bin/python3 ${pkgs.writeText "fencr-mcp-tokens.py" ''
-              import os
-              import secrets
-              import tempfile
-              from pathlib import Path
-
-              for entry in ${builtins.toJSON (map tokenPath (builtins.attrNames members))}:
-                  path = Path(entry)
-                  if not path.exists():
-                      descriptor, temporary = tempfile.mkstemp(dir=path.parent)
-                      with os.fdopen(descriptor, "w") as output:
-                          output.write("Bearer " + secrets.token_hex(32))
-                      os.replace(temporary, path)
-            ''}";
-          };
-        };
         fencr-mcp-gateway = {
           description = "per-sandbox MCP gateway";
           wantedBy = [ "multi-user.target" ];
-          requires = [
-            "fencr-mcp-gateway.socket"
-            "fencr-mcp-tokens.service"
-          ]
-          ++ backendUnits;
-          after = [
-            "fencr-mcp-gateway.socket"
-            "fencr-mcp-tokens.service"
-          ]
-          ++ backendUnits;
+          requires = [ "fencr-mcp-gateway.socket" ] ++ backendUnits;
+          after = [ "fencr-mcp-gateway.socket" ] ++ backendUnits;
           environment.MCP_GATEWAY_CONFIG = gatewayConfig;
           serviceConfig = core.hardened // {
             DynamicUser = true;
@@ -280,15 +223,16 @@ in
             Restart = "on-failure";
             # every mcp-enabled sandbox drives this one process
             MemoryMax = "512M";
+            # url backends are on host loopback; sandboxes arrive on unix sockets
             IPAddressDeny = "any";
             IPAddressAllow = [ "127.0.0.1/32" ];
             RestrictAddressFamilies = [
               "AF_INET"
               "AF_UNIX"
             ];
-            LoadCredential =
-              lib.mapAttrsToList (name: _: "principal-${name}:${tokenPath name}") members
-              ++ lib.mapAttrsToList (name: server: "backend-${name}:${server.tokenFile}") httpServers;
+            LoadCredential = lib.mapAttrsToList (
+              name: server: "backend-${name}:${server.tokenFile}"
+            ) httpServers;
           };
         };
       }
@@ -304,14 +248,7 @@ in
             StandardError = "journal";
           };
         }
-      ) stdioServers
-      // lib.mapAttrs' (
-        name: _:
-        lib.nameValuePair (core.unitsOf name).egress {
-          requires = [ "fencr-mcp-gateway.socket" ];
-          after = [ "fencr-mcp-gateway.socket" ];
-        }
-      ) members;
+      ) stdioServers;
     })
   ];
 }

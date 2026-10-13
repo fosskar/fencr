@@ -27,7 +27,6 @@ for line in sys.stdin:
             "pid": os.getpid(),
             "uid": os.getuid(),
             "gateway": readable("/run/credentials/fencr-mcp-gateway.service"),
-            "tokens": readable("/var/lib/fencr-mcp"),
         }
         result = {"content": [{"type": "text", "text": "probe " + json.dumps(probe)}]}
     else:

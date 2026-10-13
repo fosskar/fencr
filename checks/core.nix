@@ -501,6 +501,7 @@ assert lib.assertMsg (
     "inbound"
     "ip"
     "mac"
+    "mcp"
     "mem"
     "name"
     "networkBandwidth"

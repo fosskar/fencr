@@ -87,6 +87,7 @@ in
   powerPort = 4;
   secretsPort = 5;
   trustPort = 6;
+  mcpPort = 7;
 
   # addresses are rejected before domain validation: domainPatternError would
   # accept a dotted quad, and an address without a port must be an error
@@ -206,6 +207,7 @@ in
     "inbound"
     "ip"
     "mac"
+    "mcp"
     "mem"
     "name"
     "networkBandwidth"
@@ -222,6 +224,8 @@ in
       name,
       sshKeys ? [ ],
       credentials ? { },
+      # the guest loopback port of the MCP forwarder, or null without one
+      mcpPort ? null,
       ...
     }@args:
     let
@@ -367,6 +371,14 @@ in
       credentialPlaceholders = lib.listToAttrs (
         map (credential: lib.nameValuePair credential.name credential.placeholder) granted
       );
+      mcp =
+        if mcpPort == null then
+          null
+        else
+          {
+            port = mcpPort;
+            url = "http://127.0.0.1:${toString mcpPort}/mcp/";
+          };
       dns = if dnsEgress then hostIpOf options else null;
       bridge = bridgeOf name;
       mac = macOf options;

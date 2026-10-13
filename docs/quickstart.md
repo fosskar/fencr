@@ -92,8 +92,8 @@ firewall, the journal or the sandbox's state and needs root.
 
 What this sandbox has now:
 
-- no network access, not even DNS. Credentials and MCP, once you add them,
-  reach their own domains even with `outbound = [ ]`.
+- no network access, not even DNS. Credentials, once you add them, reach
+  their own domains even with `outbound = [ ]`, and MCP needs no network.
 - one way in: SSH, with a key from `authorizedKeys`.
 - a persistent disk. Everything survives reboots and rebuilds, except the
   read-only `/nix/store`, which each rebuild replaces.
@@ -134,8 +134,8 @@ header into requests to OpenCode, for Zen and Go alike. See
 [credentials and secrets](credentials.md) for other providers, host commands
 and raw guest secrets.
 
-For MCP tools, see the [optional gateway](mcp-gateway.md). It automatically
-wires per-sandbox credentials; each sandbox calls only the tools granted to it.
+For MCP tools, see the [optional gateway](mcp-gateway.md). Each sandbox
+reaches it over vsock and calls only the tools granted to it.
 
 ## workload and resource limits
 
