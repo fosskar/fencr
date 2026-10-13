@@ -13,8 +13,8 @@ in
     {
       assertion =
         !(config.systemd.services ? fencr-mcp-gateway)
-        && !(config.systemd.services ? fencr-mcp-tokens)
-        && !(config.fencr.credentials ? mcp-sbx);
+        && !(config.systemd.sockets ? fencr-mcp-gateway)
+        && guestConfig.systemd.sockets ? fencr-mcp == false;
       message = "nixos module check: MCP gateway is not disabled by default";
     }
     {

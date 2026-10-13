@@ -27,7 +27,8 @@ On the host, at `10.11.<id>.1`:
 
 Host-wide: `fencr-credentials-reload`, `fencr-secret-<name>@` for each
 `secretCommand` credential, and with the MCP gateway `fencr-mcp-gateway`,
-`fencr-mcp-tokens` and `fencr-mcp-backend-<server>@` for each stdio backend.
+listening on vsock port 7 of each participating sandbox, and
+`fencr-mcp-backend-<server>@` for each stdio backend.
 
 In the guest, at `10.11.<id>.2`, vsock cid `3 + id`:
 
@@ -68,7 +69,7 @@ flowchart TD
 
 Outbound defaults to `[ "internet" ]` — public IPv4 and DNS, private ranges
 still closed. Setting it replaces that default; `[ ]` leaves no egress at all
-but the domains of the sandbox's credentials and MCP access:
+but the domains of the sandbox's credentials:
 
 ```nix
 outbound = [
@@ -190,8 +191,9 @@ Raw `secrets` are the other door, for keys a program must hold itself. They
 are fetched over vsock at boot into `/run/agent-secrets`, readable by guest
 root.
 
-MCP rides the same rail: `https://mcp.fencr/mcp/` with a per-sandbox token the
-host injects, into a gateway that filters `<server>.<tool>`.
+MCP takes vsock instead: the guest's `http://127.0.0.1:8764/mcp/` reaches
+port 7, which arrives on a socket in the sandbox's own run directory, into a
+gateway that names the sandbox by that socket and filters `<server>.<tool>`.
 
 ## where it lives
 

@@ -628,7 +628,8 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # by naming the port the redirect came from
       host.fail("ss -lntupH | grep -E 'systemd-resolve.*10\\.11\\.[01]\\.1:53'")
       pid = host.succeed("systemctl show -p MainPID --value fencr-open-egress.service").strip()
-      host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 3")
+      # dns over udp and tcp; no tls door, since no credential needs one
+      host.succeed(f"test $(ss -lntupH | grep -c 'pid={pid},') -eq 2")
       # a resolver out there is refused, so the unit is the one road for plain
       # dns and the guest cannot fall back past the cap
       host.fail(f"{ssh_open} 'dig +short +time=2 +tries=1 allowed.test @192.168.1.2'", timeout=60)
@@ -638,13 +639,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       import re
       import shlex
 
+      # the guest's loopback port, forwarded over vsock to the gateway
       def mcp(transport, message, session=None):
           command = ["curl", "--silent", "--show-error", "--max-time", "15", "-i",
-                     "-H", "Content-Type: application/json", "-H", "Accept: application/json, text/event-stream",
-                     "-H", "Authorization: Bearer guest-placeholder"]
+                     "-H", "Content-Type: application/json", "-H", "Accept: application/json, text/event-stream"]
           if session:
               command += ["-H", "Mcp-Session-Id: " + session, "-H", "MCP-Protocol-Version: 2025-03-26"]
-          command += ["--data", json.dumps(message), "https://mcp.fencr/mcp/"]
+          command += ["--data", json.dumps(message), "http://127.0.0.1:8764/mcp/"]
           return host.succeed(transport + " " + shlex.quote(shlex.join(command)), timeout=30)
 
       initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -659,17 +660,14 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       assert "test__read" in tools and "test__write" in tools and "test__hidden" not in tools, tools
       read = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "test__read", "arguments": {}}}
       assert "called read" in mcp(ssh, read, session)
-      read["params"]["arguments"] = {"echo": "${core.placeholderOf "sbx" "mcp-sbx"}"}
-      echoed = mcp(ssh, read, session)
-      assert "${core.placeholderOf "sbx" "mcp-sbx"}" in echoed, echoed
+      # the socket a request arrives on names the sandbox, so another one
+      # cannot use this session
       refused = mcp(ssh_open, read, session)
       assert re.search(r"^HTTP/\S+ 404\b", refused), refused
-      # the credential's allow pins the path, and nothing else keeps its token
-      # off the rest of the port the gateway listens on
       for path in ["/", "/metrics"]:
           off_path = host.succeed(ssh + " " + shlex.quote(
-              f"curl --silent --max-time 10 -o /dev/null -w %{{http_code}} https://mcp.fencr{path}"), timeout=30)
-          assert off_path.strip() == "403", (path, off_path)
+              f"curl --silent --max-time 10 -o /dev/null -w %{{http_code}} http://127.0.0.1:8764{path}"), timeout=30)
+          assert off_path.strip() == "404", (path, off_path)
       write = {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "test__write", "arguments": {}}}
       assert "called write" in mcp(ssh, write, session)
 
@@ -685,28 +683,31 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       assert "local__probe" in tools, tools
       first = probe(ssh, session)
       assert first == probe(ssh, session), "a sandbox reuses its own backend process"
-      assert not first["gateway"] and not first["tokens"], first
+      assert not first["gateway"], first
       answer = mcp(ssh_open, initialize)
       match = re.search(r"(?im)^mcp-session-id: (\S+)", answer)
       assert match is not None, answer
       open_session = match.group(1)
       mcp(ssh_open, {"jsonrpc": "2.0", "method": "notifications/initialized"}, open_session)
       assert probe(ssh_open, open_session)["pid"] != first["pid"]
+      assert re.search(r'"isError":\s*true', mcp(ssh_open, write, open_session)), "open may not write"
       host.succeed("systemctl list-units --no-legend 'fencr-mcp-backend-local@*' | grep -c running | grep -Fx 2")
       host.succeed("stat -c '%U:%G %a' /run/fencr-mcp/local.sock | grep -Fx 'root:fencr-mcp 660'")
       for transport in [ssh, ssh_open]:
           for port in [8766, 8764]:
               status, output = host.execute(transport + f" 'curl --silent --show-error --fail --max-time 3 http://10.11.0.1:{port}/mcp/'", timeout=30)
               assert status in [7, 28], (status, output)
-          host.fail(transport + " 'test -e /var/lib/fencr-mcp'", timeout=30)
           host.fail(transport + " 'grep -r backend-test-token /run /proc/self/environ'", timeout=60)
       host.succeed("curl --silent --max-time 5 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8766/mcp/ | grep -Fx 401", timeout=30)
-      token = host.succeed("cat /var/lib/fencr-mcp/sbx").strip()
-      assert token not in answer + tools + echoed
-      assert token != host.succeed("cat /var/lib/fencr-mcp/open").strip()
-      host.fail(ssh + " " + shlex.quote("grep -rF " + shlex.quote(token) + " /run /proc/self/environ"), timeout=60)
-      host.succeed("systemctl restart fencr-mcp-tokens.service fencr-mcp-gateway.service", timeout=60)
-      assert token == host.succeed("cat /var/lib/fencr-mcp/sbx").strip()
+      for name in ["sbx", "open"]:
+          host.succeed(f"stat -c '%U:%G %a' /run/fencr-{name}/vsock_7 | grep -Fx 'root:root 666'")
+      # mcp needs neither the authority nor a credential: open has no other
+      host.fail("systemctl is-active fencr-open-trust.socket fencr-open-ca.service")
+      host.succeed("journalctl -u fencr-mcp-gateway.service -o cat | grep -Fx 'sbx: called test.read'")
+      host.succeed("journalctl -u fencr-mcp-gateway.service -o cat | grep -F \"open: refused 'test__write'\"")
+      # pid 1 holds the sockets, so a sandbox reaches a restarted gateway
+      host.succeed("systemctl restart fencr-mcp-gateway.service", timeout=60)
+      assert re.search(r"^HTTP/\S+ 200\b", mcp(ssh_open, initialize)), "no gateway after a restart"
     '';
 
     meta.timeout = 1800;

@@ -23,6 +23,8 @@ let
       inherit name options;
       sshKeys = sshKeysOf options;
       credentials = config.fencr.credentials;
+      mcpPort =
+        if config.fencr.mcpGateway.enable && options.mcp.enable then config.fencr.mcpGateway.port else null;
     }
   ) instances;
   cli = import ../pkgs/cli {
@@ -51,7 +53,6 @@ let
           names = [
             "fencr-mcp"
             "fencr-mcp-gateway"
-            "fencr-mcp-tokens"
           ];
         }
       ]

@@ -5,8 +5,8 @@ is named. `outbound` defaults to `[ "internet" ]`, which is public IPv4 and
 DNS with private and other special-use ranges still blocked. Setting
 `outbound` replaces that default rather than adding to it, so an allowlist
 needs no opt-out, and `outbound = [ ]` leaves the sandbox no egress at all,
-including DNS. SSH keys, credentials and MCP access automatically open their
-required paths; `fencr status` shows those alongside explicit grants. Reply traffic
+including DNS. SSH keys and credentials automatically open their
+required paths, and MCP access takes vsock; `fencr status` shows those alongside explicit grants. Reply traffic
 needs no separate grant.
 
 ```nix

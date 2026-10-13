@@ -237,7 +237,7 @@ Each check also builds on its own, as
 | `cli` | the compiled `fencr` binary against mocked system commands |
 | `egress` | `go test` inside the egress package build |
 | `mcp-gateway` | the gateway's contract tests |
-| `mcp-module` | gateway options, credentials and unit wiring |
+| `mcp-module` | gateway options, sockets and unit wiring |
 | `nixos-module` | builds a host toplevel, not just evaluation |
 | `nixos-boot` | a Firecracker guest under nested KVM |
 | `nixos-scripted` | a host on its own scripted networking and dhcpcd, networkd for fencr only |

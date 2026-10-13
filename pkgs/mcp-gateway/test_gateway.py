@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 import anyio
+import httpx
 from mcp import types
 from starlette.testclient import TestClient
 
@@ -38,8 +39,7 @@ class GatewayTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         directory = Path(self.directory.name)
-        for name in ["agent", "reader", "backend"]:
-            (directory / name).write_text("Bearer " + name + "-secret" if name != "backend" else "backend-secret")
+        (directory / "backend").write_text("backend-secret")
         environment = patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": str(directory)})
         environment.start()
         self.addCleanup(environment.stop)
@@ -50,8 +50,8 @@ class GatewayTest(unittest.TestCase):
                 "hidden_tools": ["hidden"],
             }},
             "principals": {
-                "agent": {"token_credential": "agent", "allow": ["calendar.*"]},
-                "reader": {"token_credential": "reader", "allow": ["calendar.read"]},
+                "agent": {"socket": "agent", "allow": ["calendar.*"]},
+                "reader": {"socket": "reader", "allow": ["calendar.read"]},
             },
         }
         self.backend = Backend()
@@ -74,34 +74,39 @@ class GatewayTest(unittest.TestCase):
     def client(self):
         return TestClient(gateway.create_app(self.config))
 
-    def headers(self, principal="agent", session=None):
-        headers = {"Authorization": f"Bearer {principal}-secret", "Accept": "application/json, text/event-stream"}
+    # the test client reports a request's host as the scope's server, where
+    # uvicorn reports the unix socket's path
+    @staticmethod
+    def url(principal="agent"):
+        return f"http://{principal}/mcp/"
+
+    def headers(self, session=None):
+        headers = {"Accept": "application/json, text/event-stream"}
         if session:
             headers["Mcp-Session-Id"] = session
             headers["MCP-Protocol-Version"] = "2025-03-26"
         return headers
 
-    def initialize(self, client, principal="agent"):
-        response = client.post("/mcp/", headers=self.headers(principal), json={
+    def initialize(self, client, principal="agent", url=None):
+        response = client.post(url or self.url(principal), headers=self.headers(), json={
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"protocolVersion": "2025-03-26", "capabilities": {},
                        "clientInfo": {"name": "test", "version": "1"}},
         })
         self.assertEqual(response.status_code, 200, response.text)
         session = response.headers["mcp-session-id"]
-        response = client.post("/mcp/", headers=self.headers(principal, session), json={
+        response = client.post(url or self.url(principal), headers=self.headers(session), json={
             "jsonrpc": "2.0", "method": "notifications/initialized",
         })
         self.assertEqual(response.status_code, 202, response.text)
         return session
 
-    def request(self, client, session, method, params=None, principal="agent"):
-        response = client.post("/mcp/", headers=self.headers(principal, session), json={
+    def request(self, client, session, method, params=None, principal="agent", url=None):
+        response = client.post(url or self.url(principal), headers=self.headers(session), json={
             "jsonrpc": "2.0", "id": 2, "method": method, "params": params or {},
         })
         self.assertEqual(response.status_code, 200, response.text)
-        for value in ["agent-secret", "reader-secret", "backend-secret"]:
-            self.assertNotIn(value, response.text)
+        self.assertNotIn("backend-secret", response.text)
         return response.json()["result"]
 
     def test_listing_and_invocation_are_scoped(self):
@@ -216,34 +221,62 @@ class GatewayTest(unittest.TestCase):
         with self.client() as client:
             session = self.initialize(client)
             for method in ["GET", "DELETE", "POST"]:
-                response = client.request(method, "/mcp/", headers=self.headers("reader", session))
+                response = client.request(method, self.url("reader"), headers=self.headers(session))
                 self.assertEqual(response.status_code, 404, response.text)
             self.request(client, session, "tools/list")
-            response = client.post("/mcp/", headers=self.headers("unknown"), json={})
-            self.assertEqual(response.status_code, 401)
-            response = client.post("/mcp/", headers=[("Authorization", "Bearer agent-secret"), ("Authorization", "Bearer reader-secret")], json={})
+            response = client.post(self.url("unknown"), headers=self.headers(), json={})
             self.assertEqual(response.status_code, 401)
 
     def test_sessions_per_principal_are_capped(self):
         with self.client() as client:
             sessions = [self.initialize(client) for _ in range(gateway.MAX_SESSIONS)]
-            response = client.post("/mcp/", headers=self.headers(), json={})
+            response = client.post(self.url(), headers=self.headers(), json={})
             self.assertEqual(response.status_code, 429, response.text)
             # the cap is the principal's own; another one still opens
             self.initialize(client, "reader")
             # the sdk would open a session for these too
             for method in ["GET", "DELETE", "PUT"]:
-                response = client.request(method, "/mcp/", headers=self.headers("reader"))
+                response = client.request(method, self.url("reader"), headers=self.headers())
                 self.assertEqual(response.status_code, 400, response.text)
             # a session closed with DELETE gives its slot back
-            response = client.delete("/mcp/", headers=self.headers(session=sessions[0]))
+            response = client.delete(self.url(), headers=self.headers(sessions[0]))
             self.assertEqual(response.status_code, 200, response.text)
             self.initialize(client)
 
-    def test_duplicate_principal_tokens_refused(self):
-        Path(self.directory.name, "reader").write_text("Bearer agent-secret")
+    def test_shared_principal_socket_refused(self):
+        self.config["principals"]["reader"]["socket"] = "agent"
         with self.assertRaises(RuntimeError):
             gateway.create_app(self.config)
+
+    # what the test client stands in for: uvicorn on unix sockets, one per
+    # principal, telling them apart by the path a connection arrived on
+    def test_unix_socket_names_the_principal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            listeners = []
+            for name in ["agent", "reader"]:
+                path = str(Path(directory, name))
+                self.config["principals"][name]["socket"] = path
+                listener = socket.socket(socket.AF_UNIX)
+                listener.bind(path)
+                listener.listen()
+                listeners.append(listener)
+            server = gateway.uvicorn.Server(gateway.uvicorn.Config(
+                gateway.create_app(self.config), access_log=False, log_level="warning"))
+            thread = threading.Thread(target=server.run, kwargs={"sockets": listeners})
+            thread.start()
+            try:
+                while not server.started:
+                    thread.join(0.05)
+                    self.assertTrue(thread.is_alive())
+                for name, expected in [("agent", ["calendar__read", "calendar__write"]), ("reader", ["calendar__read"])]:
+                    transport = httpx.HTTPTransport(uds=str(Path(directory, name)), verify=False)
+                    with httpx.Client(transport=transport, base_url="http://gateway", timeout=10) as client:
+                        session = self.initialize(client, name, url="/mcp/")
+                        tools = self.request(client, session, "tools/list", principal=name, url="/mcp/")["tools"]
+                        self.assertEqual([tool["name"] for tool in tools], expected)
+            finally:
+                server.should_exit = True
+                thread.join()
 
 
 class TransportTest(unittest.TestCase):

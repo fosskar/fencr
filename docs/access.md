@@ -80,9 +80,9 @@ journal and the sandbox's state, and need root. Changing a sandbox's
 configuration means changing the system configuration and running
 `nixos-rebuild`.
 
-For the optional [MCP gateway](mcp-gateway.md), `fencr status` shows HTTP
-requests to `mcp.fencr`, not individual tool calls.
-Gateway diagnostics are in `journalctl -u fencr-mcp-gateway.service`.
+`fencr status` does not list requests to the optional
+[MCP gateway](mcp-gateway.md). The gateway logs each tool call in
+`journalctl -u fencr-mcp-gateway.service`.
 
 ## host root, stated plainly
 

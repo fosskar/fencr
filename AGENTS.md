@@ -68,8 +68,14 @@ configuration, SSH access and the checkpoint commands.
   to inject the header. `nix build .#egress` builds it on its own and runs its tests.
 - `modules/mcp-gateway.nix` wires the optional host gateway in
   `pkgs/mcp-gateway/`, a Python program using the MCP SDK. Enabled sandboxes call
-  `https://mcp.fencr/mcp/` through their egress unit, which injects a per-sandbox
-  token from `/var/lib/fencr-mcp/<name>`. `gateway.py` keeps separate session
+  `http://127.0.0.1:<fencr.mcpGateway.port>/mcp/` (`agentSandbox.mcp.url`);
+  the guest's `fencr-mcp.socket` hands each connection to `fencr-mcp@.service`,
+  which forwards it to vsock port 7 (`mcpPort`), and Firecracker delivers it to
+  `/run/fencr-<name>/vsock_7`. `fencr-mcp-gateway.socket` holds one such socket
+  per sandbox, and `create_app` names the principal by the path uvicorn reports
+  as `scope["server"][0]`; `main` refuses to start unless systemd passed exactly
+  the principals' sockets. No egress unit, credential or token is involved.
+  `gateway.py` keeps separate session
   registries per principal and forwards to explicit backends: `url` ones on
   host loopback with host-held tokens, `command` ones over the stdio
   transport through `socket_transport`. A stdio backend is not a child of
@@ -77,14 +83,13 @@ configuration, SSH access and the checkpoint commands.
   `/run/fencr-mcp/<server>.sock` with `Accept=yes`, group `fencr-mcp` (the
   gateway's supplementary group, nothing else's), and starts
   `fencr-mcp-backend-<server>@.service` per connection under its own
-  dynamic user, so the backend cannot read the gateway's tokens. Its `Sessions` keeps a backend session open for a
+  dynamic user, so the backend cannot read the gateway's backend tokens. Its `Sessions` keeps a backend session open for a
   30-second idle window, keyed by principal and backend, never by backend
   alone: a sandbox reuses only what it opened itself. A backend no `allow`
   pattern of a principal can reach is never opened for it (`reachable`).
   Sessions open on first use,
   not at startup, so a backend that is down cannot keep the gateway from
-  starting and every mcp-enabled sandbox from its other backends. The gateway's
-  port is held by `fencr-mcp-gateway.socket`, which the egress units require. An `Open` task enters
+  starting and every mcp-enabled sandbox from its other backends. An `Open` task enters
   and exits each session's context and nothing else does: anyio binds a cancel
   scope to the entering task, so a session entered in a request task and held
   past it makes the next request unwind out of order. Any test double for
@@ -95,7 +100,7 @@ configuration, SSH access and the checkpoint commands.
   `fencr.sandboxes.<name>.ip`; payloads provide listeners for `inbound` ports on
   that address. The firewall's output chain lets the host reach those ports and
   nothing else. vsock
-  carries only the boot-time fetches and the power button: Firecracker's
+  carries only the boot-time fetches, the power button and the MCP gateway: Firecracker's
   unix socket `/run/fencr-<name>/vsock`, in a directory only the sandbox's user
   enters, with guest-to-host port N arriving on `vsock_N` beside it and
   Firecracker's API socket at `api.sock`. Both Firecracker and this socket
@@ -193,9 +198,8 @@ configuration, SSH access and the checkpoint commands.
   `mcp.allow` grants. The gateway does not ask for approval; `mcp.allow`
   and `hiddenTools` alone decide what a sandbox may list and call. A failed
   tool listing is retried once on a fresh session, a failed tool call is
-  not: the backend may have acted. Generated MCP credentials set
-  `substitutePlaceholder = false` so tool arguments cannot receive tokens
-  through placeholder substitution. A backend sets exactly one of `url`
+  not: the backend may have acted. The gateway logs every call and refusal,
+  since `fencr status` sees no MCP request. A backend sets exactly one of `url`
   (host IPv4 loopback, with `tokenFile`) and `command` (absolute executable,
   no `tokenFile`); guests cannot reach the gateway or backends directly by
   default.
@@ -285,8 +289,9 @@ nix flake check
   entries and the access log, the guest seeing the placeholder rather than the
   value in an echoed response, checkpoints and restore, and a clean stop.
   It also checks MCP tool filtering, session isolation, a stdio backend's
-  process per sandbox and its lack of access to the gateway's tokens,
-  token secrecy and persistence, and blocked direct gateway/backend access.
+  process per sandbox and its lack of access to the gateway's credentials,
+  the per-sandbox vsock sockets, the gateway's call log, a gateway restart,
+  and blocked direct gateway/backend access.
   It checks guest-local logs, serial suppression, Firecracker diagnostics,
   API permissions, and bounded `fencr status` behavior with a stopped VMM
   process (`SIGSTOP`, then `SIGCONT`), without changing systemd's active state.

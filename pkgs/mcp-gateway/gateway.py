@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 import socket
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,10 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Mount
+
+
+def log(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 def secret(name: str) -> str:
@@ -252,12 +257,19 @@ def create_server(name, principal, config, sessions):
             not separator or server_name not in servers or not tool_name
             or not permitted(server_name, tool_name)
         ):
+            log(f"{name}: refused {tool!r}")
             raise ValueError("unknown MCP gateway tool")
-        return await sessions.call(
-            (name, server_name), servers[server_name],
-            lambda session: session.call_tool(tool_name, arguments),
-            retry=False,
-        )
+        try:
+            result = await sessions.call(
+                (name, server_name), servers[server_name],
+                lambda session: session.call_tool(tool_name, arguments),
+                retry=False,
+            )
+        except Exception as error:
+            log(f"{name}: called {server_name}.{tool_name}: failed: {type(error).__name__}")
+            raise
+        log(f"{name}: called {server_name}.{tool_name}" + (": error" if result.isError else ""))
+        return result
 
     return gateway
 
@@ -278,22 +290,27 @@ def live_sessions(manager) -> int:
 
 
 def create_app(config):
-    tokens = {}
+    """The gateway, with a principal per listening socket.
+
+    Each sandbox reaches the gateway through a socket in its own run
+    directory, which only its hypervisor enters, so the socket a request
+    arrived on names its principal. uvicorn reports that socket's path as
+    the first half of the scope's server.
+    """
+    managers = {}
     opening = {}
     sessions = Sessions()
     for name, principal in config["principals"].items():
-        token = secret(principal["token_credential"])
-        if not token.startswith("Bearer ") or token.encode() in tokens:
-            raise RuntimeError("gateway principals need distinct bearer credentials")
-        tokens[token.encode()] = StreamableHTTPSessionManager(
+        if principal["socket"] in managers:
+            raise RuntimeError("gateway principals need distinct sockets")
+        managers[principal["socket"]] = StreamableHTTPSessionManager(
             app=create_server(name, principal, config, sessions),
             json_response=True,
             session_idle_timeout=1800,
         )
 
     async def handle(scope, receive, send):
-        authorization = [value for key, value in scope["headers"] if key == b"authorization"]
-        manager = tokens.get(authorization[0]) if len(authorization) == 1 else None
+        manager = managers.get((scope.get("server") or (None,))[0])
         if manager is None:
             await PlainTextResponse("Unauthorized", status_code=401)(scope, receive, send)
             return
@@ -322,7 +339,7 @@ def create_app(config):
     async def lifespan(_):
         async with contextlib.AsyncExitStack() as stack:
             stack.push_async_callback(sessions.aclose)
-            for manager in tokens.values():
+            for manager in managers.values():
                 await stack.enter_async_context(manager.run())
             yield
 
@@ -331,13 +348,16 @@ def create_app(config):
 
 def main():
     config = json.loads(Path(os.environ["MCP_GATEWAY_CONFIG"]).read_text())
-    # pid 1 holds the port while this process restarts, so no other host user
-    # can bind it and receive the tokens the egress units send here
-    if os.environ.get("LISTEN_PID") != str(os.getpid()) or os.environ.get("LISTEN_FDS") != "1":
+    # pid 1 holds the sockets while this process restarts, so a request never
+    # finds the path free for another listener
+    if os.environ.get("LISTEN_PID") != str(os.getpid()):
         raise RuntimeError("no socket from systemd: run from fencr-mcp-gateway.socket")
-    listener = socket.socket(fileno=3)
+    listeners = [socket.socket(fileno=3 + index) for index in range(int(os.environ["LISTEN_FDS"]))]
+    paths = sorted(listener.getsockname() for listener in listeners)
+    if paths != sorted(principal["socket"] for principal in config["principals"].values()):
+        raise RuntimeError(f"systemd passed sockets {paths}, not one per principal")
     server = uvicorn.Server(uvicorn.Config(create_app(config), access_log=False))
-    server.run(sockets=[listener])
+    server.run(sockets=listeners)
 
 
 if __name__ == "__main__":
