@@ -188,7 +188,6 @@ in
       fileSystems."/".autoResize = true;
       system.switch.enable = false;
       # the perlless profile's activation, without its ban on perl in the closure
-      boot.initrd.systemd.enable = true;
       system.etc.overlay.enable = true;
       services.userborn.enable = true;
       systemd.services = lib.mkMerge [
