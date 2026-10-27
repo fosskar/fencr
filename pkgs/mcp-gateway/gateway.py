@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-import httpx
+import httpx2
 import uvicorn
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
@@ -59,7 +59,7 @@ async def socket_transport(path: str):
                     buffer = lines.pop()
                     for line in lines:
                         try:
-                            message = types.JSONRPCMessage.model_validate_json(line)
+                            message = types.jsonrpc_message_adapter.validate_json(line, by_name=False)
                         except Exception as error:
                             await read_writer.send(error)
                             continue
@@ -68,7 +68,7 @@ async def socket_transport(path: str):
         async def writer():
             async with write_reader:
                 async for item in write_reader:
-                    line = item.message.model_dump_json(by_alias=True, exclude_none=True)
+                    line = item.message.model_dump_json(by_alias=True, exclude_unset=True)
                     await connection.send(line.encode() + b"\n")
 
         async with anyio.create_task_group() as group:
@@ -86,13 +86,13 @@ async def downstream(server: dict[str, Any]):
         if "socket" in server:
             read, write = await stack.enter_async_context(socket_transport(server["socket"]))
         else:
-            http_client = await stack.enter_async_context(httpx.AsyncClient(
-                timeout=httpx.Timeout(30, read=300),
+            http_client = await stack.enter_async_context(httpx2.AsyncClient(
+                timeout=httpx2.Timeout(30, read=300),
                 headers={"Authorization": f"Bearer {secret(server['token_credential'])}"},
                 follow_redirects=False,
                 trust_env=False,
             ))
-            read, write, _ = await stack.enter_async_context(
+            read, write = await stack.enter_async_context(
                 streamable_http_client(server["url"], http_client=http_client)
             )
         session = await stack.enter_async_context(ClientSession(read, write))
@@ -204,7 +204,6 @@ class Sessions:
 
 def create_server(name, principal, config, sessions):
     servers = config["servers"]
-    gateway = Server("fencr-mcp-gateway")
 
     def permitted(server_name, tool_name):
         return (
@@ -226,8 +225,12 @@ def create_server(name, principal, config, sessions):
                 return True
         return False
 
-    @gateway.list_tools()
-    async def list_tools() -> list[types.Tool]:
+    def failed(message: str) -> types.CallToolResult:
+        # what the v1 sdk made of an exception: the client sees a tool error
+        # rather than a protocol one
+        return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
+
+    async def list_tools(_ctx, _params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         tools = []
         for server_name, server in servers.items():
             if not reachable(server_name):
@@ -237,28 +240,30 @@ def create_server(name, principal, config, sessions):
                 found = []
                 cursor = None
                 while True:
-                    result = await session.list_tools(cursor=cursor)
+                    result = await session.list_tools(
+                        params=None if cursor is None else types.PaginatedRequestParams(cursor=cursor)
+                    )
                     found.extend(
                         tool.model_copy(update={"name": f"{server_name}__{tool.name}"})
                         for tool in result.tools
                         if permitted(server_name, tool.name)
                     )
-                    cursor = result.nextCursor
+                    cursor = result.next_cursor
                     if cursor is None:
                         return found
 
             tools.extend(await sessions.call((name, server_name), server, listing))
-        return tools
+        return types.ListToolsResult(tools=tools)
 
-    @gateway.call_tool()
-    async def call_tool(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
+    async def call_tool(_ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+        tool, arguments = params.name, params.arguments or {}
         server_name, separator, tool_name = tool.partition("__")
         if (
             not separator or server_name not in servers or not tool_name
             or not permitted(server_name, tool_name)
         ):
             log(f"{name}: refused {tool!r}")
-            raise ValueError("unknown MCP gateway tool")
+            return failed("unknown MCP gateway tool")
         try:
             result = await sessions.call(
                 (name, server_name), servers[server_name],
@@ -267,11 +272,11 @@ def create_server(name, principal, config, sessions):
             )
         except Exception as error:
             log(f"{name}: called {server_name}.{tool_name}: failed: {type(error).__name__}")
-            raise
-        log(f"{name}: called {server_name}.{tool_name}" + (": error" if result.isError else ""))
+            return failed(str(error))
+        log(f"{name}: called {server_name}.{tool_name}" + (": error" if result.is_error else ""))
         return result
 
-    return gateway
+    return Server("fencr-mcp-gateway", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 # sessions one principal may hold at once; the gateway is shared by every

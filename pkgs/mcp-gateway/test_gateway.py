@@ -22,7 +22,8 @@ class Backend:
     def __init__(self):
         self.calls = []
 
-    async def list_tools(self, cursor=None):
+    async def list_tools(self, params=None):
+        cursor = params.cursor if params else None
         names = ["read", "write"] if cursor is None else ["hidden"]
         return types.ListToolsResult(
             tools=[types.Tool(name=name, inputSchema={"type": "object"}) for name in names],
@@ -148,10 +149,10 @@ class GatewayTest(unittest.TestCase):
             failures = [True]
             original = self.backend.list_tools
 
-            async def once(cursor=None):
+            async def once(params=None):
                 if failures.pop() if failures else False:
                     raise RuntimeError("the backend went away")
-                return await original(cursor)
+                return await original(params)
 
             self.backend.list_tools = once
             tools = self.request(client, agent, "tools/list")["tools"]

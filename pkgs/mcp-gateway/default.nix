@@ -6,6 +6,11 @@
 }:
 let
   python = python3.withPackages (packages: [ packages.mcp ]);
+  # the tests drive the gateway with httpx, which mcp v2 no longer pulls in
+  testPython = python3.withPackages (packages: [
+    packages.mcp
+    packages.httpx
+  ]);
   gateway = writeShellApplication {
     name = "fencr-mcp-gateway";
     runtimeInputs = [ python ];
@@ -24,7 +29,7 @@ gateway.overrideAttrs (old: {
     install -Dm444 ${./LICENSE} "$out/share/licenses/fencr-mcp-gateway/LICENSE"
   '';
   passthru = (old.passthru or { }) // {
-    tests.contract = runCommand "fencr-mcp-gateway-tests" { nativeBuildInputs = [ python ]; } ''
+    tests.contract = runCommand "fencr-mcp-gateway-tests" { nativeBuildInputs = [ testPython ]; } ''
       cp ${./gateway.py} gateway.py
       cp ${./test_gateway.py} test_gateway.py
       python -m unittest -v test_gateway
