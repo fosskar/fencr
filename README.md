@@ -202,6 +202,14 @@ cover, so the host answered 403 without the key ever leaving.
 The host is the trust root. fencr defends the host and your credentials
 against the guest, in that order.
 
+A guest that escapes its virtual machine lands in the Firecracker process,
+so that process is confined too. It runs as the sandbox's unprivileged host
+user in an empty read-only root, with `/dev/kvm` and `/dev/net/tun` as its
+only devices, behind Firecracker's own seccomp filter. Firecracker ships that
+filter for musl targets only and gives a glibc build an empty one
+([`docs/seccomp.md`](https://github.com/firecracker-microvm/firecracker/blob/main/docs/seccomp.md)),
+so fencr runs the static musl build.
+
 > [!IMPORTANT]
 > Host root is trusted and reaches every sandbox. SSH into a sandbox grants
 > guest root — that is the intended privilege level, not a weakness. `inbound`
