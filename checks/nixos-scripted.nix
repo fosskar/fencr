@@ -14,6 +14,8 @@ let
   networking = {
     imports = [ self.nixosModules.fencr ];
     systemd.network.enable = true;
+    # dhcpcd takes eth1 alone; the global default draws nixos's networkd-and-dhcpcd warning
+    networking.useDHCP = false;
     networking.interfaces.eth1 = {
       ipv4.addresses = lib.mkForce [ ];
       useDHCP = true;
