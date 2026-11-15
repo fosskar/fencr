@@ -131,14 +131,9 @@ in
           }
         ];
         firecracker.extraConfig.entropy = { };
-        # firecracker below 1.17 takes no bzImage, and the dev output's vmlinux is 400 MiB
+        # the runner boots the dev output's vmlinux, 400 MiB with debug symbols
         firecracker.extraConfig."boot-source".kernel_image_path =
-          lib.mkIf pkgs.stdenv.hostPlatform.isx86_64 "${pkgs.runCommand "vmlinux-stripped"
-            { nativeBuildInputs = [ pkgs.binutils ]; }
-            ''
-              strip -o $out ${config.boot.kernelPackages.kernel.dev}/vmlinux
-            ''
-          }";
+          lib.mkIf pkgs.stdenv.hostPlatform.isx86_64 "${config.boot.kernelPackages.kernel}/bzImage";
         # hide vmx (leaf 1 ecx bit 5) and svm (leaf 0x80000001 ecx bit 2) from the guest
         firecracker.cpu = lib.mkIf pkgs.stdenv.hostPlatform.isx86_64 (
           let

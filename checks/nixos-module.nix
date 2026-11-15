@@ -172,6 +172,14 @@ in
     }
     {
       assertion =
+        system != "x86_64-linux"
+        ||
+          lib.hasSuffix "/bzImage"
+            guestConfig.microvm.firecracker.extraConfig."boot-source".kernel_image_path;
+      message = "nixos module check: the x86_64 guest does not boot the kernel's bzImage";
+    }
+    {
+      assertion =
         let
           sbx = guestConfig.microvm.firecracker.extraConfig;
           sealed = config.fencr.guestSystems.sealed.config.microvm.firecracker.extraConfig;

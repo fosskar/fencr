@@ -158,8 +158,9 @@ What the port changed:
 - Firecracker leaves its vsock socket behind; the unit removes it before
   each start
 - the runner boots `vmlinux` from the kernel's `dev` output, 400 MiB with
-  debug symbols; fencr strips it to 57 MiB. A bzImage needs Firecracker
-  1.17, unreleased (issue 10)
+  debug symbols; fencr stripped it to 57 MiB until Firecracker 1.17
+  loaded a bzImage on x86_64 (issue 10). Since 2026-11-15 the guest boots
+  the kernel's own `bzImage` and the strip derivation is gone
 
 Removed with crosvm: the microvm.nix patch, the fw_cfg ssdt, the
 user-namespace assertion, the vhost-vsock device and the `vhost_vsock`
