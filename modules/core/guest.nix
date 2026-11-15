@@ -83,7 +83,10 @@ in
       microvm = {
         hypervisor = "firecracker";
         # nixpkgs' glibc build ships an empty seccomp policy; only musl gets the allowlist
-        firecracker.package = pkgs.pkgsStatic.firecracker;
+        # the cargo hook demands a system aws-lc the 1.17.0 package does not pass; nixpkgs#585649
+        firecracker.package = pkgs.pkgsStatic.firecracker.overrideAttrs (old: {
+          preBuild = (old.preBuild or "") + "unset AWS_LC_SYS_USE_SYSTEM\n";
+        });
         firecracker.extraArgs = [
           "--log-path"
           "/proc/self/fd/2"

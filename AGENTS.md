@@ -244,8 +244,8 @@ configuration, SSH access and the checkpoint commands.
 
 ## development and verification
 
-Use the Firecracker version in the pinned nixpkgs, currently 1.16.1. Upstream
-1.17.0 being released does not make it available in nixpkgs. Do not propose a
+Use the Firecracker version in the pinned nixpkgs, currently 1.17.0. An
+upstream release does not make a version available in nixpkgs. Do not propose a
 custom build or upgrade as the solution to issues waiting on nixpkgs support.
 
 Flake outputs cover `x86_64-linux` and `aarch64-linux`. Commands below use
