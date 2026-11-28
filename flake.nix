@@ -62,10 +62,10 @@
 
         cli = import ./checks/cli.nix self pkgs;
 
-        mcp-gateway = (pkgs.callPackage ./pkgs/mcp-gateway { }).tests.contract;
         mcp-module = import ./checks/mcp-module.nix self pkgs;
 
-        # buildGoModule runs the package's own tests
+        # buildGoModule runs the packages' own tests
+        mcp-gateway = pkgs.callPackage ./pkgs/mcp-gateway { };
         egress = pkgs.callPackage ./pkgs/egress { };
 
         nixos-boot = import ./checks/nixos-boot.nix self pkgs;
