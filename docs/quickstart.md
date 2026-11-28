@@ -71,6 +71,7 @@ From another machine, such as your laptop, jump through the host. Add this to
 ```
 Host myagent
   HostName 10.11.0.2
+  HostKeyAlias myagent
   User root
   ProxyJump fencr-jump-myagent@myhost
 ```

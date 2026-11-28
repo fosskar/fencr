@@ -17,7 +17,9 @@ ssh <sandbox-name>
 ```
 
 The module writes a `Host <sandbox-name>` alias into the system ssh
-configuration with the sandbox's address as `HostName`. Authentication is your
+configuration with the sandbox's address as `HostName` and its name as
+`HostKeyAlias`, so `known_hosts` keys the sandbox's host key by name: a later
+sandbox that reuses the address does not trip the host key check. Authentication is your
 own ssh key against the sandbox's authorized list, not your host privileges.
 
 ## from another machine (sandbox runs on a server)
@@ -29,6 +31,7 @@ through it. Put this in `~/.ssh/config` on your machine, with the address
 ```
 Host myvm
   HostName 10.11.0.2
+  HostKeyAlias myvm
   User root
   ProxyJump fencr-jump-myvm@server
 ```

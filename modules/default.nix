@@ -141,6 +141,7 @@ in
           Host ${name}
             HostName ${cfg.ip}
             User root
+            HostKeyAlias ${name}
             StrictHostKeyChecking accept-new
         ''
       ) resolvedInstances
