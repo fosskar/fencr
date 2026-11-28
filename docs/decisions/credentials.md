@@ -304,3 +304,27 @@ outside `/mcp/`, which the credential's `allow` used to do.
 The guest reaching the gateway on the bridge address was rejected: a
 firewall pinhole per sandbox, and a source address is a weaker identity than
 a socket of its own.
+
+## 2026-11-28: the mcp gateway in go
+
+The gateway was the one Python program in fencr, and its closure was 271.7
+MiB, `python3.withPackages [ mcp ]`. A good part of it worked around the
+Python SDK: a task of its own held every downstream session because anyio
+binds a cancel scope to the task that enters one, and the session cap read
+the SDK's private registry because a session closed with DELETE stayed
+there until the process ended
+([#133](https://github.com/fosskar/fencr/issues/133)).
+
+It is now Go on the official SDK, `github.com/modelcontextprotocol/go-sdk`,
+with the same config and behaviour; its closure is 12.6 MiB. The SDK keeps a
+handler per principal, counts a server's live sessions itself and drops a
+session on DELETE, and a stdio backend is an `IOTransport` on the unix
+socket. The gateway pins protocol version 2025-11-25 toward backends, the
+last with the initialize handshake its reused sessions rest on, and opens
+no standalone stream, since it forwards no server-initiated message.
+
+What it cost: fencr's first third-party Go module, with its own dependencies
+and a `vendorHash`, and session handling that follows the Go SDK where the
+Python workarounds made assumptions. A Go gateway on the standard library
+alone was the fallback; it would track sessions, SSE and version
+negotiation itself while MCP's transport keeps changing.

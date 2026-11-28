@@ -710,7 +710,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # mcp needs neither the authority nor a credential: open has no other
       host.fail("systemctl is-active fencr-open-trust.socket fencr-open-ca.service")
       host.succeed("journalctl -u fencr-mcp-gateway.service -o cat | grep -Fx 'sbx: called test.read'")
-      host.succeed("journalctl -u fencr-mcp-gateway.service -o cat | grep -F \"open: refused 'test__write'\"")
+      host.succeed("journalctl -u fencr-mcp-gateway.service -o cat | grep -F 'open: refused \"test__write\"'")
       # pid 1 holds the sockets, so a sandbox reaches a restarted gateway
       host.succeed("systemctl restart fencr-mcp-gateway.service", timeout=60)
       assert re.search(r"^HTTP/\S+ 200\b", mcp(ssh_open, initialize)), "no gateway after a restart"

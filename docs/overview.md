@@ -215,7 +215,7 @@ modules/
 pkgs/
 ├── egress/        # go, stdlib only — dns, sni, splice, credentials
 ├── cli/           # go, instance tables generated at build
-├── mcp-gateway/   # python, MCP SDK
+├── mcp-gateway/   # go, official MCP SDK
 └── domain.go      # the wildcard rule, shared by both go programs
 ```
 

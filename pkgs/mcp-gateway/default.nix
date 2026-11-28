@@ -1,39 +1,13 @@
-{
-  lib,
-  python3,
-  runCommand,
-  writeShellApplication,
-}:
-let
-  python = python3.withPackages (packages: [ packages.mcp ]);
-  # the tests drive the gateway with httpx, which mcp v2 no longer pulls in
-  testPython = python3.withPackages (packages: [
-    packages.mcp
-    packages.httpx
-  ]);
-  gateway = writeShellApplication {
-    name = "fencr-mcp-gateway";
-    runtimeInputs = [ python ];
-    text = ''
-      exec python ${./gateway.py}
-    '';
-    meta = {
-      description = "Host MCP gateway with per-sandbox permissions";
-      license = lib.licenses.mit;
-      mainProgram = "fencr-mcp-gateway";
-    };
+{ lib, buildGoModule }:
+buildGoModule {
+  pname = "fencr-mcp-gateway";
+  version = "0";
+  src = ./.;
+  vendorHash = "sha256-NbuvbsmNbz3aKdjyyfpkbi52yRhXl473j3LvAUDn3L8=";
+  env.CGO_ENABLED = 0;
+  meta = {
+    description = "Host MCP gateway with per-sandbox permissions";
+    license = lib.licenses.mit;
+    mainProgram = "fencr-mcp-gateway";
   };
-in
-gateway.overrideAttrs (old: {
-  buildCommand = old.buildCommand + ''
-    install -Dm444 ${./LICENSE} "$out/share/licenses/fencr-mcp-gateway/LICENSE"
-  '';
-  passthru = (old.passthru or { }) // {
-    tests.contract = runCommand "fencr-mcp-gateway-tests" { nativeBuildInputs = [ testPython ]; } ''
-      cp ${./gateway.py} gateway.py
-      cp ${./test_gateway.py} test_gateway.py
-      python -m unittest -v test_gateway
-      touch "$out"
-    '';
-  };
-})
+}

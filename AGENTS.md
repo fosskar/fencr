@@ -67,18 +67,21 @@ configuration, SSH access and the checkpoint commands.
   credential's domain using the authority and handler in `credentials.go`
   to inject the header. `nix build .#egress` builds it on its own and runs its tests.
 - `modules/mcp-gateway.nix` wires the optional host gateway in
-  `pkgs/mcp-gateway/`, a Python program using the MCP SDK. Enabled sandboxes call
+  `pkgs/mcp-gateway/`, one Go program on the official MCP SDK
+  (`github.com/modelcontextprotocol/go-sdk`), fencr's one third-party Go
+  module, so its `buildGoModule` carries a `vendorHash`. Enabled sandboxes call
   `http://127.0.0.1:<fencr.mcpGateway.port>/mcp/` (`agentSandbox.mcp.url`);
   the guest's `fencr-mcp.socket` hands each connection to `fencr-mcp@.service`,
   which forwards it to vsock port 7 (`mcpPort`), and Firecracker delivers it to
   `/run/fencr-<name>/vsock_7`. `fencr-mcp-gateway.socket` holds one such socket
-  per sandbox, and `create_app` names the principal by the path uvicorn reports
-  as `scope["server"][0]`; `main` refuses to start unless systemd passed exactly
-  the principals' sockets. No egress unit, credential or token is involved.
-  `gateway.py` keeps separate session
-  registries per principal and forwards to explicit backends: `url` ones on
+  per sandbox, and the gateway names the principal by the socket path a
+  connection arrived on (`http.LocalAddrContextKey`); `run` refuses to start
+  unless systemd passed exactly the principals' sockets. No egress unit,
+  credential or token is involved. `main.go` keeps a separate
+  `StreamableHTTPHandler`, and so a separate session registry, per principal
+  and forwards to explicit backends: `url` ones on
   host loopback with host-held tokens, `command` ones over the stdio
-  transport through `socket_transport`. A stdio backend is not a child of
+  transport, an `IOTransport` on the unix socket. A stdio backend is not a child of
   the gateway: `fencr-mcp-backend-<server>.socket` holds
   `/run/fencr-mcp/<server>.sock` with `Accept=yes`, group `fencr-mcp` (the
   gateway's supplementary group, nothing else's), and starts
@@ -89,12 +92,8 @@ configuration, SSH access and the checkpoint commands.
   pattern of a principal can reach is never opened for it (`reachable`).
   Sessions open on first use,
   not at startup, so a backend that is down cannot keep the gateway from
-  starting and every mcp-enabled sandbox from its other backends. An `Open` task enters
-  and exits each session's context and nothing else does: anyio binds a cancel
-  scope to the entering task, so a session entered in a request task and held
-  past it makes the next request unwind out of order. Any test double for
-  `downstream` needs a real `anyio.create_task_group()` or it cannot catch
-  that. `mcp.allow` matches `<server>.<tool>`; clients see
+  starting and every mcp-enabled sandbox from its other backends.
+  `mcp.allow` matches `<server>.<tool>` with `path.Match`; clients see
   `<server>__<tool>`. Payloads configure their own MCP clients.
 - The bridge is the road between host and guest: the guest's sshd listens on
   `fencr.sandboxes.<name>.ip`; payloads provide listeners for `inbound` ports on
@@ -276,9 +275,12 @@ nix flake check
 - `checks/cli.nix` exercises the compiled CLI with mocked system commands.
 - `checks.egress` is the package itself: `buildGoModule` runs `pkgs/egress`'s
   own `go test` cases in its check phase.
-- `checks.mcp-gateway` runs `pkgs/mcp-gateway/test_gateway.py` through
-  `tests.contract`, covering authorization, session isolation, backend session
-  reuse and its per-principal keying, retries and both backend transports. `checks/mcp-module.nix` verifies gateway
+- `checks.mcp-gateway` is the package itself: `buildGoModule` runs
+  `pkgs/mcp-gateway/gateway_test.go`, which starts the gateway as its own
+  process on sockets passed as systemd passes them, against a fake `url` and
+  stdio backend, covering authorization, session isolation, backend session
+  reuse and its per-principal keying, retries and both backend transports.
+  `FENCR_MCP_GATEWAY` runs the same cases against another executable. `checks/mcp-module.nix` verifies gateway
   options, credentials, unit wiring and validation.
 - `checks/nixos-module.nix` asserts host/guest module wiring; its flake check
   builds the resulting NixOS toplevel, not just evaluation.

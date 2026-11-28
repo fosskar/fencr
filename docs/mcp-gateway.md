@@ -153,7 +153,7 @@ journalctl -u fencr-mcp-gateway.service
 ```
 
 The gateway logs every tool call and refused tool name as
-`<sandbox>: called <server>.<tool>` or `<sandbox>: refused '<name>'`.
+`<sandbox>: called <server>.<tool>` or `<sandbox>: refused "<name>"`.
 `fencr status` does not list MCP requests.
 
 pid 1 holds every sandbox's socket while the gateway restarts, so a restart
