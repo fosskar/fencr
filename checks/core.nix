@@ -728,6 +728,15 @@ assert lib.assertMsg (
   && pathsOf { secrets.raw = "/run/secrets/raw"; } == { }
   && pathsOf { secretsRestartOnChange = true; } == { }
 ) "unit check: a rewritten raw secret does not restart its sandbox";
+# a missing source would fail the relay after the guest booted, and the guest
+# would read an empty stream instead of its secrets
+assert lib.assertMsg (
+  (core.microvmService pkgs cli (resolve "sbx" {
+    id = 0;
+    secrets.raw = "/run/secrets/raw";
+  }) "/run/x").unitConfig.AssertPathExists == [ "/run/secrets/raw" ]
+  && (core.microvmService pkgs cli resolved "/run/x").unitConfig.AssertPathExists == [ ]
+) "unit check: a missing raw secret source does not stop the sandbox";
 assert lib.assertMsg (
   occurrences ''oifname "br-sbx" ip daddr 10.11.0.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
   == 1
