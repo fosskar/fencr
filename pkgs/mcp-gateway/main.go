@@ -33,6 +33,8 @@ type server struct {
 type principal struct {
 	Socket string   `json:"socket"`
 	Allow  []string `json:"allow"`
+	// a server with per-sandbox credentials has a socket per principal
+	BackendSockets map[string]string `json:"backend_sockets"`
 }
 
 type config struct {
@@ -234,6 +236,16 @@ func reachable(p *principal, serverName string) bool {
 	return false
 }
 
+func (g *gateway) backend(p *principal, serverName string) *server {
+	backend := g.config.Servers[serverName]
+	if socket, ok := p.BackendSockets[serverName]; ok {
+		own := *backend
+		own.Socket = socket
+		return &own
+	}
+	return backend
+}
+
 func (g *gateway) listTools(ctx context.Context, name string, p *principal) (*mcp.ListToolsResult, error) {
 	tools := []*mcp.Tool{}
 	for _, serverName := range slices.Sorted(maps.Keys(g.config.Servers)) {
@@ -241,7 +253,7 @@ func (g *gateway) listTools(ctx context.Context, name string, p *principal) (*mc
 			continue
 		}
 		var found []*mcp.Tool
-		err := g.sessions.call(ctx, key{name, serverName}, g.config.Servers[serverName], true, func(session *mcp.ClientSession) error {
+		err := g.sessions.call(ctx, key{name, serverName}, g.backend(p, serverName), true, func(session *mcp.ClientSession) error {
 			found = nil
 			params := &mcp.ListToolsParams{}
 			for {
@@ -281,7 +293,7 @@ func (g *gateway) callTool(ctx context.Context, name string, p *principal, param
 		arguments = params.Arguments
 	}
 	var result *mcp.CallToolResult
-	err := g.sessions.call(ctx, key{name, serverName}, g.config.Servers[serverName], false, func(session *mcp.ClientSession) (err error) {
+	err := g.sessions.call(ctx, key{name, serverName}, g.backend(p, serverName), false, func(session *mcp.ClientSession) (err error) {
 		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
 		return err
 	})

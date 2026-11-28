@@ -86,7 +86,12 @@ configuration, SSH access and the checkpoint commands.
   `/run/fencr-mcp/<server>.sock` with `Accept=yes`, group `fencr-mcp` (the
   gateway's supplementary group, nothing else's), and starts
   `fencr-mcp-backend-<server>@.service` per connection under its own
-  dynamic user, so the backend cannot read the gateway's backend tokens. Its `Sessions` keeps a backend session open for a
+  dynamic user, so the backend cannot read the gateway's backend tokens.
+  A server some sandbox names in `mcp.credentials` has no shared socket:
+  each sandbox gets `/run/fencr-mcp/<server>/<sandbox>.sock` and
+  `fencr-mcp-backend-<server>-<sandbox>@.service`, a copy of the shared
+  template's `environment`, `path` and `serviceConfig` plus its own
+  `LoadCredential`, and the gateway picks it by principal (`backend_sockets`). Its `Sessions` keeps a backend session open for a
   30-second idle window, keyed by principal and backend, never by backend
   alone: a sandbox reuses only what it opened itself. A backend no `allow`
   pattern of a principal can reach is never opened for it (`reachable`).

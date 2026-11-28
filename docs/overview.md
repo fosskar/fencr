@@ -28,7 +28,9 @@ On the host, at `10.11.<id>.1`:
 Host-wide: `fencr-credentials-reload`, `fencr-secret-<name>@` for each
 `secretCommand` credential, and with the MCP gateway `fencr-mcp-gateway`,
 listening on vsock port 7 of each participating sandbox, and
-`fencr-mcp-backend-<server>@` for each stdio backend.
+`fencr-mcp-backend-<server>@` for each stdio backend, or
+`fencr-mcp-backend-<server>-<sandbox>@` per sandbox for one with
+`mcp.credentials`.
 
 In the guest, at `10.11.<id>.2`, vsock cid `3 + id`:
 

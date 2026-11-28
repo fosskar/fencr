@@ -108,6 +108,27 @@ The hardening includes `MemoryDenyWriteExecute`, which a JIT runtime such as
 Node.js does not start under; set it to `false` there for such a backend.
 The command's stderr goes to the journal of its instance unit.
 
+### per-sandbox credentials
+
+A backend that logs in as a different account per sandbox takes the account's
+files from the sandbox:
+
+```nix
+fencr.sandboxes.simon.mcp.credentials.calendar.password = "/run/secrets/calendar-simon";
+fencr.sandboxes.hermina.mcp.credentials.calendar.password = "/run/secrets/calendar-hermina";
+```
+
+Once one sandbox sets `mcp.credentials.calendar`, the server has no shared
+socket: every sandbox whose `allow` reaches it must set its own, or evaluation
+fails. Each one gets `fencr-mcp-backend-calendar-<sandbox>.socket` on
+`/run/fencr-mcp/calendar/<sandbox>.sock` and
+`fencr-mcp-backend-calendar-<sandbox>@.service`, which copies `environment`,
+`path` and `serviceConfig` from `fencr-mcp-backend-calendar@` and appends that
+sandbox's files to `LoadCredential`. Configure the backend once on
+`fencr-mcp-backend-calendar@`; no process holds two sandboxes' files. Both
+sandboxes use one server name, `calendar.*` in `allow` and `calendar__<tool>` in
+the client.
+
 ## tool permissions
 
 - `fencr.sandboxes.<name>.mcp.allow` contains `<server>.<tool>` globs, such as

@@ -610,6 +610,39 @@ func TestSocketTransportSpeaksStdioOneConnectionPerSession(t *testing.T) {
 	}
 }
 
+// a server with per-sandbox credentials has no shared socket; each principal
+// reaches its own, which a backend per listener stands in for
+func TestAPrincipalOpensItsOwnBackendSocket(t *testing.T) {
+	h := setup(t)
+	h.config.Servers = map[string]*server{"mail": {HiddenTools: []string{}}}
+	for index, name := range []string{"agent", "reader"} {
+		path := filepath.Join(h.dir, "mail-"+name+".sock")
+		listener, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { listener.Close() })
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				go stdioBackend(conn, index+1)
+			}
+		}()
+		h.config.Principals[name].Allow = []string{"mail.*"}
+		h.config.Principals[name].BackendSockets = map[string]string{"mail": path}
+	}
+	clients := h.start()
+	for name, expected := range map[string]string{"agent": "connection 1", "reader": "connection 2"} {
+		c := clients[name]
+		if got := c.call(c.initialize(), "mail__read").Content; len(got) != 1 || got[0].Text != expected {
+			t.Fatalf("%s: content %v, want %s", name, got, expected)
+		}
+	}
+}
+
 func stdioBackend(conn net.Conn, index int) {
 	defer conn.Close()
 	lines := bufio.NewScanner(conn)

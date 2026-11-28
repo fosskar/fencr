@@ -178,6 +178,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           "${pkgs.python3}/bin/python3"
           "${./mcp-stdio-backend.py}"
         ];
+        servers.login.command = [
+          "${pkgs.python3}/bin/python3"
+          "${./mcp-stdio-backend.py}"
+        ];
       };
       systemd.services.mcp-backend.serviceConfig.ExecStart =
         "${pkgs.python3}/bin/python3 ${./mcp-backend.py}";
@@ -188,7 +192,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           allow = [
             "test.*"
             "local.*"
+            "login.*"
           ];
+          credentials.login.login = pkgs.writeText "sbx-login" "sbx";
         };
         id = 0;
         vcpu = 1;
@@ -286,7 +292,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           allow = [
             "test.read"
             "local.*"
+            "login.*"
           ];
+          credentials.login.login = pkgs.writeText "open-login" "open";
         };
         id = 1;
         vcpu = 1;
@@ -679,9 +687,9 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
 
       # a stdio backend: one process per sandbox, under its own user, which
       # cannot read the gateway's tokens
-      def probe(transport, session):
+      def probe(transport, session, server="local"):
           answer = mcp(transport, {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
-                                   "params": {"name": "local__probe", "arguments": {}}}, session)
+                                   "params": {"name": f"{server}__probe", "arguments": {}}}, session)
           match = re.search(r'probe (\{[^}]*\})', answer.replace('\\"', '"'))
           assert match is not None, answer
           return json.loads(match.group(1))
@@ -699,6 +707,11 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       assert re.search(r'"isError":\s*true', mcp(ssh_open, write, open_session)), "open may not write"
       host.succeed("systemctl list-units --no-legend 'fencr-mcp-backend-local@*' | grep -c running | grep -Fx 2")
       host.succeed("stat -c '%U:%G %a' /run/fencr-mcp/local.sock | grep -Fx 'root:fencr-mcp 660'")
+      # a server with per-sandbox credentials: each sandbox's backend holds only its own
+      assert probe(ssh, session, "login")["login"] == "sbx"
+      assert probe(ssh_open, open_session, "login")["login"] == "open"
+      assert probe(ssh, session)["login"] is None
+      host.succeed("stat -c '%U:%G %a' /run/fencr-mcp/login/sbx.sock | grep -Fx 'root:fencr-mcp 660'")
       for transport in [ssh, ssh_open]:
           for port in [8766, 8764]:
               status, output = host.execute(transport + f" 'curl --silent --show-error --fail --max-time 3 http://10.11.0.1:{port}/mcp/'", timeout=30)

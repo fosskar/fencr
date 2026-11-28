@@ -60,6 +60,15 @@ let
         owner = "MCP server ${name}";
         names = [ "fencr-mcp-backend-${name}" ];
       }) (lib.filterAttrs (_: server: server.command != null) gateway.servers)
+      ++ lib.concatLists (
+        lib.mapAttrsToList (
+          name: options:
+          lib.mapAttrsToList (server: _: {
+            owner = "MCP server ${server} for sandbox ${name}";
+            names = [ "fencr-mcp-backend-${server}-${name}" ];
+          }) options.mcp.credentials
+        ) (lib.filterAttrs (_: options: options.mcp.enable) instances)
+      )
     );
   guestSystems = lib.mapAttrs (
     name: cfg:
