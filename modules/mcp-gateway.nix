@@ -99,9 +99,16 @@ in
                 runs it as fencr-mcp-backend-<name>@.service, one process per
                 sandbox session, with the connection from the gateway as its stdin
                 and stdout, under its own dynamic user. it cannot read the gateway's
-                tokens; give it credentials, network limits and other settings
-                through systemd.services."fencr-mcp-backend-<name>@". set this or url.
+                tokens and reaches only outbound; give it credentials and other
+                settings through systemd.services."fencr-mcp-backend-<name>@".
+                set this or url.
               '';
+            };
+            outbound = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [ "192.168.1.5/32" ];
+              description = "addresses or CIDRs, as IPAddressAllow takes them, the command backend may reach; a non-empty list also grants systemd-resolved's stub. empty means no network.";
             };
             service = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
@@ -170,9 +177,11 @@ in
         {
           assertion = lib.all (
             server:
-            builtins.match "http://127[.]0[.]0[.]1:[0-9]+/[^?#]*" server.url != null && server.tokenFile != null
+            builtins.match "http://127[.]0[.]0[.]1:[0-9]+/[^?#]*" server.url != null
+            && server.tokenFile != null
+            && server.outbound == [ ]
           ) (lib.attrValues httpServers);
-          message = "fencr.mcpGateway url backends must use explicit http://127.0.0.1:<port>/<path> URLs and a tokenFile.";
+          message = "fencr.mcpGateway url backends must use explicit http://127.0.0.1:<port>/<path> URLs and a tokenFile, and take no outbound.";
         }
         {
           assertion = lib.all (
@@ -246,6 +255,15 @@ in
             StandardInput = "socket";
             StandardOutput = "socket";
             StandardError = "journal";
+            IPAddressDeny = "any";
+            IPAddressAllow = lib.optionals (server.outbound != [ ]) ([ "127.0.0.53/32" ] ++ server.outbound);
+            RestrictAddressFamilies = [
+              "AF_UNIX"
+            ]
+            ++ lib.optionals (server.outbound != [ ]) [
+              "AF_INET"
+              "AF_INET6"
+            ];
           };
         }
       ) stdioServers;

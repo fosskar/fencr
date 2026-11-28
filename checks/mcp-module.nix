@@ -102,6 +102,28 @@ assert
 assert timeService.serviceConfig.ExecStart == ''"/bin/mcp-time" "--format" "%%H:%%M"'';
 assert timeService.serviceConfig.DynamicUser;
 assert !(timeService.serviceConfig ? LoadCredential);
+# no outbound: no network at all, not even the resolver
+assert timeService.serviceConfig.IPAddressDeny == "any";
+assert timeService.serviceConfig.IPAddressAllow == [ ];
+assert timeService.serviceConfig.RestrictAddressFamilies == [ "AF_UNIX" ];
+assert
+  let
+    serviceConfig =
+      (evaluate { fencr.mcpGateway.servers.time.outbound = [ "192.168.1.5/32" ]; })
+      .systemd.services."fencr-mcp-backend-time@".serviceConfig;
+  in
+  serviceConfig.IPAddressDeny == "any"
+  &&
+    serviceConfig.IPAddressAllow == [
+      "127.0.0.53/32"
+      "192.168.1.5/32"
+    ]
+  &&
+    serviceConfig.RestrictAddressFamilies == [
+      "AF_UNIX"
+      "AF_INET"
+      "AF_INET6"
+    ];
 assert
   timeService.serviceConfig.StandardInput == "socket"
   && timeService.serviceConfig.StandardOutput == "socket";
@@ -136,6 +158,10 @@ assert
 assert
   errors (evaluate {
     fencr.mcpGateway.servers.calendar.tokenFile = lib.mkForce null;
+  }) != [ ];
+assert
+  errors (evaluate {
+    fencr.mcpGateway.servers.calendar.outbound = [ "192.168.1.5/32" ];
   }) != [ ];
 assert
   errors (evaluate {
