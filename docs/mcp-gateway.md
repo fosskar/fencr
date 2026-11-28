@@ -90,14 +90,17 @@ connection as the command's stdin and stdout, so:
 - no host user can take its place: pid 1 holds the socket even while no
   process runs.
 
-The unit uses the same hardening as fencr's other host units, with no network
-restriction. Add what the backend needs, such as credentials or network
-limits, to its template:
+The unit uses the same hardening as fencr's other host units and has no
+network by default: `IPAddressDeny = "any"` and only `AF_UNIX` sockets.
+`outbound` lists the addresses or CIDRs the backend may reach; a non-empty
+list adds `AF_INET` and `AF_INET6` and systemd-resolved's stub at
+`127.0.0.53`, the resolver the sandboxes' egress units use. Add other
+settings the backend needs, such as credentials, to its template:
 
 ```nix
+fencr.mcpGateway.servers.time.outbound = [ "192.168.1.5/32" ];
 systemd.services."fencr-mcp-backend-time@".serviceConfig = {
   LoadCredential = [ "api-key:/run/secrets/time-api-key" ];
-  IPAddressDeny = "any";
 };
 ```
 

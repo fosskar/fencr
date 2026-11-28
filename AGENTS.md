@@ -203,7 +203,9 @@ configuration, SSH access and the checkpoint commands.
   since `fencr status` sees no MCP request. A backend sets exactly one of `url`
   (host IPv4 loopback, with `tokenFile`) and `command` (absolute executable,
   no `tokenFile`); guests cannot reach the gateway or backends directly by
-  default.
+  default. A `command` backend reaches only its `outbound` addresses, plus
+  resolved's stub at `127.0.0.53` when that list is not empty; `[ ]` means
+  no network.
 - A sandbox name is letters, digits, `_` and `-`, at most 11 characters, checked
   once in `instance.nix`: every derived name is this one with a prefix, and
   `tap-<name>` must fit `IFNAMSIZ`. Since a name may hold `-`, one sandbox's
