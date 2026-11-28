@@ -37,6 +37,9 @@ in
         "network.target"
         "nftables.service"
       ];
+      # the relay reads the sources only once the guest asks, and a missing one
+      # hands the guest an empty stream. pid 1 checks, outside the empty root
+      unitConfig.AssertPathExists = lib.attrValues instance.secrets;
       # firecracker's own per-thread allowlist is tighter than
       # @system-service and includes mincore, which that group lacks
       serviceConfig =

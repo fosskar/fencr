@@ -714,6 +714,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       # pid 1 holds the sockets, so a sandbox reaches a restarted gateway
       host.succeed("systemctl restart fencr-mcp-gateway.service", timeout=60)
       assert re.search(r"^HTTP/\S+ 200\b", mcp(ssh_open, initialize)), "no gateway after a restart"
+
+      # a missing raw secret keeps the sandbox from starting, and says which
+      host.succeed("systemctl stop fencr-sbx.service")
+      host.succeed("rm ${rawSecret}")
+      host.fail("systemctl start fencr-sbx.service")
+      _, status = host.execute("systemctl status fencr-sbx.service")
+      assert "AssertPathExists=${rawSecret} was not met" in status, status
     '';
 
     meta.timeout = 1800;
