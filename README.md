@@ -211,7 +211,11 @@ filter for musl targets only and gives a glibc build an empty one
 so fencr runs the static musl build.
 
 > [!IMPORTANT]
-> Host root is trusted and reaches every sandbox. SSH into a sandbox grants
+> Host root is trusted: it controls the hypervisor, the state images and the
+> units. That is not SSH access: `fencr ssh` as host root still needs a key
+> from `fencr.adminKeys` or `authorizedKeys`, through a forwarded agent or
+> from a machine holding one via `fencr-jump-<name>` (see
+> [access](docs/access.md)). SSH into a sandbox grants
 > guest root — that is the intended privilege level, not a weakness. `inbound`
 > ports are open to every host process and do not authenticate; the guest
 > service must do that itself.
