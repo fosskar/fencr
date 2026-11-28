@@ -317,6 +317,15 @@ in
                 credential instead, which the sandbox can use but never read.
               '';
             };
+            secretsRestartOnChange = lib.mkOption {
+              type = lib.types.bool;
+              default = core.defaults.secretsRestartOnChange;
+              description = ''
+                restart a running sandbox when one of its `secrets` files is
+                written, so the guest fetches the new value. off by default:
+                the restart stops whatever the guest is running.
+              '';
+            };
 
             outbound = lib.mkOption {
               type = lib.types.listOf lib.types.str;

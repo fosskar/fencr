@@ -32,6 +32,7 @@ in
       ) instance.credentials;
       resolvers = map (credential: "${secretUnitOf credential.name}.socket") commandCredentials;
       secrets = instance.secrets != { };
+      secretsReload = secrets && instance.secretsRestartOnChange;
       trusted = instance.credentials != [ ];
     in
     {
@@ -121,6 +122,15 @@ in
             restartTriggers = map (credential: lib.escapeShellArgs credential.secretCommand) commandCredentials;
             serviceConfig = egressServiceConfig pkgs instance;
           };
+        }
+        // lib.optionalAttrs secretsReload {
+          ${units.secretsReload} = {
+            description = "restart ${instance.name} for its raw secrets";
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = "${pkgs.systemd}/bin/systemctl try-restart ${microvmUnit}";
+            };
+          };
         };
       # no SocketUser: pid 1 would chown the socket by path after binding it,
       # in a directory the sandbox's user owns and can swap a symlink into.
@@ -167,6 +177,15 @@ in
             };
           };
         };
+      # the guest fetches its raw secrets once per start, and a path unit can
+      # only start a unit, so the service it starts restarts the sandbox
+      paths = lib.optionalAttrs secretsReload {
+        ${units.secretsReload} = {
+          description = "watch the raw secrets of ${instance.name}";
+          wantedBy = [ "multi-user.target" ];
+          pathConfig.PathModified = lib.unique (lib.attrValues instance.secrets);
+        };
+      };
       inherit (checkpoints) timers;
     };
 }

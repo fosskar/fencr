@@ -708,6 +708,26 @@ assert lib.assertMsg (
   )
   && !(units.sockets."fencr-sbx-trust" ? wantedBy)
 ) "unit check: the relays drifted";
+# a rewritten raw secret restarts its sandbox, and only where asked
+assert lib.assertMsg (
+  let
+    pathsOf = options: (core.hostUnits pkgs cli (resolve "sbx" ({ id = 0; } // options))).paths;
+    watched = core.hostUnits pkgs cli (
+      resolve "sbx" {
+        id = 0;
+        secrets.raw = "/run/secrets/raw";
+        secretsRestartOnChange = true;
+      }
+    );
+  in
+  watched.paths.fencr-sbx-secrets-reload.pathConfig == {
+    PathModified = [ "/run/secrets/raw" ];
+  }
+  && watched.paths.fencr-sbx-secrets-reload.wantedBy == [ "multi-user.target" ]
+  && lib.hasSuffix "systemctl try-restart fencr-sbx.service" watched.services.fencr-sbx-secrets-reload.serviceConfig.ExecStart
+  && pathsOf { secrets.raw = "/run/secrets/raw"; } == { }
+  && pathsOf { secretsRestartOnChange = true; } == { }
+) "unit check: a rewritten raw secret does not restart its sandbox";
 assert lib.assertMsg (
   occurrences ''oifname "br-sbx" ip daddr 10.11.0.2 tcp dport { 22, 33627 } counter accept comment "fencr:sbx:guest"''
   == 1

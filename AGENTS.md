@@ -37,7 +37,7 @@ configuration, SSH access and the checkpoint commands.
   `egressDnsPort` and `egressTlsPort` that `redirectRules` reaches from the
   guest's 53 and 443),
   `checkpoint.nix` (`checkpointCommand`, `checkpointUnits`, `apiSocketOf`),
-  `host-units.nix` (`hostUnits`: services, sockets, timers) and `guest.nix`
+  `host-units.nix` (`hostUnits`: services, sockets, paths, timers) and `guest.nix`
   (`guestBase`, with the boot-time fetch in `guest-fetch.sh`, which the secrets
   and trust units share). `emptyRootOf`
   in `hardening.nix` is the microvm unit's and the checkpoint unit's sandbox. `guestPortsOf` in `instance.nix` is
@@ -192,7 +192,9 @@ configuration, SSH access and the checkpoint commands.
   `/run/fencr`. Raw `secrets` instead enter guest `/run/agent-secrets`, fetched
   at boot over vsock port 5 from a socket-activated relay service that serves its
   own systemd credentials once per start of the guest, then stops its socket,
-  since vsock carries no guest uid; they are readable by guest root. Never put real secret
+  since vsock carries no guest uid; they are readable by guest root. With
+  `secretsRestartOnChange`, `fencr-<name>-secrets-reload.path` restarts a running
+  sandbox when a source is written. Never put real secret
   values in the Nix store.
 - `fencr.mcpGateway` is disabled by default; enabled sandboxes need explicit
   `mcp.allow` grants. The gateway does not ask for approval; `mcp.allow`

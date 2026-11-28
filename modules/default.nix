@@ -229,7 +229,9 @@ in
 
     systemd.timers = lib.mkMerge (map (units: units.timers) (lib.attrValues unitSets));
 
-    systemd.paths = reloadUnits.paths or { };
+    systemd.paths = lib.mkMerge (
+      map (units: units.paths) (lib.attrValues unitSets) ++ [ (reloadUnits.paths or { }) ]
+    );
 
     # masquerade by source address, so the module needs no uplink interface
     boot.kernel.sysctl."net.ipv4.conf.all.forwarding" = lib.mkIf (instances != { }) (

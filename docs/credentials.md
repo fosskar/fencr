@@ -237,6 +237,11 @@ encryption key, anything spoken over a protocol that is not HTTP. The cost is
 that a compromised guest has the value, which is the whole reason to promote
 what you can.
 
+A changed host file therefore reaches the guest only when the sandbox starts
+again. `fencr.sandboxes.myagent.secretsRestartOnChange = true;` watches the
+files and restarts a running sandbox when one is written; it is off by default
+because the restart stops whatever the guest is running.
+
 `/run/agent-secrets` is `0700` and its files `0400`, both owned by guest root.
 A payload running as its own user reads them through systemd — `EnvironmentFile`
 or `LoadCredential` in its unit — which systemd resolves as root before
