@@ -51,6 +51,7 @@ in
     # joining it, since the two cannot combine
     outbound = [ "internet" ];
     secrets = { };
+    secretsRestartOnChange = false;
   };
 
   # the guest's memory plus room for firecracker
@@ -77,6 +78,7 @@ in
     microvm = "fencr-${name}";
     egress = "fencr-${name}-egress";
     secrets = "fencr-${name}-secrets";
+    secretsReload = "fencr-${name}-secrets-reload";
     trust = "fencr-${name}-trust";
     checkpoint = "fencr-${name}-checkpoint";
   };
@@ -355,6 +357,7 @@ in
         checkpoints
         inbound
         secrets
+        secretsRestartOnChange
         ;
       hostPorts = values "host";
       destinations = values "tcp";

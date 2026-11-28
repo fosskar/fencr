@@ -16,7 +16,7 @@ let
   targetRoot = pkgs.writeTextDir "index.html" "fencr target\n";
   # mutable, so the test can rotate it; a real host writes it with sops or agenix
   credentialFile = "/run/fencr-test/api-token";
-  rawSecret = pkgs.writeText "fencr-test-secret" "fencr secret\n";
+  rawSecret = "/run/fencr-test/raw";
   # echoes the Authorization header and the uri it received
   upstream = pkgs.writeText "fencr-test-upstream.py" ''
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -152,6 +152,10 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
           mode = "0400";
           argument = "querytoken-9f3";
         };
+        ${rawSecret}.f = {
+          mode = "0400";
+          argument = "fencr secret";
+        };
         "/run/fencr-test/vault".f = {
           mode = "0444";
           argument = "vaulted-first";
@@ -191,6 +195,7 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
         mem = 768;
         authorizedKeys = [ snakeOilEd25519PublicKey ];
         secrets.raw = rawSecret;
+        secretsRestartOnChange = true;
         # the firewall: closed egress with one pinhole into the test network,
         # and one name allowed over tls; both names resolve to the target
         # on the host, only one is on the list
@@ -452,12 +457,13 @@ import (pkgs.path + "/nixos/tests/make-test-python.nix")
       host.fail(f"{inside}/test -d /proc/1")
       host.fail(f"{inside}/test -e /proc/cpuinfo")
       host.succeed(f"{ssh} 'echo survives > ~/fencr-probe'", timeout=60)
-      host.succeed("systemctl restart fencr-sbx.service")
+      # a rewritten raw secret restarts the sandbox, and the new start of the
+      # guest opens the relay for one fetch again
+      host.succeed("install -m 0400 /dev/stdin ${rawSecret} <<< 'fencr secret rotated'")
+      host.wait_until_succeeds(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret rotated'", timeout=300)
       # a clean stop, not a kill after the stop timeout
       host.fail("journalctl -u fencr-sbx.service | grep -q 'Stopping timed out'")
-      host.wait_until_succeeds(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=300)
-      # and a new start of the guest opens it for one fetch again
-      host.succeed(f"{ssh} 'cat /run/agent-secrets/raw' | grep -Fx 'fencr secret'", timeout=60)
+      host.succeed(f"{ssh} 'cat ~/fencr-probe' | grep -Fx survives", timeout=60)
 
       # the clean stop above left one; a file written after the manual one
       # must vanish on restore while the earlier probe stays

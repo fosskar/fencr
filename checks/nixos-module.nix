@@ -150,6 +150,13 @@ in
     }
     {
       assertion =
+        config.systemd.paths.fencr-sbx-secrets-reload.pathConfig.PathModified == [ "/run/secrets/raw" ]
+        && config.systemd.paths ? fencr-credentials-reload
+        && config.systemd.services ? fencr-sbx-secrets-reload;
+      message = "nixos module check: a rewritten raw secret does not restart its sandbox";
+    }
+    {
+      assertion =
         guestConfig.microvm.hypervisor == "firecracker"
         && config.systemd.services."fencr-sbx".serviceConfig.User == "fencr-sbx"
         && config.users.users."fencr-sbx".group == "kvm"
@@ -284,6 +291,7 @@ in
     ];
     credentials = [ "anthropic" ];
     secrets.raw = "/run/secrets/raw";
+    secretsRestartOnChange = true;
   };
 
   fencr.credentials = {
