@@ -41,6 +41,25 @@ let
   gateway = config.systemd.services.fencr-mcp-gateway;
   timeSocket = config.systemd.sockets.fencr-mcp-backend-time;
   timeService = config.systemd.services."fencr-mcp-backend-time@";
+  # one server, a login per sandbox
+  mail = {
+    fencr.mcpGateway.servers.mail = {
+      command = [ "/bin/mail" ];
+      outbound = [ "192.168.1.5/32" ];
+    };
+    systemd.services."fencr-mcp-backend-mail@" = {
+      environment.MAIL_URL = "https://mail.example";
+      serviceConfig.LoadCredential = [ "ca:/run/secrets/mail-ca" ];
+    };
+    fencr.sandboxes.agent.mcp.credentials.mail.password = "/run/secrets/agent-mail";
+    fencr.sandboxes.reader.mcp = {
+      allow = [ "mail.*" ];
+      credentials.mail.password = "/run/secrets/reader-mail";
+    };
+  };
+  mailConfig = evaluate mail;
+  agentMail = mailConfig.systemd.services."fencr-mcp-backend-mail-agent@";
+  mailGateway = mailConfig.systemd.services.fencr-mcp-gateway;
 in
 assert errors config == [ ];
 # the split opencode presets are gone, and their names say what replaces them
@@ -171,16 +190,113 @@ assert
   errors (evaluate {
     fencr.mcpGateway.servers.calendar.url = lib.mkForce "http://192.168.1.2:8765/mcp/";
   }) != [ ];
+assert errors mailConfig == [ ];
+assert !(mailConfig.systemd.sockets ? fencr-mcp-backend-mail);
+assert
+  mailConfig.systemd.sockets.fencr-mcp-backend-mail-agent.listenStreams == [
+    "/run/fencr-mcp/mail/agent.sock"
+  ];
+assert
+  mailConfig.systemd.sockets.fencr-mcp-backend-mail-reader.socketConfig == {
+    Accept = true;
+    SocketGroup = "fencr-mcp";
+    SocketMode = "0660";
+  };
+# the host configures the server once; each sandbox's unit adds only its own files
+assert agentMail.serviceConfig.ExecStart == ''"/bin/mail"'';
+assert agentMail.serviceConfig.DynamicUser;
+assert agentMail.environment.MAIL_URL == "https://mail.example";
+# outbound reaches every sandbox's unit through the copied serviceConfig
+assert agentMail.serviceConfig.IPAddressDeny == "any";
+assert
+  agentMail.serviceConfig.IPAddressAllow == [
+    "127.0.0.53/32"
+    "192.168.1.5/32"
+  ];
+assert
+  agentMail.serviceConfig.RestrictAddressFamilies == [
+    "AF_UNIX"
+    "AF_INET"
+    "AF_INET6"
+  ];
+assert
+  agentMail.serviceConfig.LoadCredential == [
+    "ca:/run/secrets/mail-ca"
+    "password:/run/secrets/agent-mail"
+  ];
+assert
+  mailConfig.systemd.services."fencr-mcp-backend-mail-reader@".serviceConfig.LoadCredential == [
+    "ca:/run/secrets/mail-ca"
+    "password:/run/secrets/reader-mail"
+  ];
+assert lib.elem "fencr-mcp-backend-mail-agent.socket" mailGateway.requires;
+assert !(lib.elem "fencr-mcp-backend-mail.socket" mailGateway.requires);
+# a server is shared or per-sandbox, never both
+assert lib.elem
+  "fencr: sandbox reader reaches MCP server mail, which has per-sandbox credentials; set fencr.sandboxes.reader.mcp.credentials.mail."
+  (
+    errors (evaluate {
+      imports = [ mail ];
+      fencr.sandboxes.reader.mcp.credentials = lib.mkForce { };
+    })
+  );
+assert lib.elem
+  "fencr: sandbox reader reaches MCP server mail, which has per-sandbox credentials; set fencr.sandboxes.reader.mcp.credentials.mail."
+  (
+    errors (evaluate {
+      imports = [ mail ];
+      fencr.sandboxes.reader.mcp = {
+        allow = lib.mkForce [ "*" ];
+        credentials = lib.mkForce { };
+      };
+    })
+  );
+assert
+  errors (evaluate {
+    imports = [ mail ];
+    fencr.sandboxes.reader.mcp.allow = lib.mkForce [ "calendar.read" ];
+    fencr.sandboxes.reader.mcp.credentials = lib.mkForce { };
+  }) == [ ];
+assert
+  errors (evaluate {
+    fencr.sandboxes.agent.mcp.credentials.calendar.password = "/run/secrets/agent-calendar";
+  }) != [ ];
+assert lib.elem "fencr: sandbox other sets mcp.credentials without mcp.enable." (
+  errors (evaluate {
+    imports = [ mail ];
+    fencr.sandboxes.other = {
+      id = 7;
+      mcp.credentials.mail.password = "/run/secrets/other-mail";
+    };
+  })
+);
+assert
+  errors (evaluate {
+    imports = [ mail ];
+    fencr.sandboxes.agent.mcp.credentials.mail."user:name" = "/run/secrets/agent-user";
+  }) != [ ];
+assert lib.elem
+  "fencr: MCP server mail-agent and MCP server mail for sandbox agent derive fencr-mcp-backend-mail-agent; rename one."
+  (
+    errors (evaluate {
+      imports = [ mail ];
+      fencr.mcpGateway.servers.mail-agent.command = [ "/bin/mail" ];
+    })
+  );
 pkgs.runCommand "fencr-mcp-module" { } ''
   ${pkgs.python3}/bin/python3 - <<'PY'
   import json
   from pathlib import Path
   config = json.loads(Path("${gateway.environment.MCP_GATEWAY_CONFIG}").read_text())
-  assert config["principals"]["agent"] == {"allow": [], "socket": "/run/fencr-agent/vsock_7"}
+  assert config["principals"]["agent"] == {"allow": [], "backend_sockets": {}, "socket": "/run/fencr-agent/vsock_7"}
   assert config["principals"]["reader"]["allow"] == ["calendar.read"]
   assert config["servers"]["calendar"]["token_credential"] == "backend-calendar"
   assert config["servers"]["time"] == {"socket": "/run/fencr-mcp/time.sock", "hidden_tools": []}
   assert "approval_mode" not in config
+  config = json.loads(Path("${mailGateway.environment.MCP_GATEWAY_CONFIG}").read_text())
+  assert config["servers"]["mail"] == {"hidden_tools": []}
+  assert config["principals"]["agent"]["backend_sockets"] == {"mail": "/run/fencr-mcp/mail/agent.sock"}
+  assert config["principals"]["reader"]["backend_sockets"] == {"mail": "/run/fencr-mcp/mail/reader.sock"}
   PY
   touch "$out"
 ''

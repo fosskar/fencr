@@ -19,9 +19,43 @@ let
   # them apart from the gateway's own units
   stdioUnit = name: "fencr-mcp-backend-${name}";
   stdioSocket = name: "/run/fencr-mcp/${name}.sock";
+  # a stdio server some sandbox holds credentials for gets a socket and a
+  # backend unit per sandbox instead of the shared ones
+  credentialed = lib.unique (
+    lib.concatMap (sandbox: lib.attrNames sandbox.mcp.credentials) (lib.attrValues members)
+  );
+  sharedStdio = lib.filterAttrs (name: _: !lib.elem name credentialed) stdioServers;
+  perSandbox = lib.concatLists (
+    lib.mapAttrsToList (
+      sandbox: options:
+      lib.mapAttrsToList (server: files: { inherit sandbox server files; }) options.mcp.credentials
+    ) members
+  );
+  sandboxUnit = server: sandbox: "${stdioUnit server}-${sandbox}";
+  sandboxSocket = server: sandbox: "/run/fencr-mcp/${server}/${sandbox}.sock";
+  # the gateway's `reachable`: a glob before the first dot reaches every server
+  reaches =
+    allow: server:
+    lib.any (
+      pattern:
+      let
+        head = lib.head (lib.splitString "." pattern);
+      in
+      builtins.match ".*[*?[].*" head != null || (lib.hasInfix "." pattern && head == server)
+    ) allow;
+  backendSocket = description: path: {
+    inherit description;
+    listenStreams = [ path ];
+    socketConfig = {
+      Accept = true;
+      SocketGroup = "fencr-mcp";
+      SocketMode = "0660";
+    };
+  };
   backendUnits =
     lib.filter (unit: unit != null) (lib.mapAttrsToList (_: server: server.service) cfg.servers)
-    ++ lib.mapAttrsToList (name: _: "${stdioUnit name}.socket") stdioServers;
+    ++ lib.mapAttrsToList (name: _: "${stdioUnit name}.socket") sharedStdio
+    ++ map ({ sandbox, server, ... }: "${sandboxUnit server sandbox}.socket") perSandbox;
   gatewayConfig = pkgs.writeText "fencr-mcp-gateway.json" (
     builtins.toJSON {
       servers = lib.mapAttrs (
@@ -31,7 +65,7 @@ let
         }
         // (
           if server.command != null then
-            { socket = stdioSocket name; }
+            lib.optionalAttrs (!lib.elem name credentialed) { socket = stdioSocket name; }
           else
             {
               inherit (server) url;
@@ -42,6 +76,7 @@ let
       principals = lib.mapAttrs (name: sandbox: {
         inherit (sandbox.mcp) allow;
         socket = socketOf name;
+        backend_sockets = lib.mapAttrs (server: _: sandboxSocket server name) sandbox.mcp.credentials;
       }) members;
     }
   );
@@ -101,7 +136,10 @@ in
                 and stdout, under its own dynamic user. it cannot read the gateway's
                 tokens and reaches only outbound; give it credentials and other
                 settings through systemd.services."fencr-mcp-backend-<name>@".
-                set this or url.
+                set this or url. once a sandbox sets mcp.credentials.<name>, every
+                sandbox that reaches it must, and each gets
+                fencr-mcp-backend-<name>-<sandbox>@.service with that unit's
+                environment, path and serviceConfig plus its own files.
               '';
             };
             outbound = lib.mkOption {
@@ -139,6 +177,14 @@ in
             example = [ "calendar.list_events" ];
             description = "<server>.<tool> globs this sandbox may list and call; empty grants nothing. application-side MCP settings remain the payload's responsibility.";
           };
+          credentials = lib.mkOption {
+            type = lib.types.attrsOf (lib.types.attrsOf lib.types.path);
+            default = { };
+            example = {
+              calendar.password = "/run/secrets/calendar-agent";
+            };
+            description = "host files per command server, loaded as systemd credentials into this sandbox's own backend unit for that server and no other.";
+          };
         };
       }
     );
@@ -151,7 +197,11 @@ in
           assertion = members == { } || cfg.enable;
           message = "fencr: sandbox MCP access requires fencr.mcpGateway.enable.";
         }
-      ];
+      ]
+      ++ lib.mapAttrsToList (name: sandbox: {
+        assertion = sandbox.mcp.enable || sandbox.mcp.credentials == { };
+        message = "fencr: sandbox ${name} sets mcp.credentials without mcp.enable.";
+      }) config.fencr.sandboxes;
     }
     (lib.mkIf cfg.enable {
       assertions = [
@@ -189,7 +239,26 @@ in
           ) (lib.attrValues stdioServers);
           message = "fencr.mcpGateway command backends must name an absolute executable and take no tokenFile.";
         }
-      ];
+        {
+          assertion = lib.all (server: stdioServers ? ${server}) credentialed;
+          message = "fencr: mcp.credentials must name fencr.mcpGateway command backends.";
+        }
+        {
+          assertion = lib.all (
+            { files, ... }: lib.all (name: builtins.match "[A-Za-z0-9_-]+" name != null) (lib.attrNames files)
+          ) perSandbox;
+          message = "fencr: mcp.credentials names must use letters, digits, hyphens or underscores.";
+        }
+      ]
+      ++ lib.concatLists (
+        lib.mapAttrsToList (
+          sandbox: options:
+          map (server: {
+            assertion = !(reaches options.mcp.allow server) || options.mcp.credentials ? ${server};
+            message = "fencr: sandbox ${sandbox} reaches MCP server ${server}, which has per-sandbox credentials; set fencr.sandboxes.${sandbox}.mcp.credentials.${server}.";
+          }) credentialed
+        ) members
+      );
 
       users.groups.fencr-mcp = { };
       # pid 1 holds each sandbox's socket while the gateway restarts. 0666 and
@@ -206,17 +275,16 @@ in
         };
       }
       // lib.mapAttrs' (
-        name: _:
-        lib.nameValuePair (stdioUnit name) {
-          description = "MCP backend ${name}";
-          listenStreams = [ (stdioSocket name) ];
-          socketConfig = {
-            Accept = true;
-            SocketGroup = "fencr-mcp";
-            SocketMode = "0660";
-          };
-        }
-      ) stdioServers;
+        name: _: lib.nameValuePair (stdioUnit name) (backendSocket "MCP backend ${name}" (stdioSocket name))
+      ) sharedStdio
+      // lib.listToAttrs (
+        map (
+          { sandbox, server, ... }:
+          lib.nameValuePair (sandboxUnit server sandbox) (
+            backendSocket "MCP backend ${server} for ${sandbox}" (sandboxSocket server sandbox)
+          )
+        ) perSandbox
+      );
 
       systemd.services = {
         fencr-mcp-gateway = {
@@ -266,7 +334,30 @@ in
             ];
           };
         }
-      ) stdioServers;
+      ) stdioServers
+      // lib.listToAttrs (
+        map (
+          {
+            sandbox,
+            server,
+            files,
+          }:
+          let
+            shared = config.systemd.services."${stdioUnit server}@";
+          in
+          lib.nameValuePair "${sandboxUnit server sandbox}@" {
+            description = "MCP backend ${server} for ${sandbox}";
+            # the unit derives PATH from path itself; a copied one would conflict
+            environment = removeAttrs shared.environment [ "PATH" ];
+            inherit (shared) path;
+            serviceConfig = shared.serviceConfig // {
+              LoadCredential =
+                lib.toList (shared.serviceConfig.LoadCredential or [ ])
+                ++ lib.mapAttrsToList (name: file: "${name}:${file}") files;
+            };
+          }
+        ) perSandbox
+      );
     })
   ];
 }

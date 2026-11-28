@@ -11,6 +11,11 @@ def readable(path):
         return False
 
 
+def login():
+    directory = os.environ.get("CREDENTIALS_DIRECTORY")
+    return open(os.path.join(directory, "login")).read() if directory else None
+
+
 for line in sys.stdin:
     request = json.loads(line)
     if "id" not in request:
@@ -27,6 +32,7 @@ for line in sys.stdin:
             "pid": os.getpid(),
             "uid": os.getuid(),
             "gateway": readable("/run/credentials/fencr-mcp-gateway.service"),
+            "login": login(),
         }
         result = {"content": [{"type": "text", "text": "probe " + json.dumps(probe)}]}
     else:
