@@ -986,6 +986,8 @@ func main() {
 			execute(sshBin, append([]string{
 				"-J", sandbox.JumpUser + "@" + host,
 				"-o", "StrictHostKeyChecking=accept-new",
+				// addresses are reused across sandboxes and hosts, names are what the key belongs to
+				"-o", "HostKeyAlias=" + sandbox.Name,
 				"root@" + sandbox.IP,
 			}, args[2:]...)...)
 		}

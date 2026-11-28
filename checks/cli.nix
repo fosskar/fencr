@@ -224,6 +224,9 @@ pkgs.runCommand "fencr-cli-check" { } ''
   # a sandbox with keys reaches ssh under the alias the module wrote
   ${cli}/bin/fencr ssh sbx uptime
   grep -Fx 'ssh sbx uptime' "$TEST_LOG"
+  # off the host the known_hosts entry is keyed by name, since addresses are reused
+  FENCR_HOST=server ${cli}/bin/fencr ssh sbx uptime
+  grep -Fx 'ssh -J fencr-jump-sbx@server -o StrictHostKeyChecking=accept-new -o HostKeyAlias=sbx root@10.11.0.2 uptime' "$TEST_LOG"
   ${cli}/bin/fencr status keyed > actual
   grep -Fx '  ✓ api.test TLS 443 (credential api)         1 connection' actual
   if grep -F 'github.com TLS 443' actual; then exit 1; fi

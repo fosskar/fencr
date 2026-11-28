@@ -32,6 +32,10 @@ in
       message = "nixos module check: the guest is not reached at its bridge address";
     }
     {
+      assertion = lib.hasInfix "HostKeyAlias sbx" config.programs.ssh.extraConfig;
+      message = "nixos module check: the host key is keyed by address, which a later sandbox can reuse";
+    }
+    {
       assertion =
         config.fencr.guestSystems.sealed.config.systemd.sockets.sshd.socketConfig.ListenStream
         == [ "10.11.1.2:22" ];
